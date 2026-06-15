@@ -18,21 +18,30 @@ SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Template paths
 TEMPLATES = {
     'xian': os.path.join(SKILL_DIR, 'assets', '报价单模板-西安公司.docx'),
+    'shenzhen': os.path.join(SKILL_DIR, 'assets', '报价单模板-深圳公司.docx'),
     'jakarta': os.path.join(SKILL_DIR, 'assets', '报价单模板-雅加达公司.docx'),
 }
 
 # Parse CLI args
 parser = argparse.ArgumentParser(description='Generate quotation from template')
-parser.add_argument('--template', choices=['xian', 'jakarta'], default='xian', help='Template to use')
+parser.add_argument('--template', choices=['xian', 'shenzhen', 'jakarta'], default='xian', help='Template to use')
 parser.add_argument('--output', default=None, help='Output .docx path (default: CWD)')
 parser.add_argument('--vat-rate', type=float, default=None, help='VAT rate override (e.g. 0.06, 0.01, 0.11)')
+parser.add_argument('--entity', choices=['jakarta', 'beijing', 'xian', 'shanghai', 'shanghai_new'], default=None, help='Signing entity (required for xian template)')
+parser.add_argument('--title-line1', default='印尼投资', help='Title first line (default: 印尼投资)')
+parser.add_argument('--title-line2', default='综合服务方案', help='Title second line (default: 综合服务方案)')
 args = parser.parse_args()
 
 TEMPLATE = TEMPLATES[args.template]
 if args.output:
     OUTPUT = os.path.abspath(args.output)
 else:
-    name = '报价单-西安公司' if args.template == 'xian' else '报价单-雅加达公司'
+    if args.template == 'xian':
+        name = '报价单-西安公司'
+    elif args.template == 'shenzhen':
+        name = '报价单-深圳公司'
+    else:
+        name = '报价单-雅加达公司'
     OUTPUT = os.path.join(os.getcwd(), f'{name}.docx')
 UNPACK = os.path.join(tempfile.gettempdir(), f'quotation-build-{os.getpid()}', '')
 
@@ -40,13 +49,9 @@ NS = {
     'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
     'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
     'mc': 'http://schemas.openxmlformats.org/markup-compatibility/2006',
-    'w14': 'http://schemas.microsoft.com/office/word/2010/wordml',
-    'wp14': 'http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing',
-    'wps': 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape',
 }
 
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-W14 = 'http://schemas.microsoft.com/office/word/2010/wordml'
 
 # Register namespaces for clean output
 for prefix, uri in NS.items():
@@ -55,9 +60,6 @@ for prefix, uri in NS.items():
 # ====== XML BUILDING HELPERS ======
 def w(tag):
     return f'{{{W}}}{tag}'
-
-def w14(tag):
-    return f'{{{W14}}}{tag}'
 
 def make_rpr(font='FangSong', sz='24', bold=False, color=None, hint='eastAsia'):
     """Create a w:rPr element matching template pattern."""
@@ -137,27 +139,6 @@ def make_para(runs_or_text, spacing_before=0, spacing_after=0, line='280',
     if jc:
         jc_el = ET.SubElement(pPr, w('jc'))
         jc_el.set(w('val'), jc)
-
-    # Default run props
-    rPr_default = ET.SubElement(pPr, w('rPr'))
-    rf = ET.SubElement(rPr_default, w('rFonts'))
-    rf.set(w('hint'), 'default')
-    rf.set(w('ascii'), font)
-    rf.set(w('hAnsi'), font)
-    rf.set(w('eastAsia'), font)
-    if bold:
-        ET.SubElement(rPr_default, w('b'))
-        ET.SubElement(rPr_default, w('bCs'))
-    if color:
-        c_el = ET.SubElement(rPr_default, w('color'))
-        c_el.set(w('val'), color)
-    sz_el = ET.SubElement(rPr_default, w('sz'))
-    sz_el.set(w('val'), sz)
-    sz_cs = ET.SubElement(rPr_default, w('szCs'))
-    sz_cs.set(w('val'), sz)
-    lang = ET.SubElement(rPr_default, w('lang'))
-    lang.set(w('val'), 'en-US')
-    lang.set(w('eastAsia'), 'zh-CN')
 
     # Add runs
     if isinstance(runs_or_text, str):
@@ -318,7 +299,7 @@ def make_hdr_cell(text, width):
 
 def make_data_cell(text, width, bold=False, jc=None, small=False, price=False):
     """Create a data cell. text can be a string or list of strings (each becomes a paragraph).
-    small=True: 10.5pt for notes/documents. price=True: 11pt for price column (slightly smaller to avoid wrapping)."""
+    small=True: 10.5pt for notes/documents. price=True: 10pt for price column (compact to avoid wrapping)."""
     if small:
         sz = '21'  # 10.5pt
     elif price:
@@ -389,35 +370,45 @@ COLS = [555, 2514, 1050, 1800, 3871]  # Time wider, notes narrower, price roomy
 # Quantity > 1: include " ×N" in name. No unit prices.
 services_data = [
     {'category': None, 'items': [
-        {'id': '1', 'name': '激活农业部标准证书/营业执照 ×3', 'days': '22', 'price': '300,000,000',
+        {'id': '1', 'name': '激活农业部标准证书/营业执照 ×3', 'days': '22', 'price': '133,333',
          'note': '根据BKPM印尼投资部规定，企业在正式运营前必须完成标准证书/营业执照激活。中高风险/高风险KBLI需分别激活对应的证书。激活须满足设施设备清单、专业负责人、SOP文件、社区批准函、原产地文件及相关资质资料等条件。未激活将无法合规运营、销售及出口。已激活证书在公司持续合规运营期间长期有效。'},
-        {'id': '2', 'name': '公司注册', 'days': '15', 'price': '20,000,000',
-         'note': '外资公司注册资本最低100亿印尼盾，实缴最低25亿印尼盾。须至少两位股东、一位董事和一位监事。经营范围分低风险至高风险四个等级，每个经营地点须在OSS系统登记RDTR空间详细规划。本服务含5个经营范围的注册，每增加一个收费3,000,000印尼盾。'},
-        {'id': '3', 'name': '电力代表处 ×2', 'days': '15', 'price': '60,000,000',
+        {'id': '2', 'name': '公司注册', 'days': '15', 'price': '8,889',
+         'note': '外资公司注册资本最低100亿印尼盾，实缴最低25亿印尼盾。须至少两位股东、一位董事和一位监事。经营范围分低风险至高风险四个等级，每个经营地点须在OSS系统登记RDTR空间详细规划。本服务含5个经营范围的注册，每增加一个收费约Rp3,000,000。'},
+        {'id': '3', 'name': '电力代表处 ×2', 'days': '15', 'price': '26,667',
          'note': '外国电力服务公司可设立KPJPTLA电力代表处，须与本地电力公司组建联合体承接项目，合同总额30%须分包给本地B级资质公司。母公司须有相关经营范围。注册时须委任PJTBU印尼籍担保人。注册后须办理SBU证书才具备施工资质。'},
-        {'id': '4', 'name': '劳动部登记', 'days': '3', 'price': '30,000,000',
-         'note': '根据印尼1981年第7号法规，每家公司须将员工登记在劳动部系统并每年更新申报。未按时登记或信息有误，公司管理层将被处以Rp1,000,000罚款或3个月监禁。'},
     ]},
 ]
 
 # ====== PRICING CONFIGURATION ======
-# Currency auto-set from template: xian→RMB, jakarta→IDR
-CURRENCY = 'RMB' if args.template == 'xian' else 'IDR'
-# VAT rate: CLI override → currency default
+# Currency auto-set from template: xian/shenzhen→RMB, jakarta→IDR
+CURRENCY = 'IDR' if args.template == 'jakarta' else 'RMB'
+# VAT rate: CLI override → entity default → currency default
 if args.vat_rate is not None:
     VAT_RATE = args.vat_rate
+elif args.entity in ('shanghai', 'shanghai_new'):
+    VAT_RATE = 0.01  # Shanghai entities
 elif CURRENCY == 'RMB':
-    VAT_RATE = 0.06  # Default RMB (use --vat-rate 0.01 for Shanghai)
+    VAT_RATE = 0.06  # Default RMB
 else:
     VAT_RATE = 0.11  # Jakarta
 DECIMAL_PLACES = 2 if CURRENCY == 'RMB' else 0
+if args.template == 'xian' and args.entity is None:
+    print("⚠️  WARNING: --template xian used without --entity. Defaulting to xian entity (西安). "
+          "For Beijing/Shanghai entities, pass --entity beijing/shanghai/shanghai_new.")
 vat_label_pct = f"{VAT_RATE*100:.0f}%" if VAT_RATE*100 == int(VAT_RATE*100) else f"{VAT_RATE*100:.0f}%"
 VAT_LABEL = f"增值税 {vat_label_pct}"
 
 # Service totals (hardcoded from data)
 # Auto-compute subtotal from service prices (replace commas, parse as int)
 SUBTOTAL = sum(int(item['price'].replace(',', '')) for svc in services_data for item in svc['items'])
-DISCOUNT_AMOUNT = 0  # Amount to reduce (not discounted price!)
+
+# Price magnitude guard — catch RMB/IDR data mix-up
+all_prices = [int(item['price'].replace(',', '')) for svc in services_data for item in svc['items']]
+if CURRENCY == 'IDR' and any(p < 1_000_000 for p in all_prices):
+    print("⚠️  WARNING: Some prices appear too small for IDR (min: Rp 1,000,000). Did you forget to update services_data from a previous RMB quote?")
+elif CURRENCY == 'RMB' and any(p >= 1_000_000 for p in all_prices):
+    print("⚠️  WARNING: Some prices appear too large for RMB (>= 1,000,000). Did you forget to convert from IDR?")
+DISCOUNT_AMOUNT = 0  # 无优惠
 DISCOUNTED = SUBTOTAL - DISCOUNT_AMOUNT  # Price after discount
 VAT = round(DISCOUNTED * VAT_RATE, DECIMAL_PLACES)  # Tax calculated on discounted price
 GRAND_TOTAL = DISCOUNTED + VAT  # Final total
@@ -459,7 +450,7 @@ body_children.append(make_info_line('报价日期', QUOTE_DATE))
 body_children.append(make_info_line('订单号       ：', ''))
 
 # 2. Title
-body_children.append(make_title('印尼投资', '综合服务方案'))
+body_children.append(make_title(args.title_line1, args.title_line2))
 
 # 3. Section Header
 body_children.append(make_section_header('1.服务内容'))
@@ -564,7 +555,6 @@ fee_details = [
     {'name': '激活农业部标准证书/营业执照', 'include': ['服务费'], 'exclude': ['相关资质办理费', '差旅费/考察费（如有）', '文件翻译费'], 'note': '本服务仅包含激活一个经营范围。'},
     {'name': '公司注册', 'include': ['山海图服务费（审核资料、填表送文件）'], 'exclude': ['资料快递费（国际快递）', '文件翻译费（如需山海图把文件翻译到印尼文或英文）'], 'note': ''},
     {'name': '电力代表处', 'include': ['服务费', '资料快递费（本地）'], 'exclude': ['资料快递费（国际）', '文件翻译费'], 'note': '注册电力代表处之后，还需办理SBU证书才具备施工资质。'},
-    {'name': '劳动部登记', 'include': ['服务费'], 'exclude': [], 'note': ''},
 ]
 
 for i, fd in enumerate(fee_details):
@@ -679,17 +669,6 @@ process_data = [
             '3. 商业登记证',
             '4. 未激活的营业执照',
             '5. OSS 系统用户名及密码',
-        ],
-    },
-    {
-        'name': '劳动部登记',
-        'process': [
-            '第一步：收集所需材料',
-            '第二步：注册 WLK 账户（1 个工作日）',
-            '第三步：提交资料登记员工信息（2 个工作日）',
-        ],
-        'deliverables': [
-            '1. WLK 账户及密码',
         ],
     },
 ]
@@ -809,24 +788,6 @@ doc_data = [
             '     c. 土地证（如有）',
         ],
     },
-    {
-        'name': '劳动部登记',
-        'docs': [
-            '1. 公司章程及变更（如有）',
-            '2. 司法部批文及变更（如有）',
-            '3. 商业登记证',
-            '4. 公司税卡',
-            '5. 公司社保账号',
-            '6. 公司邮箱地址',
-            '7. 董事和监事的证件：',
-            '（1）印尼籍：身份证、税卡、电话号码、邮箱地址、居住地址',
-            '（2）非印尼籍：护照、税卡（如有）、暂住许可证、电话号码、邮箱地址',
-            '8. 公司负责人的证件（必须印尼籍）：身份证（未用来注册WLK账户）、居住地址、电话号码、户口本',
-            '9. 员工信息：',
-            '（1）印尼籍：身份证、职位、学历、劳动合同状态（固定期限/无限期）、入职日期、居住地址',
-            '（2）非印尼籍：护照、暂住许可证、职位、学历、入职日期',
-        ],
-    },
 ]
 
 dtbl = ET.Element(w('tbl'))
@@ -867,16 +828,40 @@ body_children.append(make_para(
     [make_run('所有款项汇到山海图指定的银行账户，银行账户信息如下：', sz='24', bold=True)],
     spacing_after=0, line='280'
 ))
-bank_lines = [
-    '开户行：中国银行西安高新技术开发区支行',
-    '户名：北京山海图科技有限公司西安分公司',
-    '账号：1021 0955 7761',
-] if CURRENCY == 'RMB' else [
-    '银行：BCA (KCP CENTRAL PARK)',
-    '户名：PT. SHAN HAI MAP',
-    '账号：5485225789',
-    'SWIFT：CENAIDJA',
-]
+if args.template == 'jakarta':
+    bank_lines = [
+        '银行：BCA (KCP CENTRAL PARK)',
+        '户名：PT. SHAN HAI MAP',
+        '账号：5485225789',
+        'SWIFT：CENAIDJA',
+    ]
+elif args.template == 'shenzhen':
+    bank_lines = [
+        '统一社会信用代码（或税号）：91440300MA5HXMAEXM',
+        '开户行：中国银行股份有限公司深圳高新区支行',
+        '开户名：北京山海图科技有限公司深圳分公司',
+        '账号：7770 7729 1133',
+        '地址：深圳市南山区招商街道花果山社区南海大道1052号至卓飞高大厦(海翔广场)717',
+    ]
+else:  # xian template — covers 4 entities
+    if args.entity == 'beijing':
+        bank_lines = [
+            '（银行信息待确认，请联系财务确认北京公司收款账户）',
+        ]
+    elif args.entity == 'shanghai':
+        bank_lines = [
+            '（银行信息待确认，请联系财务确认上海公司收款账户）',
+        ]
+    elif args.entity == 'shanghai_new':
+        bank_lines = [
+            '（银行信息待确认，请联系财务确认上海新企业收款账户）',
+        ]
+    else:  # xian (default)
+        bank_lines = [
+            '开户行：中国银行西安高新技术开发区支行',
+            '户名：北京山海图科技有限公司西安分公司',
+            '账号：1021 0955 7761',
+        ]
 for line in bank_lines:
     body_children.append(make_para(
         [make_run(line, sz='21')],
@@ -935,7 +920,19 @@ for text in ['报价人：', '同意报价人：']:
 stbl.append(sig_row1)
 
 # Row 2
-sig_company = 'PT. SHAN HAI MAP' if args.template == 'jakarta' else '北京山海图科技有限公司西安分公司'
+# Signature company
+if args.template == 'jakarta':
+    sig_company = 'PT. SHAN HAI MAP'
+elif args.template == 'shenzhen':
+    sig_company = '北京山海图科技有限公司深圳分公司'
+elif args.entity == 'beijing':
+    sig_company = '北京山海图科技有限公司'
+elif args.entity == 'shanghai':
+    sig_company = '北京山海图科技有限公司上海分公司'
+elif args.entity == 'shanghai_new':
+    sig_company = '上海山海图新企业咨询有限公司'
+else:
+    sig_company = '北京山海图科技有限公司西安分公司'
 sig_row2 = ET.Element(w('tr'))
 for text in [sig_company, '']:
     tc = ET.Element(w('tc'))
