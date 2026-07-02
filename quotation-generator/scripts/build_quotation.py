@@ -3,10 +3,11 @@ Build quotation by editing the template's XML directly.
 This ensures 100% format consistency with the original template.
 
 Usage:
-  python3 scripts/build_quotation.py --template xian --entity xian --data quotation.json --output /path/to/output.docx
-  python3 scripts/build_quotation.py --template jakarta --data quotation.json --output /path/to/output.docx
+  python3 scripts/build_quotation.py --entity xian --data quotation.json --output /path/to/output.docx
+  python3 scripts/build_quotation.py --entity jakarta --data quotation.json --output /path/to/output.docx
 
 The script reads quotation data from JSON/YAML, edits the bundled template XML, and outputs a .docx.
+Entity configuration is loaded from config/entities.json — no business data is hardcoded in this script.
 """
 import zipfile, os, sys, argparse, tempfile, shutil, json, re
 from datetime import date
@@ -18,11 +19,44 @@ SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Template paths
 TEMPLATES = {
-    'xian': os.path.join(SKILL_DIR, 'assets', '报价单模板-西安公司.docx'),
-    'shenzhen': os.path.join(SKILL_DIR, 'assets', '报价单模板-深圳公司.docx'),
+    'china': os.path.join(SKILL_DIR, 'assets', '报价单模板-中国公司.docx'),
     'jakarta': os.path.join(SKILL_DIR, 'assets', '报价单模板-雅加达公司.docx'),
 }
 
+# Load entity configuration from external JSON — keeps business data out of the script.
+ENTITY_CONFIG_PATH = os.path.join(SKILL_DIR, 'config', 'entities.json')
+
+def load_entity_config():
+    """Load entity configuration from config/entities.json.
+
+    Validates that every entity contains all required fields.
+    Skips the _meta key (used for schema metadata and universal excludes).
+    """
+    if not os.path.exists(ENTITY_CONFIG_PATH):
+        print(f"❌ Entity config not found: {ENTITY_CONFIG_PATH}", file=sys.stderr)
+        sys.exit(1)
+    with open(ENTITY_CONFIG_PATH, 'r', encoding='utf-8') as f:
+        raw = json.load(f)
+
+    required_fields = ('template', 'company', 'header_lines', 'vat_rate',
+                       'currency', 'payment_terms', 'bank_lines')
+    errors = []
+    for key, cfg in raw.items():
+        if key.startswith('_'):
+            continue  # Skip meta/annotation keys
+        for field in required_fields:
+            if field not in cfg:
+                errors.append(f"Entity '{key}' missing required field: {field}")
+
+    if errors:
+        print(f"❌ Invalid entity config:\n- " + '\n- '.join(errors), file=sys.stderr)
+        sys.exit(1)
+
+    # Remove _meta before returning — it's not an entity
+    cleaned = {k: v for k, v in raw.items() if not k.startswith('_')}
+    return cleaned
+
+ENTITY_CONFIG = load_entity_config()
 
 REQUIRED_TOP_LEVEL_KEYS = ('services', 'fee_details', 'process_data', 'doc_data')
 
@@ -74,6 +108,23 @@ def require_text_list(obj, key, path, errors):
     value = obj.get(key)
     if not isinstance(value, list) or not value:
         errors.append(f'{path}.{key} is required and must be a non-empty list')
+        return []
+    out = []
+    for i, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            errors.append(f'{path}.{key}[{i}] must be non-empty text')
+        else:
+            out.append(item.strip())
+    return out
+
+
+def optional_text_list(obj, key, path, errors):
+    """Like require_text_list but allows empty/missing lists (returns [] if absent or empty)."""
+    value = obj.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        errors.append(f'{path}.{key} must be a list when provided')
         return []
     out = []
     for i, item in enumerate(value):
@@ -161,7 +212,9 @@ def validate_and_normalize_data(data):
         errors.append(f'Duplicate service name: {name}')
     service_name_set = set(service_names)
 
-    def validate_named_records(key, list_fields, allow_note=False):
+    def validate_named_records(key, list_fields, optional_fields=None, allow_note=False):
+        """Validate named records. list_fields are required (must be non-empty).
+        optional_fields allow empty/missing lists."""
         records = data.get(key)
         if not isinstance(records, list) or not records:
             errors.append(f'{key} must be a non-empty list')
@@ -181,6 +234,8 @@ def validate_and_normalize_data(data):
             out = {'name': name}
             for field in list_fields:
                 out[field] = require_text_list(record, field, path, errors)
+            for field in (optional_fields or []):
+                out[field] = optional_text_list(record, field, path, errors)
             if allow_note:
                 note = record.get('note', '')
                 if note is None:
@@ -198,7 +253,7 @@ def validate_and_normalize_data(data):
             errors.append(f'{key} contains unknown services: {", ".join(extra)}')
         return normalized
 
-    fee_details = validate_named_records('fee_details', ['include', 'exclude'], allow_note=True)
+    fee_details = validate_named_records('fee_details', ['include'], optional_fields=['exclude'], allow_note=True)
     process_data = validate_named_records('process_data', ['process', 'deliverables'])
     doc_data = validate_named_records('doc_data', ['docs'])
 
@@ -249,14 +304,6 @@ def validate_and_normalize_data(data):
         errors.append(str(exc))
         discount_amount = 0
 
-    discount_mode = data.get('discount_mode')
-    if discount_mode == 'post_tax':
-        errors.append('discount_mode=post_tax is not supported; discounts always apply to pre-tax subtotal')
-    elif discount_mode not in (None, 'pre_tax'):
-        errors.append('discount_mode is deprecated; omit it because discounts always apply to pre-tax subtotal')
-    elif discount_mode == 'pre_tax':
-        warnings.append('discount_mode is no longer needed; discounts always apply to pre-tax subtotal')
-
     subtotal = sum(item['price_int'] for group in normalized_services for item in group['items'])
     if discount_amount > subtotal:
         errors.append('discount_amount cannot exceed subtotal')
@@ -276,16 +323,22 @@ def validate_and_normalize_data(data):
 
 def main():
 
-    # Parse CLI args
+    # Parse CLI args — entity is now always required (including jakarta)
     parser = argparse.ArgumentParser(description='Generate quotation from template')
-    parser.add_argument('--template', choices=['xian', 'shenzhen', 'jakarta'], default='xian', help='Template to use')
+    parser.add_argument('--entity', required=True,
+                        choices=list(ENTITY_CONFIG.keys()),
+                        help='Signing entity (required): jakarta/beijing/xian/shenzhen/shanghai/shanghai_new')
     parser.add_argument('--output', default=None, help='Output .docx path (default: CWD)')
     parser.add_argument('--data', required=True, help='Quotation data file (.json, .yaml, .yml)')
     parser.add_argument('--vat-rate', type=float, default=None, help='VAT rate override (e.g. 0.06, 0.01, 0.11)')
-    parser.add_argument('--entity', choices=['beijing', 'xian', 'shanghai', 'shanghai_new'], default=None, help='Signing entity (required for xian template)')
     parser.add_argument('--title-line1', default='印尼投资', help='Title first line (default: 印尼投资)')
     parser.add_argument('--title-line2', default='综合服务方案', help='Title second line (default: 综合服务方案)')
+    parser.add_argument('--quote-date', default=None, help='Quote date override (default: today, format: YYYY-MM-DD)')
     args = parser.parse_args()
+
+    entity = args.entity
+    entity_cfg = ENTITY_CONFIG[entity]
+    template_key = entity_cfg['template']
 
     try:
         quotation_data = validate_and_normalize_data(load_quotation_data(args.data))
@@ -295,16 +348,11 @@ def main():
     for warning in quotation_data['warnings']:
         print(f'⚠️  WARNING: {warning}')
 
-    TEMPLATE = TEMPLATES[args.template]
+    TEMPLATE = TEMPLATES[template_key]
     if args.output:
         OUTPUT = os.path.abspath(args.output)
     else:
-        if args.template == 'xian':
-            name = '报价单-西安公司'
-        elif args.template == 'shenzhen':
-            name = '报价单-深圳公司'
-        else:
-            name = '报价单-雅加达公司'
+        name = f'报价单-{entity_cfg["company"]}'
         OUTPUT = os.path.join(os.getcwd(), f'{name}.docx')
     UNPACK = os.path.join(tempfile.gettempdir(), f'quotation-build-{os.getpid()}', '')
 
@@ -323,6 +371,59 @@ def main():
     # ====== XML BUILDING HELPERS ======
     def w(tag):
         return f'{{{W}}}{tag}'
+
+    def paragraph_text(paragraph):
+        return ''.join((t.text or '') for t in paragraph.findall('.//' + w('t')))
+
+    def replace_paragraph_text(paragraph, value):
+        """Replace ALL text content in a paragraph with a single clean run.
+        Removes existing w:r elements and adds one new run with the value,
+        preserving paragraph-level formatting (w:pPr)."""
+        # Keep pPr if it exists
+        pPr = paragraph.find(w('pPr'))
+        # Remove all existing children except pPr
+        for child in list(paragraph):
+            if child.tag != w('pPr'):
+                paragraph.remove(child)
+        # Add a single run with the new text
+        paragraph.append(make_run(value, sz='24'))
+        return True
+
+    def apply_china_header(unpack_dir, entity_key):
+        """Update the China template header for entities with defined header lines.
+        Replaces entire text content of existing paragraphs rather than just
+        the last w:t element, so it works correctly even with multi-run text."""
+        cfg = ENTITY_CONFIG.get(entity_key, {})
+        header_lines = cfg.get('header_lines')
+        if not header_lines:
+            print(f"⚠️  WARNING: No header override configured for entity={entity_key}; template header is unchanged.")
+            return
+
+        header_path = os.path.join(unpack_dir, 'word', 'header1.xml')
+        if not os.path.exists(header_path):
+            print("⚠️  WARNING: word/header1.xml not found; cannot update China template header.")
+            return
+
+        tree = ET.parse(header_path)
+        root = tree.getroot()
+        paragraphs = [p for p in list(root) if p.tag == w('p')]
+        text_paragraphs = [p for p in paragraphs if paragraph_text(p).strip()]
+
+        lines_to_write = [l for l in header_lines if l]
+        for i, line in enumerate(lines_to_write):
+            if i < len(text_paragraphs):
+                replace_paragraph_text(text_paragraphs[i], line)
+            else:
+                new_p = make_para([make_run(line, sz='24')], spacing_after=0, line='280')
+                root.append(new_p)
+                text_paragraphs.append(new_p)
+
+        surplus_start = len(lines_to_write)
+        for p in text_paragraphs[surplus_start:]:
+            root.remove(p)
+
+        tree.write(header_path, xml_declaration=True, encoding='UTF-8')
+        print(f"✅ Updated template header for {cfg['company']}")
 
     def make_rpr(font='FangSong', sz='24', bold=False, color=None, hint='eastAsia'):
         """Create a w:rPr element matching template pattern."""
@@ -361,15 +462,13 @@ def main():
         t.text = text
         return r
 
-    def make_tab():
-        """Create a w:tab element."""
-        return ET.Element(w('tab'))
-
     def make_para(runs_or_text, spacing_before=0, spacing_after=0, line='280',
                   jc=None, indent_left=None, indent_right=None,
-                  border_bottom_color=None, font='FangSong', sz='24',
-                  bold=False, color=None):
-        """Create a paragraph matching template pattern."""
+                  border_bottom_color=None):
+        """Create a paragraph matching template pattern.
+        When runs_or_text is a list of run elements, only paragraph-level
+        spacing/alignment/border settings are applied — run-level styles
+        come from the run elements themselves."""
         p = ET.Element(w('p'))
         pPr = ET.SubElement(p, w('pPr'))
 
@@ -403,45 +502,29 @@ def main():
             jc_el = ET.SubElement(pPr, w('jc'))
             jc_el.set(w('val'), jc)
 
-        # Add runs
+        # Add runs — if list of ET.Element, append directly; strings auto-wrap with default style
         if isinstance(runs_or_text, str):
-            runs = [make_run(runs_or_text, font, sz, bold, color)]
+            p.append(make_run(runs_or_text))
         else:
-            runs = runs_or_text
-
-        for r_item in runs:
-            if isinstance(r_item, str):
-                p.append(make_run(r_item, font, sz, bold, color))
-            else:
-                p.append(r_item)
+            for r_item in runs_or_text:
+                if isinstance(r_item, str):
+                    p.append(make_run(r_item))
+                else:
+                    p.append(r_item)
 
         return p
 
     def make_info_line(label, value):
-        """Make a header info line matching template."""
-        if '：' in label or ':' in label:
-            # Pattern A: "公司名称     ：" + value (colon already in label, no tab)
-            r1 = ET.Element(w('r'))
-            r1.append(make_rpr('FangSong', '24'))
-            t1 = ET.SubElement(r1, w('t'))
-            t1.text = label
-            r2 = ET.Element(w('r'))
-            r2.append(make_rpr('FangSong', '24'))
-            t2 = ET.SubElement(r2, w('t'))
-            t2.text = value
-            return make_para([r1, r2], spacing_after=0, line='280')
-        else:
-            # Pattern B: label + tab + "：value" (colon added after tab)
-            r1 = ET.Element(w('r'))
-            r1.append(make_rpr('FangSong', '24'))
-            t1 = ET.SubElement(r1, w('t'))
-            t1.text = label
-            tab = ET.Element(w('tab'))
-            r2 = ET.Element(w('r'))
-            r2.append(make_rpr('FangSong', '24'))
-            t2 = ET.SubElement(r2, w('t'))
-            t2.text = f'：{value}'
-            return make_para([r1, tab, r2], spacing_after=0, line='280')
+        """Make a header info line matching template — unified pattern with space-padded label + colon + value."""
+        r1 = ET.Element(w('r'))
+        r1.append(make_rpr('FangSong', '24'))
+        t1 = ET.SubElement(r1, w('t'))
+        t1.text = label
+        r2 = ET.Element(w('r'))
+        r2.append(make_rpr('FangSong', '24'))
+        t2 = ET.SubElement(r2, w('t'))
+        t2.text = value
+        return make_para([r1, r2], spacing_after=0, line='280')
 
     def make_section_header(text):
         """Make a section header like '1.服务内容' - bold, 14pt, black."""
@@ -451,7 +534,8 @@ def main():
         )
 
     def make_title(text_part1, text_part2):
-        """Make the blue centered title with bottom border."""
+        """Make the blue centered title with bottom border.
+        Run-level styles are set on the runs; paragraph-level only sets spacing/alignment/border."""
         return make_para(
             [
                 make_run(text_part1, sz='38', bold=True, color='4472C4'),
@@ -459,8 +543,7 @@ def main():
             ],
             spacing_before=200, spacing_after=280, line='280',
             jc='center', indent_left=936, indent_right=936,
-            border_bottom_color='4472C4', font='FangSong', sz='44',
-            bold=True, color='4472C4'
+            border_bottom_color='4472C4'
         )
 
     # ====== TABLE BUILDING ======
@@ -621,36 +704,37 @@ def main():
         )
 
     # ====== DATA ======
-    COLS = [555, 2514, 1050, 1800, 3871]  # Time wider, notes narrower, price roomy
+    COLS = [555, 2514, 1050, 2000, 3671]  # Price col wider for currency symbol; notes narrower
     services_data = quotation_data['services']
     fee_details = quotation_data['fee_details']
     process_data = quotation_data['process_data']
     doc_data = quotation_data['doc_data']
     notes = quotation_data['notes']
     doc_notes_text = quotation_data['doc_notes_text']
-    DISCOUNT_AMOUNT = quotation_data['discount_amount']
+    DISCOUNT_AMOUNT_INT = quotation_data['discount_amount']
 
-    # ====== PRICING CONFIGURATION ======
-    # Currency auto-set from template: xian/shenzhen→RMB, jakarta→IDR
-    CURRENCY = 'IDR' if args.template == 'jakarta' else 'RMB'
-    # VAT rate: CLI override → entity default → currency default
-    if args.vat_rate is not None:
-        VAT_RATE = args.vat_rate
-    elif args.entity in ('shanghai', 'shanghai_new'):
-        VAT_RATE = 0.01  # Shanghai entities
-    elif CURRENCY == 'RMB':
-        VAT_RATE = 0.06  # Default RMB
-    else:
-        VAT_RATE = 0.11  # Jakarta
+    # ====== PRICING CONFIGURATION (full Decimal chain) ======
+    # All financial amounts travel as Decimal through the calculation pipeline.
+    # Only converted to string at the final formatting stage.
+
+    CURRENCY = entity_cfg['currency']
+    CURRENCY_SYMBOL = '￥' if CURRENCY == 'RMB' else 'Rp'
     DECIMAL_PLACES = 2 if CURRENCY == 'RMB' else 0
-    if args.template == 'xian' and args.entity is None:
-        print("⚠️  WARNING: --template xian used without --entity. Defaulting to xian entity (西安). "
-              "For Beijing/Shanghai entities, pass --entity beijing/shanghai/shanghai_new.")
-    vat_label_pct = f"{VAT_RATE*100:.0f}%" if VAT_RATE*100 == int(VAT_RATE*100) else f"{VAT_RATE*100:.0f}%"
+
+    # VAT rate: CLI override → entity config → currency default
+    if args.vat_rate is not None:
+        VAT_RATE = Decimal(str(args.vat_rate))
+    else:
+        VAT_RATE = Decimal(str(entity_cfg['vat_rate']))
+
+    # Use :g format to strip unnecessary trailing zeros (e.g. 11.0% → 11%, 1.0% → 1%)
+    vat_pct = float(VAT_RATE * 100)
+    vat_label_pct = f"{vat_pct:g}%"
     VAT_LABEL = f"增值税 {vat_label_pct}"
 
-    # Auto-compute subtotal from validated service prices.
-    SUBTOTAL = sum(item['price_int'] for svc in services_data for item in svc['items'])
+    # All amounts in Decimal for precision throughout the pipeline
+    SUBTOTAL_D = Decimal(sum(item['price_int'] for svc in services_data for item in svc['items']))
+    DISCOUNT_D = Decimal(DISCOUNT_AMOUNT_INT)
 
     # Price magnitude guard — catch RMB/IDR data mix-up
     all_prices = [item['price_int'] for svc in services_data for item in svc['items']]
@@ -658,53 +742,66 @@ def main():
         print("⚠️  WARNING: Some prices appear too small for IDR (min: Rp 1,000,000). Did you forget to update services_data from a previous RMB quote?")
     elif CURRENCY == 'RMB' and any(p >= 1_000_000 for p in all_prices):
         print("⚠️  WARNING: Some prices appear too large for RMB (>= 1,000,000). Did you forget to convert from IDR?")
-    # Discounts always reduce the pre-tax subtotal before VAT is calculated.
-    DISCOUNTED = SUBTOTAL - DISCOUNT_AMOUNT
 
-    # Use Decimal for financial calculations to avoid float precision issues.
-    vat_rate_d = Decimal(str(VAT_RATE))
-    vat_d = Decimal(DISCOUNTED) * vat_rate_d
+    # Discounted subtotal
+    DISCOUNTED_D = SUBTOTAL_D - DISCOUNT_D
+
+    # VAT calculation — fully Decimal, quantize at output
+    vat_d = DISCOUNTED_D * VAT_RATE
     if DECIMAL_PLACES == 2:
-        VAT = float(vat_d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+        VAT_D = vat_d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     else:
-        VAT = int(vat_d.quantize(Decimal('1'), rounding=ROUND_HALF_UP))
-    GRAND_TOTAL = DISCOUNTED + VAT
+        VAT_D = vat_d.quantize(Decimal('1'), rounding=ROUND_HALF_UP)
 
-    # Format helpers with precision rules:
+    # Grand total
+    GRAND_TOTAL_D = DISCOUNTED_D + VAT_D
+
+    # Format helpers with precision rules + currency symbol:
     # - Service prices, subtotal, discount: ALWAYS integer (both RMB and IDR)
     # - VAT and grand total: RMB allows 2dp, IDR must be integer
-    def fmt_price_int(val):
-        """Format service prices / subtotal / discount — always integer."""
-        return f'{int(round(val)):,}'
+    # - ￥ for RMB (no space), Rp for IDR (with space)
+    def fmt_price_int(val_d):
+        """Format service prices / subtotal / discount — Decimal input, always integer with currency symbol."""
+        formatted = f'{int(val_d):,}'
+        return f'￥{formatted}' if CURRENCY == 'RMB' else f'Rp {formatted}'
 
-    def fmt_price_vat(val):
-        """Format VAT — RMB always 2dp, IDR integer."""
+    def fmt_price_vat(val_d):
+        """Format VAT — Decimal input, RMB always 2dp, IDR integer, with currency symbol."""
         if CURRENCY == 'RMB':
-            return f'{val:,.2f}'  # Always show 2 decimal places
+            return f'￥{float(val_d):,.2f}'
         else:
-            return f'{int(round(val)):,}'
+            return f'Rp {int(val_d):,}'
 
-    def fmt_price_total(val):
-        """Format grand total — RMB always 2dp, IDR integer."""
+    def fmt_price_total(val_d):
+        """Format grand total — Decimal input, RMB always 2dp, IDR integer, with currency symbol."""
         if CURRENCY == 'RMB':
-            return f'{val:,.2f}'  # Always show 2 decimal places
+            return f'￥{float(val_d):,.2f}'
         else:
-            return f'{int(round(val)):,}'
+            return f'Rp {int(val_d):,}'
 
-    print(f"Currency: {CURRENCY} | VAT: {VAT_RATE*100}%")
-    print(f"Subtotal: {fmt_price_int(SUBTOTAL)} | Discount: {fmt_price_int(DISCOUNT_AMOUNT)} | Discounted: {fmt_price_int(DISCOUNTED)}")
-    print(f"VAT: {fmt_price_vat(VAT)} | Total: {fmt_price_total(GRAND_TOTAL)}")
+    print(f"Entity: {entity} | Currency: {CURRENCY} | VAT: {vat_label_pct}")
+    print(f"Subtotal: {fmt_price_int(SUBTOTAL_D)} | Discount: {fmt_price_int(DISCOUNT_D)} | Discounted: {fmt_price_int(DISCOUNTED_D)}")
+    print(f"VAT: {fmt_price_vat(VAT_D)} | Total: {fmt_price_total(GRAND_TOTAL_D)}")
 
     # ====== BUILD BODY CONTENT ======
     body_children = []
 
     # 1. Header Info Lines
     body_children.append(make_info_line('公司名称     ：', ''))
-    body_children.append(make_info_line('联系人', ''))
+    body_children.append(make_info_line('联系人      ：', ''))
     body_children.append(make_info_line('联系方式     ：', ''))
-    QUOTE_DATE = f"{date.today().year}年{date.today().month}月{date.today().day}日"
-    body_children.append(make_info_line('报价日期', QUOTE_DATE))
-    body_children.append(make_info_line('订单号       ：', ''))
+    # Quote date: use --quote-date if provided, otherwise today
+    if args.quote_date:
+        try:
+            qd = date.fromisoformat(args.quote_date)
+            QUOTE_DATE = f"{qd.year}年{qd.month}月{qd.day}日"
+        except ValueError:
+            print(f"⚠️  WARNING: Invalid --quote-date format '{args.quote_date}', using today.", file=sys.stderr)
+            QUOTE_DATE = f"{date.today().year}年{date.today().month}月{date.today().day}日"
+    else:
+        QUOTE_DATE = f"{date.today().year}年{date.today().month}月{date.today().day}日"
+    body_children.append(make_info_line('报价日期     ：', QUOTE_DATE))
+    body_children.append(make_info_line('合同号       ：', ''))
 
     # 2. Title
     body_children.append(make_title(args.title_line1, args.title_line2))
@@ -723,7 +820,7 @@ def main():
     ET.SubElement(hdr_trPr, w('trHeight')).set(w('val'), '564')
     ET.SubElement(hdr_trPr, w('trHeight')).set(w('hRule'), 'atLeast')
 
-    price_label = '价格\n(人民币)' if CURRENCY == 'RMB' else '价格\n(印尼盾)'
+    price_label = '价格\n(总价)'
     hdr_texts = ['序号', '服务内容', '时间\n工作日', price_label, '备注']
     for i, ht in enumerate(hdr_texts):
         lines = ht.split('\n')
@@ -744,23 +841,24 @@ def main():
         if svc['category']:
             tbl.append(make_category_row(svc['category']))
         for item in svc['items']:
+            price_display = f'￥{item["price"]}' if CURRENCY == 'RMB' else f'Rp {item["price"]}'
             cells = [
                 make_data_cell(item['id'], COLS[0], jc='center'),
                 make_data_cell(item['display_name'], COLS[1], bold=True),
                 make_data_cell(item['days'], COLS[2], jc='center'),
-                make_data_cell(item['price'], COLS[3], jc='right', price=True),
+                make_data_cell(price_display, COLS[3], jc='right', price=True),
                 make_data_cell(item['note'].split('\n') if '\n' in item['note'] else item['note'], COLS[4], small=True),
             ]
             tbl.append(make_table_row(cells))
 
-    # Summary rows — static values
-    def summary_row(label, value, fmt='int', highlight=False):
+    # Summary rows — all use Decimal values
+    def summary_row(label, value_d, fmt='int', highlight=False):
         if fmt == 'vat':
-            formatted = fmt_price_vat(value)
+            formatted = fmt_price_vat(value_d)
         elif fmt == 'total':
-            formatted = fmt_price_total(value)
+            formatted = fmt_price_total(value_d)
         else:
-            formatted = fmt_price_int(value)
+            formatted = fmt_price_int(value_d)
         cells = [
             make_empty_cell(COLS[0]),
             make_data_cell(label, COLS[1], bold=True, jc='right'),
@@ -778,11 +876,11 @@ def main():
             )
         return make_table_row(cells)
 
-    tbl.append(summary_row('小计', SUBTOTAL, fmt='int'))
-    if DISCOUNT_AMOUNT > 0:
-        tbl.append(summary_row('优惠金额', DISCOUNT_AMOUNT, fmt='int'))
-    tbl.append(summary_row(VAT_LABEL, VAT, fmt='vat'))
-    tbl.append(summary_row('含税总计', GRAND_TOTAL, fmt='total', highlight=True))
+    tbl.append(summary_row('小计', SUBTOTAL_D, fmt='int'))
+    if DISCOUNT_D > 0:
+        tbl.append(summary_row('优惠金额', DISCOUNT_D, fmt='int'))
+    tbl.append(summary_row(VAT_LABEL, VAT_D, fmt='vat'))
+    tbl.append(summary_row('含税总计', GRAND_TOTAL_D, fmt='total', highlight=True))
 
     body_children.append(tbl)
 
@@ -793,14 +891,12 @@ def main():
         spacing_after=0, line='280'
     ))
 
-    # General notes below the service table, loaded from --data.
     for note_text, indent in notes:
         body_children.append(make_para(
             [make_run(note_text, sz='21')],
             spacing_after=0, line='280', indent_left=indent
         ))
 
-    # Per-service fee breakdown, loaded from --data.
     for i, fd in enumerate(fee_details):
         body_children.append(make_para(
             [make_run(f'{i+1}. {fd["name"]}', sz='21', bold=True)],
@@ -835,10 +931,10 @@ def main():
                     spacing_after=0, line='280', indent_left=540
                 ))
 
-    # 6. Payment Terms
+    # 6. Payment Terms — loaded from entity config
     body_children.append(make_para('', spacing_before=100, spacing_after=0))
     body_children.append(make_section_header('2.付款条件：'))
-    payment_terms = ['合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。'] if CURRENCY == 'RMB' else ['甲方应在收到发票后 5 个工作日内支付合同金额的 100%。']
+    payment_terms = entity_cfg.get('payment_terms', [])
     for term in payment_terms:
         body_children.append(make_para(
             [make_run(term, sz='21')],
@@ -852,12 +948,10 @@ def main():
 
     PCOLS = [555, 2100, 3635, 3500]
 
-    # Service workflow steps and deliverables, loaded from --data.
     ptbl = ET.Element(w('tbl'))
     ptbl.append(make_tbl_pr())
     ptbl.append(make_tbl_grid(PCOLS))
 
-    # Header
     phdr_row = ET.Element(w('tr'))
     phdr_trPr = ET.SubElement(phdr_row, w('trPr'))
     ET.SubElement(phdr_trPr, w('trHeight')).set(w('val'), '564')
@@ -884,7 +978,6 @@ def main():
 
     DCOLS = [555, 2400, 6835]
 
-    # Required documents, loaded from --data.
     dtbl = ET.Element(w('tbl'))
     dtbl.append(make_tbl_pr())
     dtbl.append(make_tbl_grid(DCOLS))
@@ -907,54 +1000,19 @@ def main():
 
     body_children.append(dtbl)
 
-    # Footer notes below the materials table, loaded from --data.
     for i, note_text in enumerate(doc_notes_text):
         body_children.append(make_para(
             [make_run(note_text, sz='21')],
             spacing_before=80 if i == 0 else 0, spacing_after=0, line='280'
         ))
 
-    # 9. Footer - Bank Info
+    # 9. Footer - Bank Info — loaded from entity config
     body_children.append(make_para('', spacing_before=120, spacing_after=0))
     body_children.append(make_para(
         [make_run('所有款项汇到山海图指定的银行账户，银行账户信息如下：', sz='24', bold=True)],
         spacing_after=0, line='280'
     ))
-    if args.template == 'jakarta':
-        bank_lines = [
-            '银行：BCA (KCP CENTRAL PARK)',
-            '户名：PT. SHAN HAI MAP',
-            '账号：5485225789',
-            'SWIFT：CENAIDJA',
-        ]
-    elif args.template == 'shenzhen':
-        bank_lines = [
-            '统一社会信用代码（或税号）：91440300MA5HXMAEXM',
-            '开户行：中国银行股份有限公司深圳高新区支行',
-            '开户名：北京山海图科技有限公司深圳分公司',
-            '账号：7770 7729 1133',
-            '地址：深圳市南山区招商街道花果山社区南海大道1052号至卓飞高大厦(海翔广场)717',
-        ]
-    else:  # xian template — covers 4 entities
-        if args.entity == 'beijing':
-            bank_lines = [
-                '（银行信息待确认，请联系财务确认北京公司收款账户）',
-            ]
-        elif args.entity == 'shanghai':
-            bank_lines = [
-                '（银行信息待确认，请联系财务确认上海公司收款账户）',
-            ]
-        elif args.entity == 'shanghai_new':
-            bank_lines = [
-                '（银行信息待确认，请联系财务确认上海新企业收款账户）',
-            ]
-        else:  # xian (default)
-            bank_lines = [
-                '开户行：中国银行西安高新技术开发区支行',
-                '户名：北京山海图科技有限公司西安分公司',
-                '账号：1021 0955 7761',
-            ]
-    for line in bank_lines:
+    for line in entity_cfg['bank_lines']:
         body_children.append(make_para(
             [make_run(line, sz='21')],
             spacing_after=0, line='280'
@@ -962,7 +1020,7 @@ def main():
 
     body_children.append(make_para('', spacing_before=40, spacing_after=0))
     body_children.append(make_para(
-        [make_run('山海图应对客户提供的纸板或电子版的证件、资料负有妥善保管和保密义务，不得将上述秘密泄露给任何第三方或用于其他用途。', sz='21')],
+        [make_run('山海图应对客户提供的纸质或电子版的证件、资料负有妥善保管和保密义务，不得将上述秘密泄露给任何第三方或用于其他用途。', sz='21')],
         spacing_after=0, line='280'
     ))
     body_children.append(make_para(
@@ -970,10 +1028,9 @@ def main():
         spacing_after=0, line='280'
     ))
 
-    # 10. Signatures
+    # 10. Signatures — company name from entity config
     body_children.append(make_para('', spacing_before=80, spacing_after=0))
 
-    # Signature table
     stbl = ET.Element(w('tbl'))
     stblPr = ET.SubElement(stbl, w('tblPr'))
     stblW = ET.SubElement(stblPr, w('tblW'))
@@ -986,6 +1043,8 @@ def main():
     for wv in [4895, 4895]:
         gc = ET.SubElement(stblGrid, w('gridCol'))
         gc.set(w('w'), str(wv))
+
+    sig_company = entity_cfg['company']
 
     # Row 1
     sig_row1 = ET.Element(w('tr'))
@@ -1011,20 +1070,7 @@ def main():
         sig_row1.append(tc)
     stbl.append(sig_row1)
 
-    # Row 2
-    # Signature company
-    if args.template == 'jakarta':
-        sig_company = 'PT. SHAN HAI MAP'
-    elif args.template == 'shenzhen':
-        sig_company = '北京山海图科技有限公司深圳分公司'
-    elif args.entity == 'beijing':
-        sig_company = '北京山海图科技有限公司'
-    elif args.entity == 'shanghai':
-        sig_company = '北京山海图科技有限公司上海分公司'
-    elif args.entity == 'shanghai_new':
-        sig_company = '上海山海图新企业咨询有限公司'
-    else:
-        sig_company = '北京山海图科技有限公司西安分公司'
+    # Row 2 — signature company from config
     sig_row2 = ET.Element(w('tr'))
     for text in [sig_company, '']:
         tc = ET.Element(w('tc'))
@@ -1057,6 +1103,10 @@ def main():
         with zipfile.ZipFile(TEMPLATE, 'r') as zf:
             zf.extractall(UNPACK)
         print(f"  Unpacked to {UNPACK}")
+
+        # Apply header override for China template entities
+        if template_key == 'china':
+            apply_china_header(UNPACK, entity)
 
         # Extract sectPr from the original template before editing
         orig_doc_path = os.path.join(UNPACK, 'word', 'document.xml')
@@ -1091,7 +1141,6 @@ def main():
         print(f"✅ document.xml updated with {len(list(orig_body))} body elements")
 
         # ====== REPACK ======
-        # Create output .docx by re-zipping the unpacked directory
         print(f"Repacking to: {OUTPUT}")
         with zipfile.ZipFile(OUTPUT, 'w', zipfile.ZIP_DEFLATED) as zf:
             for root, dirs, files in os.walk(UNPACK):
@@ -1104,7 +1153,7 @@ def main():
         shutil.rmtree(UNPACK, ignore_errors=True)
 
     print(f"✅ Done: {OUTPUT}")
-    print(f"费用: 小计={fmt_price_int(SUBTOTAL)} | 优惠={fmt_price_int(DISCOUNT_AMOUNT)} | VAT={fmt_price_vat(VAT)} | 总计={fmt_price_total(GRAND_TOTAL)}")
+    print(f"费用: 小计={fmt_price_int(SUBTOTAL_D)} | 优惠={fmt_price_int(DISCOUNT_D)} | VAT={fmt_price_vat(VAT_D)} | 总计={fmt_price_total(GRAND_TOTAL_D)}")
 
 if __name__ == '__main__':
     main()

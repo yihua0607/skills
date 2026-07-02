@@ -1,0 +1,626 @@
+#!/usr/bin/env python3
+"""
+Verify a generated quotation .docx for content consistency and format sanity.
+
+Usage:
+  python3 scripts/verify_quotation.py --input 报价单.docx
+  python3 scripts/verify_quotation.py --input 报价单.docx --data quotation.json
+  python3 scripts/verify_quotation.py --input 报价单.docx --entity jakarta
+
+Checks:
+  1. Header company name/address vs bank info consistency
+  2. Signature company name vs header company name consistency
+  3. Service name coverage (fee_details / process / docs all present)
+  4. Font sanity (FangSong throughout)
+  5. A4 page size (sectPr)
+  6. Amount internal consistency (subtotal, discount, VAT, total)
+  7. Cross-check with input data (if --data provided)
+"""
+import argparse, zipfile, os, sys, re, json, tempfile, shutil
+from xml.etree import ElementTree as ET
+
+W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+
+SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENTITY_CONFIG_PATH = os.path.join(SKILL_DIR, 'config', 'entities.json')
+
+def load_entity_config():
+    if not os.path.exists(ENTITY_CONFIG_PATH):
+        return {}
+    with open(ENTITY_CONFIG_PATH, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def w(tag):
+    return f'{{{W}}}{tag}'
+
+
+def extract_paragraph_texts(root):
+    """Extract text from all paragraphs in an XML element."""
+    results = []
+    for p in root.findall('.//' + w('p')):
+        text = ''.join((t.text or '') for t in p.findall('.//' + w('t')))
+        if text.strip():
+            results.append((p, text.strip()))
+    return results
+
+
+def detect_currency(paragraph_texts):
+    """Detect currency from document text."""
+    for _, text in paragraph_texts:
+        if '￥' in text or '¥' in text:
+            return 'RMB'
+        if 'Rp' in text:
+            return 'IDR'
+    return 'RMB'
+
+
+def detect_entity(paragraph_texts, entity_config):
+    """Detect signing entity from document text by matching bank lines."""
+    bank_section = find_bank_info_section(paragraph_texts)
+    if not bank_section:
+        return None
+    # Match by looking for unique bank info patterns
+    for entity_key, cfg in entity_config.items():
+        bank_lines = cfg.get('bank_lines', [])
+        # Try matching on account number — most unique identifier
+        for doc_line in bank_section:
+            for cfg_line in bank_lines:
+                # Extract account number patterns
+                account_match = re.search(r'(账号|账户号码|银行账号)\s*[：:]\s*(\S+)', cfg_line)
+                if account_match:
+                    account_num = account_match.group(2).replace(' ', '')
+                    if account_num in doc_line.replace(' ', ''):
+                        return entity_key
+    # Fallback: match by company name in bank section
+    for entity_key, cfg in entity_config.items():
+        company = cfg.get('company', '')
+        for doc_line in bank_section:
+            if company in doc_line:
+                return entity_key
+    return None
+
+
+def parse_formatted_amount(text, currency='RMB'):
+    """Parse a formatted amount string into a number."""
+    text = text.strip()
+    if currency == 'RMB':
+        text = text.replace('￥', '').replace('¥', '')
+    else:
+        text = re.sub(r'^Rp\s*', '', text, flags=re.I)
+    text = text.replace(',', '').replace(' ', '')
+    try:
+        if '.' in text:
+            return float(text)
+        return int(text)
+    except ValueError:
+        return None
+
+
+def find_bank_info_section(paragraph_texts):
+    """Find bank info section paragraphs after the bank header line."""
+    bank_lines = []
+    started = False
+    for _, text in paragraph_texts:
+        if '所有款项汇到' in text:
+            started = True
+            continue
+        if started:
+            if '保密义务' in text or '报价从报价日起' in text:
+                break
+            bank_lines.append(text)
+    return bank_lines
+
+
+def extract_company_from_bank(bank_lines):
+    """Extract company name from bank info lines."""
+    for line in bank_lines:
+        match = re.search(
+            r'(账户名称|开户名|户名)\s*[：:]\s*(.+)', line)
+        if match:
+            return match.group(2).strip()
+    return None
+
+
+def extract_address_from_bank(bank_lines):
+    """Extract address from bank info lines."""
+    for line in bank_lines:
+        match = re.search(r'地址\s*[：:]\s*(.+)', line)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def extract_signature_company(paragraph_texts, entity_config):
+    """Extract company name from signature section by dynamically matching
+    against all companies in the entity config.
+
+    Sorts candidates by length (longest first) so that subsidiaries like
+    '北京山海图科技有限公司西安分公司' match before their parent
+    '北京山海图科技有限公司'.
+    """
+    if not entity_config:
+        return None
+    # Collect all company names, sorted longest-first for correct precedence
+    candidates = sorted(
+        [cfg.get('company', '') for cfg in entity_config.values() if cfg.get('company')],
+        key=len, reverse=True,
+    )
+    for _, text in paragraph_texts:
+        for company in candidates:
+            if company and company in text:
+                return company
+    return None
+
+
+def extract_service_names_from_table(tables):
+    """Extract service names from the service content table (first table)."""
+    names = []
+    if not tables:
+        return names
+    # The first table is the service content table
+    first_tbl = tables[0]
+    rows = first_tbl.findall(w('tr'))
+    for row in rows:
+        cells = row.findall(w('tc'))
+        if len(cells) >= 2:
+            # Skip header rows (light blue fill) and summary rows
+            tcPr = cells[1].find(w('tcPr'))
+            if tcPr is not None:
+                fill = tcPr.find(w('shd'))
+                if fill is not None and fill.get(w('val')) == 'clear' and fill.get(w('fill')) == 'BDD6EE':
+                    continue
+                # Skip category rows (gridSpan=5)
+                gridSpan = tcPr.find(w('gridSpan'))
+                if gridSpan is not None:
+                    continue
+            name_text = ''.join((t.text or '') for t in cells[1].findall('.//' + w('t'))).strip()
+            # Strip quantity suffix for comparison: "公司注册×2" → "公司注册"
+            base_name = re.sub(r'\s*[x×]\d+$', '', name_text)
+            if base_name and base_name not in ('服务内容', '小计', '优惠金额', '增值税', '含税总计'):
+                names.append(base_name)
+    return names
+
+
+def extract_header_info(header_root):
+    """Extract company name and address from header XML."""
+    texts = extract_paragraph_texts(header_root)
+    non_empty = [text for _, text in texts if text.strip()]
+    company = non_empty[0] if len(non_empty) >= 1 else None
+    address = non_empty[1] if len(non_empty) >= 2 else None
+    return company, address
+
+
+def check_address_similarity(addr1, addr2):
+    """Check if two addresses are consistent, allowing for province prefix differences."""
+    if not addr1 or not addr2:
+        return False, "One or both addresses are empty"
+    if addr1 == addr2:
+        return True, "Exact match"
+    core1 = re.sub(r'^.{2,6}(省|市)', '', addr1)
+    core2 = re.sub(r'^.{2,6}(省|市)', '', addr2)
+    if core1 == core2:
+        return True, (
+            f"Core address matches (prefix difference: "
+            f"'{addr1}' vs '{addr2}')")
+    if addr1.endswith(core2) or addr2.endswith(core1):
+        return True, (
+            f"Similar addresses (superset: "
+            f"'{addr1}' vs '{addr2}')")
+    return False, f"Addresses differ: header='{addr1}' vs bank='{addr2}'"
+
+
+def check_fonts(document_root):
+    """Check that fonts are consistently FangSong."""
+    non_fangsong = set()
+    for rpr in document_root.findall('.//' + w('rPr')):
+        rfonts = rpr.find(w('rFonts'))
+        if rfonts is not None:
+            for attr_key in ['ascii', 'hAnsi', 'eastAsia', 'cs']:
+                val = rfonts.get(w(attr_key))
+                if val and val not in ('FangSong', 'Times New Roman'):
+                    non_fangsong.add(val)
+    return sorted(non_fangsong)
+
+
+def check_page_size(document_root):
+    """Check A4 page size in sectPr."""
+    body = document_root.find(w('body'))
+    if body is None:
+        return ["No <w:body> element found"]
+    sectPr = body.find(w('sectPr'))
+    if sectPr is None:
+        return ["No sectPr found - page size undefined"]
+    pgSz = sectPr.find(w('pgSz'))
+    if pgSz is None:
+        return ["No pgSz in sectPr"]
+    w_val = pgSz.get(w('w'))
+    h_val = pgSz.get(w('h'))
+    if w_val != '11906' or h_val != '16838':
+        return [f"Page size is {w_val}x{h_val} DXA (expected 11906x16838 for A4)"]
+    return []
+
+
+def extract_summary_amounts(tables, currency):
+    """Extract subtotal, discount, VAT, and total from the service content table."""
+    amounts = {}
+    for tbl in tables:
+        rows = tbl.findall(w('tr'))
+        for row in rows:
+            cells = row.findall(w('tc'))
+            if len(cells) < 4:
+                continue
+            label = ''.join(
+                (t.text or '') for t in cells[1].findall('.//' + w('t'))
+            ).strip()
+            amount_text = ''.join(
+                (t.text or '') for t in cells[3].findall('.//' + w('t'))
+            ).strip()
+            parsed = parse_formatted_amount(amount_text, currency)
+
+            label_lower = label
+            if '小计' in label_lower and parsed is not None:
+                amounts['subtotal'] = parsed
+            elif '优惠金额' in label_lower and parsed is not None:
+                amounts['discount'] = parsed
+            elif '增值税' in label_lower and parsed is not None:
+                amounts['vat'] = parsed
+                rate_match = re.search(r'(\d+(?:\.\d+)?)%', label_lower)
+                if rate_match:
+                    amounts['vat_rate'] = float(rate_match.group(1)) / 100
+            elif '含税总计' in label_lower and parsed is not None:
+                amounts['total'] = parsed
+    return amounts
+
+
+def verify_amounts(amounts, currency):
+    """Verify internal consistency of extracted amounts."""
+    issues = []
+    if not amounts:
+        issues.append("Could not extract summary amounts from document")
+        return issues
+
+    subtotal = amounts.get('subtotal')
+    discount = amounts.get('discount', 0)
+    vat = amounts.get('vat')
+    total = amounts.get('total')
+    vat_rate = amounts.get('vat_rate')
+
+    if subtotal is None:
+        issues.append("Subtotal not found in document")
+        return issues
+
+    # Check VAT calculation: VAT = (subtotal - discount) * vat_rate
+    if vat_rate is not None and vat is not None:
+        expected_vat = (subtotal - discount) * vat_rate
+        if currency == 'RMB':
+            expected_vat = round(expected_vat, 2)
+        else:
+            expected_vat = round(expected_vat)
+        tolerance = 0.02 if currency == 'RMB' else 2
+        if abs(vat - expected_vat) > tolerance:
+            issues.append(
+                f"VAT mismatch: document={vat}, expected={expected_vat} "
+                f"(rate={vat_rate*100}% x ({subtotal}-{discount}))")
+
+    # Check total = discounted subtotal + VAT
+    if total is not None and vat is not None:
+        expected_total = (subtotal - discount) + vat
+        tolerance = 0.02 if currency == 'RMB' else 2
+        if abs(total - expected_total) > tolerance:
+            issues.append(
+                f"Total mismatch: document={total}, expected={expected_total} "
+                f"(subtotal={subtotal} - discount={discount} + vat={vat})")
+
+    return issues
+
+
+def cross_check_with_data(document_amounts, data_path, currency):
+    """Cross-check document amounts with input data file."""
+    issues = []
+    try:
+        with open(data_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as exc:
+        issues.append(f"Cannot read data file: {exc}")
+        return issues
+
+    expected_subtotal = 0
+    for group in data.get('services', []):
+        for item in group.get('items', []):
+            price = item.get('price', 0)
+            if isinstance(price, str):
+                price = int(price.replace(',', ''))
+            # Price field is already the total price (not unit price), so do NOT multiply by quantity
+            expected_subtotal += price
+
+    doc_subtotal = document_amounts.get('subtotal')
+    if doc_subtotal is not None and expected_subtotal != doc_subtotal:
+        issues.append(
+            f"Subtotal mismatch: document={doc_subtotal} vs data={expected_subtotal}")
+
+    expected_discount = data.get('discount_amount', 0)
+    doc_discount = document_amounts.get('discount', 0)
+    if doc_discount is not None and expected_discount != doc_discount:
+        issues.append(
+            f"Discount mismatch: document={doc_discount} vs data={expected_discount}")
+
+    # Check service name coverage in fee_details / process_data / doc_data
+    doc_service_names = set()
+    for group in data.get('services', []):
+        for item in group.get('items', []):
+            name = item.get('name', '')
+            base_name = re.sub(r'\s*[x×]\d+$', '', name)
+            doc_service_names.add(base_name)
+
+    for key in ['fee_details', 'process_data', 'doc_data']:
+        records = data.get(key, [])
+        seen_names = set()
+        for record in records:
+            name = record.get('name', '')
+            if name:
+                seen_names.add(name)
+        missing = sorted(doc_service_names - seen_names)
+        extra = sorted(seen_names - doc_service_names)
+        if missing:
+            issues.append(f"{key} missing services: {', '.join(missing)}")
+        if extra:
+            issues.append(f"{key} contains unknown services: {', '.join(extra)}")
+
+    return issues
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Verify a generated quotation .docx')
+    parser.add_argument('--input', required=True,
+                        help='Path to the generated .docx file')
+    parser.add_argument('--data', default=None,
+                        help='Optional: input quotation data JSON for cross-checking')
+    parser.add_argument('--entity', default=None,
+                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new'],
+                        help='Expected signing entity (for config-based checks)')
+    args = parser.parse_args()
+
+    entity_config = load_entity_config()
+
+    input_path = os.path.abspath(args.input)
+    if not os.path.exists(input_path):
+        print(f"❌ File not found: {input_path}")
+        sys.exit(1)
+
+    data_path = None
+    if args.data:
+        data_path = os.path.abspath(args.data)
+        if not os.path.exists(data_path):
+            print(f"❌ Data file not found: {data_path}")
+            sys.exit(1)
+
+    unpack_dir = tempfile.mkdtemp(prefix='quotation-verify-')
+    all_issues = []
+    all_warnings = []
+
+    try:
+        with zipfile.ZipFile(input_path, 'r') as zf:
+            zf.extractall(unpack_dir)
+
+        # ── Parse document.xml ──
+        doc_xml_path = os.path.join(unpack_dir, 'word', 'document.xml')
+        if not os.path.exists(doc_xml_path):
+            print("❌ word/document.xml not found in .docx")
+            sys.exit(1)
+
+        doc_tree = ET.parse(doc_xml_path)
+        doc_root = doc_tree.getroot()
+        doc_body = doc_root.find(w('body'))
+        para_texts = extract_paragraph_texts(doc_root)
+        currency = detect_currency(para_texts)
+        print(f"货币: {currency}")
+
+        # Detect entity from document content if not provided
+        detected_entity = args.entity or detect_entity(para_texts, entity_config)
+        if detected_entity:
+            print(f"签约主体: {detected_entity}")
+        else:
+            print("⚠️  无法自动识别签约主体，部分交叉验证将跳过")
+            all_warnings.append("无法识别签约主体，跳过主体配置交叉验证")
+
+        # ── 1. Header vs bank info consistency ──
+        header_xml_path = os.path.join(unpack_dir, 'word', 'header1.xml')
+        header_company = None
+        header_address = None
+
+        if os.path.exists(header_xml_path):
+            header_tree = ET.parse(header_xml_path)
+            header_root = header_tree.getroot()
+            header_company, header_address = extract_header_info(header_root)
+            print(f"页眉公司名: {header_company}")
+            print(f"页眉地址: {header_address}")
+        else:
+            print("⚠️  header1.xml 不存在，跳过页眉与银行信息一致性检查")
+            all_warnings.append("header1.xml 不存在，无法核对页眉与银行信息")
+
+        bank_lines = find_bank_info_section(para_texts)
+        bank_company = extract_company_from_bank(bank_lines)
+        bank_address = extract_address_from_bank(bank_lines)
+        print(f"银行公司名: {bank_company}")
+        print(f"银行地址: {bank_address}")
+
+        # Check company name
+        if header_company and bank_company:
+            if header_company == bank_company:
+                print("✅ 页眉公司名与银行信息一致")
+            elif header_company in bank_company or bank_company in header_company:
+                print(f"⚠️  页眉公司名 '{header_company}' 与银行 '{bank_company}' 相似但非完全一致")
+                all_warnings.append(
+                    f"页眉公司名 '{header_company}' vs 银行 '{bank_company}' - 非完全一致")
+            else:
+                print(f"❌ 页眉公司名 '{header_company}' 与银行 '{bank_company}' 不一致")
+                all_issues.append(
+                    f"页眉公司名 '{header_company}' ≠ 银行 '{bank_company}'")
+
+        # Check address
+        if header_address and bank_address:
+            match, msg = check_address_similarity(header_address, bank_address)
+            if match:
+                print(f"✅ 页眉地址与银行地址一致: {msg}")
+            else:
+                print(f"❌ 页眉地址与银行地址不一致: {msg}")
+                all_issues.append(msg)
+        elif header_address and not bank_address:
+            print("⚠️  银行信息中未找到地址字段，无法核对")
+            all_warnings.append("银行信息中无地址字段，无法核对页眉地址")
+
+        # ── 2. Signature company vs header company ──
+        sig_company = extract_signature_company(para_texts, entity_config)
+        if sig_company:
+            print(f"签名公司名: {sig_company}")
+            if header_company:
+                if sig_company == header_company:
+                    print("✅ 签名公司名与页眉公司名一致")
+                else:
+                    print(f"❌ 签名公司名 '{sig_company}' 与页眉 '{header_company}' 不一致")
+                    all_issues.append(f"签名公司名 '{sig_company}' ≠ 页眉 '{header_company}'")
+
+            # Cross-check with entity config if detected
+            if detected_entity:
+                cfg_company = entity_config.get(detected_entity, {}).get('company')
+                if cfg_company and sig_company != cfg_company:
+                    print(f"❌ 签名公司名 '{sig_company}' 与配置 '{cfg_company}' 不一致")
+                    all_issues.append(f"签名公司名 '{sig_company}' ≠ 配置 '{cfg_company}' (entity={detected_entity})")
+                elif cfg_company:
+                    print(f"✅ 签名公司名与配置一致 (entity={detected_entity})")
+        else:
+            all_warnings.append("未在文档中找到签名公司名")
+
+        # ── 3. Service name coverage ──
+        tables = doc_body.findall('.//' + w('tbl'))
+        doc_service_names = extract_service_names_from_table(tables)
+        if doc_service_names:
+            print(f"文档中的服务名: {', '.join(doc_service_names)}")
+            # Check against entity config bank_lines doesn't apply here,
+            # but we can check that all service names appear in the other sections
+            fee_names = set()
+            process_names = set()
+            doc_names = set()
+            for _, text in para_texts:
+                # Fee details section: "1. 服务名" pattern
+                fee_match = re.match(r'^\d+\.\s+(.+)$', text)
+                if fee_match:
+                    fee_names.add(fee_match.group(1))
+                # Process table and doc table — check by matching service names
+                for name in doc_service_names:
+                    if name in text and text.startswith(name):
+                        process_names.add(name)
+                        doc_names.add(name)
+
+            # More precise extraction from tables
+            if len(tables) >= 2:
+                # Process table (second table)
+                ptbl = tables[1]
+                for row in ptbl.findall(w('tr')):
+                    cells = row.findall(w('tc'))
+                    if len(cells) >= 2:
+                        tcPr = cells[1].find(w('tcPr'))
+                        if tcPr is not None:
+                            fill = tcPr.find(w('shd'))
+                            if fill is not None and fill.get(w('fill')) == 'BDD6EE':
+                                continue
+                        name = ''.join((t.text or '') for t in cells[1].findall('.//' + w('t'))).strip()
+                        if name and name != '项目':
+                            process_names.add(name)
+
+            if len(tables) >= 3:
+                # Doc table (third table)
+                dtbl = tables[2]
+                for row in dtbl.findall(w('tr')):
+                    cells = row.findall(w('tc'))
+                    if len(cells) >= 2:
+                        tcPr = cells[1].find(w('tcPr'))
+                        if tcPr is not None:
+                            fill = tcPr.find(w('shd'))
+                            if fill is not None and fill.get(w('fill')) == 'BDD6EE':
+                                continue
+                        name = ''.join((t.text or '') for t in cells[1].findall('.//' + w('t'))).strip()
+                        if name and name != '项目':
+                            doc_names.add(name)
+
+            service_set = set(doc_service_names)
+            for section_name, section_set in [('流程及交付', process_names), ('所需材料', doc_names)]:
+                missing = sorted(service_set - section_set)
+                extra = sorted(section_set - service_set)
+                if missing:
+                    print(f"❌ {section_name}缺少服务: {', '.join(missing)}")
+                    all_issues.append(f"{section_name}缺少服务: {', '.join(missing)}")
+                if extra:
+                    print(f"⚠️  {section_name}有多余服务: {', '.join(extra)}")
+                    all_warnings.append(f"{section_name}有多余服务: {', '.join(extra)}")
+                if not missing and not extra:
+                    print(f"✅ {section_name}服务覆盖完整")
+        else:
+            all_warnings.append("未从文档提取到服务名列表")
+
+        # ── 4. Font check ──
+        non_fangsong = check_fonts(doc_root)
+        if non_fangsong:
+            for font in non_fangsong:
+                print(f"⚠️  非仿宋字体: {font}")
+                all_warnings.append(f"非仿宋字体: {font}")
+        else:
+            print("✅ 字体检查: 全文仿宋")
+
+        # ── 5. Page size check ──
+        page_issues = check_page_size(doc_root)
+        if page_issues:
+            for pi in page_issues:
+                print(f"❌ {pi}")
+                all_issues.append(pi)
+        else:
+            print("✅ 页面尺寸: A4 (11906x16838 DXA)")
+
+        # ── 6. Amount extraction & verification ──
+        amounts = extract_summary_amounts(tables, currency)
+
+        if amounts:
+            print(f"金额: 小计={amounts.get('subtotal')} "
+                  f"优惠={amounts.get('discount', 0)} "
+                  f"增值税={amounts.get('vat')} "
+                  f"含税总计={amounts.get('total')}")
+            amount_issues = verify_amounts(amounts, currency)
+            for ai in amount_issues:
+                print(f"❌ {ai}")
+                all_issues.append(ai)
+            if not amount_issues:
+                print("✅ 金额内部一致性验证通过")
+
+            # ── 7. Cross-check with input data ──
+            if data_path:
+                data_issues = cross_check_with_data(amounts, data_path, currency)
+                for di in data_issues:
+                    print(f"❌ {di}")
+                    all_issues.append(di)
+                if not data_issues:
+                    print("✅ 文档金额与输入数据一致")
+        else:
+            all_warnings.append("未从文档提取到金额汇总行，跳过金额验证")
+            print("⚠️  未提取到金额汇总行")
+
+        # ── Summary ──
+        print("\n" + "=" * 50)
+        if all_issues:
+            print(f"❌ 验证失败: {len(all_issues)} 个问题")
+            for issue in all_issues:
+                print(f"  - {issue}")
+            sys.exit(1)
+        elif all_warnings:
+            print(f"⚠️  验证通过，有 {len(all_warnings)} 个警告:")
+            for warning in all_warnings:
+                print(f"  - {warning}")
+        else:
+            print("✅ 验证通过: 所有检查OK")
+
+    finally:
+        shutil.rmtree(unpack_dir, ignore_errors=True)
+
+
+if __name__ == '__main__':
+    main()

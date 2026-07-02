@@ -1,0 +1,138 @@
+{
+  "_meta": {
+    "_comment": "签约主体配置文件。新增实体只需添加新 key 并确保包含所有 REQUIRED_ENTITY_FIELDS。",
+    "required_entity_fields": ["template", "company", "header_lines", "vat_rate", "currency", "payment_terms", "bank_lines"],
+    "universal_excludes": ["文件翻译费用（如需）", "资料快递费用（国际）", "差旅费/考察费（如有）"]
+  },
+  "jakarta": {
+    "template": "jakarta",
+    "company": "PT. SHAN HAI MAP",
+    "header_lines": [
+      "PT. SHAN HAI MAP",
+      "Jakarta, Indonesia",
+      ""
+    ],
+    "vat_rate": 0.11,
+    "currency": "IDR",
+    "payment_terms": [
+      "甲方应在收到发票后 5 个工作日内支付合同金额的 100%。"
+    ],
+    "bank_lines": [
+      "银行：BCA (KCP CENTRAL PARK)",
+      "户名：PT. SHAN HAI MAP",
+      "账号：5485225789",
+      "SWIFT：CENAIDJA"
+    ]
+  },
+  "beijing": {
+    "template": "china",
+    "company": "北京山海图科技有限公司",
+    "header_lines": [
+      "北京山海图科技有限公司",
+      "北京市海淀区西四环北路158号1幢一层3-65",
+      ""
+    ],
+    "vat_rate": 0.06,
+    "currency": "RMB",
+    "payment_terms": [
+      "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
+    ],
+    "bank_lines": [
+      "账户名称：北京山海图科技有限公司",
+      "税号：91110108080546395Q",
+      "开户银行：华夏银行(北京学院路华夏银行支行)",
+      "银行账号：10242000000049937",
+      "地址：北京市海淀区西四环北路158号1幢一层3-65"
+    ]
+  },
+  "xian": {
+    "template": "china",
+    "company": "北京山海图科技有限公司西安分公司",
+    "header_lines": [
+      "北京山海图科技有限公司西安分公司",
+      "西安市高新区科技路林凯国际大厦15层1501-01-03室",
+      ""
+    ],
+    "vat_rate": 0.06,
+    "currency": "RMB",
+    "payment_terms": [
+      "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
+    ],
+    "bank_lines": [
+      "统一社会信用代码（或税号）：91610131MAB11JW331",
+      "开户行：中国银行西安高新技术开发区支行",
+      "开户名：北京山海图科技有限公司西安分公司",
+      "账号：1021 0955 7761",
+      "地址：西安市高新区科技路林凯国际大厦15层1501-01-03室"
+    ]
+  },
+  "shenzhen": {
+    "template": "china",
+    "company": "北京山海图科技有限公司深圳分公司",
+    "header_lines": [
+      "北京山海图科技有限公司深圳分公司",
+      "深圳市南山区南海大道1052号海翔广场717",
+      ""
+    ],
+    "vat_rate": 0.06,
+    "currency": "RMB",
+    "payment_terms": [
+      "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
+    ],
+    "bank_lines": [
+      "统一社会信用代码（或税号）：91440300MA5HXMAEXM",
+      "开户行：中国银行股份有限公司深圳高新区支行",
+      "开户名：北京山海图科技有限公司深圳分公司",
+      "账号：7770 7729 1133",
+      "地址：深圳市南山区南海大道1052号海翔广场717"
+    ]
+  },
+  "shanghai": {
+    "template": "china",
+    "company": "北京山海图科技有限公司上海分公司",
+    "header_lines": [
+      "北京山海图科技有限公司上海分公司",
+      "上海市闵行区虹桥LM世界中心L3-B栋 305A",
+      ""
+    ],
+    "vat_rate": 0.01,
+    "currency": "RMB",
+    "payment_terms": [
+      "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
+    ],
+    "bank_lines": [
+      "账户名称：北京山海图科技有限公司上海分公司",
+      "Account Name: Beijing Shanhaitu Technology Co., Ltd. Shanghai Branch",
+      "税号：91310118MAEGFAM57M",
+      "账户号码：4351 8873 3108",
+      "开户银行：中国银行上海市虹桥会展中心支行（Bank of China Shanghai Branch Hongqiao Exhibition And Convention Center Sub-Branch）",
+      "行号：104290020130",
+      "SWIFT CODE：BKCHCNBJ300",
+      "地址：上海市闵行区虹桥LM世界中心L3-B栋 305A"
+    ]
+  },
+  "shanghai_new": {
+    "template": "china",
+    "company": "上海山海图新企业咨询有限公司",
+    "header_lines": [
+      "上海山海图新企业咨询有限公司",
+      "上海市青浦区虹桥LM世界中心L3-B栋 305A",
+      ""
+    ],
+    "vat_rate": 0.01,
+    "currency": "RMB",
+    "payment_terms": [
+      "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
+    ],
+    "bank_lines": [
+      "账户名称：上海山海图新企业咨询有限公司",
+      "Account Name: Shanghai Shanhaimap New Enterprise Consulting Co., Ltd.",
+      "税号：91310113MAEW51431Q",
+      "账号：4520 8977 3373",
+      "开户行：中国银行股份有限公司上海市虹桥会展中心支行（Bank of China Shanghai Branch Hongqiao Exhibition And Convention Center Sub-Branch）",
+      "行号：104290020130",
+      "SWIFT CODE：BKCHCNBJ300",
+      "地址：上海市青浦区虹桥LM世界中心L3-B栋 305A"
+    ]
+  }
+}
