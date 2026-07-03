@@ -1,8 +1,20 @@
 {
   "_meta": {
-    "_comment": "签约主体配置文件。新增实体只需添加新 key 并确保包含所有 REQUIRED_ENTITY_FIELDS。",
-    "required_entity_fields": ["template", "company", "header_lines", "vat_rate", "currency", "payment_terms", "bank_lines"],
-    "universal_excludes": ["文件翻译费用（如需）", "资料快递费用（国际）", "差旅费/考察费（如有）"]
+    "_comment": "签约主体配置文件。新增实体只需添加新 key 并确保包含所有 REQUIRED_ENTITY_FIELDS。universal_excludes 是常见公共费用不含项的种子示例，用于提示去重，不是完整白名单；实际应按多个服务共同项和业务语义抽取公共不含项到 notes。",
+    "required_entity_fields": [
+      "template",
+      "company",
+      "header_lines",
+      "vat_rate",
+      "currency",
+      "payment_terms",
+      "bank_lines"
+    ],
+    "universal_excludes": [
+      "文件翻译费用（如需）",
+      "资料快递费用（国际）",
+      "差旅费/考察费（如有）"
+    ]
   },
   "jakarta": {
     "template": "jakarta",
@@ -30,7 +42,7 @@
     "header_lines": [
       "北京山海图科技有限公司",
       "北京市海淀区西四环北路158号1幢一层3-65",
-      ""
+      "Web: www.shanhaimap.com"
     ],
     "vat_rate": 0.06,
     "currency": "RMB",
@@ -51,7 +63,7 @@
     "header_lines": [
       "北京山海图科技有限公司西安分公司",
       "西安市高新区科技路林凯国际大厦15层1501-01-03室",
-      ""
+      "Web: www.shanhaimap.com"
     ],
     "vat_rate": 0.06,
     "currency": "RMB",
@@ -72,7 +84,7 @@
     "header_lines": [
       "北京山海图科技有限公司深圳分公司",
       "深圳市南山区南海大道1052号海翔广场717",
-      ""
+      "Web: www.shanhaimap.com"
     ],
     "vat_rate": 0.06,
     "currency": "RMB",
@@ -93,7 +105,7 @@
     "header_lines": [
       "北京山海图科技有限公司上海分公司",
       "上海市闵行区虹桥LM世界中心L3-B栋 305A",
-      ""
+      "Web: www.shanhaimap.com"
     ],
     "vat_rate": 0.01,
     "currency": "RMB",
@@ -117,7 +129,7 @@
     "header_lines": [
       "上海山海图新企业咨询有限公司",
       "上海市青浦区虹桥LM世界中心L3-B栋 305A",
-      ""
+      "Web: www.shanhaimap.com"
     ],
     "vat_rate": 0.01,
     "currency": "RMB",

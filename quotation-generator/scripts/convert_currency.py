@@ -5,14 +5,14 @@ Uses rates from the ShanhaiMap API response (rateToCny / rateToUsd)
 to convert service prices between IDR, RMB, and USD.
 
 Usage:
-  # Convert IDR → RMB (using rateToCny from API)
-  python3 scripts/convert_currency.py --amount 250000000 --from IDR --to RMB --rateToCny 0.00046
+  # Convert IDR → RMB (rateToCny means 1 CNY = N service currency, e.g. 1 CNY = 2173.91 IDR)
+  python3 scripts/convert_currency.py --amount 250000000 --from IDR --to RMB --rateToCny 2173.91
 
-  # Convert RMB → IDR (using rateToCny from API, inverted)
-  python3 scripts/convert_currency.py --amount 115000 --from RMB --to IDR --rateToCny 0.00046
+  # Convert RMB → IDR (using rateToCny in the opposite direction)
+  python3 scripts/convert_currency.py --amount 115000 --from RMB --to IDR --rateToCny 2173.91
 
-  # Convert IDR → USD (using rateToUsd from API)
-  python3 scripts/convert_currency.py --amount 250000000 --from IDR --to USD --rateToUsd 0.000063
+  # Convert IDR → USD (rateToUsd means 1 USD = N service currency, e.g. 1 USD = 16000 IDR)
+  python3 scripts/convert_currency.py --amount 250000000 --from IDR --to USD --rateToUsd 16000
 
   # Batch convert multiple amounts from API query result
   python3 scripts/convert_currency.py --query-result queried_services.json --to RMB
@@ -266,13 +266,15 @@ def main():
                         choices=['IDR', 'RMB', 'USD'],
                         help='Target currency')
     parser.add_argument('--rateToCny', type=str, default=None,
-                        help='Exchange rate: 1 IDR = rateToCny RMB (from API)')
+                        help='Exchange rate from API: 1 CNY = rateToCny service currency')
     parser.add_argument('--rateToUsd', type=str, default=None,
-                        help='Exchange rate: 1 IDR = rateToUsd USD (from API)')
+                        help='Exchange rate from API: 1 USD = rateToUsd service currency')
 
     # Batch mode: convert all services from a query result
     parser.add_argument('--query-result', default=None,
                         help='Path to queried_services JSON for batch conversion')
+    parser.add_argument('--json-only', action='store_true',
+                        help='Print only structured JSON to stdout; human-readable lines go to stderr')
 
     args = parser.parse_args()
 
@@ -282,12 +284,14 @@ def main():
             parser.error('--to is required with --query-result')
         results = batch_convert(args.query_result, args.to_currency)
         for r in results:
-            print(format_output(r))
+            print(format_output(r), file=sys.stderr if args.json_only else sys.stdout)
 
         # Output structured JSON for Agent consumption
         output = {'conversions': results, 'to_currency': args.to_currency}
         json.dump(output, sys.stdout, ensure_ascii=False, indent=2)
         print()
+        if any('error' in r for r in results):
+            sys.exit(1)
         return
 
     # Single conversion mode
@@ -325,7 +329,7 @@ def main():
         sys.exit(1)
 
     # Human-readable output
-    print(format_output(result))
+    print(format_output(result), file=sys.stderr if args.json_only else sys.stdout)
 
     # Structured JSON output for Agent consumption
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2)

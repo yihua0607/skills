@@ -3,6 +3,18 @@
     "description": "雅加达实体示例，价格单位为印尼盾(IDR)。中国实体示例请将 price 改为人民币整数总价。",
     "applicable_entity": "jakarta"
   },
+  "quote_meta": {
+    "title_line1": "印尼投资",
+    "title_line2": "综合服务方案",
+    "quote_date": "",
+    "customer_name": "",
+    "contact_name": "",
+    "contact_info": "",
+    "contract_no": "",
+    "payment_terms": [
+      "甲方应在收到发票后 5 个工作日内支付合同金额的 100%。"
+    ]
+  },
   "services": [
     {
       "category": null,
@@ -68,8 +80,7 @@
         "服务费"
       ],
       "exclude": [
-        "相关资质办理费",
-        "差旅费/考察费（如有）"
+        "相关资质办理费"
       ],
       "note": "本服务仅包含激活三个经营范围。"
     },

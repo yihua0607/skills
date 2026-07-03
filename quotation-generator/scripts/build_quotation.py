@@ -11,8 +11,21 @@ Entity configuration is loaded from config/entities.json — no business data is
 """
 import zipfile, os, sys, argparse, tempfile, shutil, json, re
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
 from xml.etree import ElementTree as ET
+
+# Ensure imports work when this script is run directly as `python3 scripts/build_quotation.py`.
+_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _SKILL_DIR not in sys.path:
+    sys.path.insert(0, _SKILL_DIR)
+
+from scripts.quotation_common import (
+    parse_money_int,
+    calculate_amounts,
+    format_price_int,
+    format_price_vat,
+    format_price_total,
+    vat_percent_label,
+)
 
 # Skill root directory (where SKILL.md lives)
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -83,243 +96,7 @@ def load_quotation_data(path):
         raise ValueError('Unsupported data file type. Use .json, .yaml, or .yml.')
 
 
-def parse_money_int(value, path):
-    """Parse service price / discount values. These must be whole-number totals."""
-    if isinstance(value, bool):
-        raise ValueError(f'{path} must be an integer amount, not boolean')
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        raw = value.replace(',', '').strip()
-        if raw.isdigit():
-            return int(raw)
-    raise ValueError(f'{path} must be an integer amount or comma-formatted integer string')
-
-
-def require_text(obj, key, path, errors):
-    value = obj.get(key)
-    if not isinstance(value, str) or not value.strip():
-        errors.append(f'{path}.{key} is required and must be non-empty text')
-        return ''
-    return value.strip()
-
-
-def require_text_list(obj, key, path, errors):
-    value = obj.get(key)
-    if not isinstance(value, list) or not value:
-        errors.append(f'{path}.{key} is required and must be a non-empty list')
-        return []
-    out = []
-    for i, item in enumerate(value):
-        if not isinstance(item, str) or not item.strip():
-            errors.append(f'{path}.{key}[{i}] must be non-empty text')
-        else:
-            out.append(item.strip())
-    return out
-
-
-def optional_text_list(obj, key, path, errors):
-    """Like require_text_list but allows empty/missing lists (returns [] if absent or empty)."""
-    value = obj.get(key)
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        errors.append(f'{path}.{key} must be a list when provided')
-        return []
-    out = []
-    for i, item in enumerate(value):
-        if not isinstance(item, str) or not item.strip():
-            errors.append(f'{path}.{key}[{i}] must be non-empty text')
-        else:
-            out.append(item.strip())
-    return out
-
-
-def validate_and_normalize_data(data):
-    """Validate input data before touching the Word template."""
-    errors = []
-    warnings = []
-
-    if not isinstance(data, dict):
-        raise ValueError('Quotation data must be a JSON/YAML object')
-
-    for key in REQUIRED_TOP_LEVEL_KEYS:
-        if key not in data:
-            errors.append(f'Missing top-level key: {key}')
-
-    services_data = data.get('services')
-    if not isinstance(services_data, list) or not services_data:
-        errors.append('services must be a non-empty list')
-        services_data = []
-
-    service_names = []
-    normalized_services = []
-    for group_idx, group in enumerate(services_data):
-        path = f'services[{group_idx}]'
-        if not isinstance(group, dict):
-            errors.append(f'{path} must be an object')
-            continue
-        category = group.get('category')
-        if category is not None and not isinstance(category, str):
-            errors.append(f'{path}.category must be text or null')
-            category = None
-        items = group.get('items')
-        if not isinstance(items, list) or not items:
-            errors.append(f'{path}.items must be a non-empty list')
-            continue
-        normalized_items = []
-        for item_idx, item in enumerate(items):
-            item_path = f'{path}.items[{item_idx}]'
-            if not isinstance(item, dict):
-                errors.append(f'{item_path} must be an object')
-                continue
-            name = require_text(item, 'name', item_path, errors)
-            service_id = require_text(item, 'id', item_path, errors)
-            days = require_text(item, 'days', item_path, errors)
-            note = require_text(item, 'note', item_path, errors)
-            quantity = item.get('quantity', 1)
-            if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1:
-                errors.append(f'{item_path}.quantity must be an integer >= 1')
-                quantity = 1
-            if name and re.search(r'\s*[x×]\d+$', name):
-                errors.append(f'{item_path}.name must not include quantity suffix; use quantity instead')
-            try:
-                price_int = parse_money_int(item.get('price'), f'{item_path}.price')
-                if price_int < 0:
-                    errors.append(f'{item_path}.price must be >= 0')
-            except ValueError as exc:
-                errors.append(str(exc))
-                price_int = 0
-            if name:
-                service_names.append(name)
-                if len(note) < 40:
-                    warnings.append(f'{item_path}.note is short; confirm it contains enough basic information')
-            display_name = f'{name}×{quantity}' if quantity > 1 else name
-            normalized_items.append({
-                'id': service_id,
-                'name': name,
-                'display_name': display_name,
-                'quantity': quantity,
-                'days': days,
-                'price': f'{price_int:,}',
-                'price_int': price_int,
-                'note': note,
-            })
-        normalized_services.append({'category': category, 'items': normalized_items})
-
-    duplicate_names = sorted({name for name in service_names if service_names.count(name) > 1})
-    for name in duplicate_names:
-        errors.append(f'Duplicate service name: {name}')
-    service_name_set = set(service_names)
-
-    def validate_named_records(key, list_fields, optional_fields=None, allow_note=False):
-        """Validate named records. list_fields are required (must be non-empty).
-        optional_fields allow empty/missing lists."""
-        records = data.get(key)
-        if not isinstance(records, list) or not records:
-            errors.append(f'{key} must be a non-empty list')
-            return []
-        seen = []
-        normalized = []
-        for i, record in enumerate(records):
-            path = f'{key}[{i}]'
-            if not isinstance(record, dict):
-                errors.append(f'{path} must be an object')
-                continue
-            name = require_text(record, 'name', path, errors)
-            if name:
-                seen.append(name)
-                if name not in service_name_set:
-                    errors.append(f'{path}.name does not match any services item: {name}')
-            out = {'name': name}
-            for field in list_fields:
-                out[field] = require_text_list(record, field, path, errors)
-            for field in (optional_fields or []):
-                out[field] = optional_text_list(record, field, path, errors)
-            if allow_note:
-                note = record.get('note', '')
-                if note is None:
-                    note = ''
-                if not isinstance(note, str):
-                    errors.append(f'{path}.note must be text')
-                    note = ''
-                out['note'] = note
-            normalized.append(out)
-        missing = sorted(service_name_set - set(seen))
-        extra = sorted(set(seen) - service_name_set)
-        if missing:
-            errors.append(f'{key} missing services: {", ".join(missing)}')
-        if extra:
-            errors.append(f'{key} contains unknown services: {", ".join(extra)}')
-        return normalized
-
-    fee_details = validate_named_records('fee_details', ['include'], optional_fields=['exclude'], allow_note=True)
-    process_data = validate_named_records('process_data', ['process', 'deliverables'])
-    doc_data = validate_named_records('doc_data', ['docs'])
-
-    notes = data.get('notes', [])
-    if notes is None:
-        notes = []
-    if not isinstance(notes, list):
-        errors.append('notes must be a list when provided')
-        notes = []
-    normalized_notes = []
-    for i, note in enumerate(notes):
-        path = f'notes[{i}]'
-        if isinstance(note, dict):
-            text = note.get('text')
-            indent = note.get('indent', 360)
-        elif isinstance(note, (list, tuple)) and len(note) == 2:
-            text, indent = note
-        else:
-            errors.append(f'{path} must be an object with text/indent or a 2-item pair')
-            continue
-        if not isinstance(text, str) or not text.strip():
-            errors.append(f'{path}.text must be non-empty text')
-            continue
-        if not isinstance(indent, int) or indent < 0:
-            errors.append(f'{path}.indent must be a non-negative integer')
-            indent = 360
-        normalized_notes.append((text.strip(), indent))
-
-    doc_notes_text = data.get('doc_notes_text', data.get('doc_notes', []))
-    if doc_notes_text is None:
-        doc_notes_text = []
-    if not isinstance(doc_notes_text, list):
-        errors.append('doc_notes_text must be a list when provided')
-        doc_notes_text = []
-    normalized_doc_notes = []
-    for i, item in enumerate(doc_notes_text):
-        if not isinstance(item, str) or not item.strip():
-            errors.append(f'doc_notes_text[{i}] must be non-empty text')
-        else:
-            normalized_doc_notes.append(item.strip())
-
-    discount_amount = data.get('discount_amount', 0)
-    try:
-        discount_amount = parse_money_int(discount_amount, 'discount_amount')
-        if discount_amount < 0:
-            errors.append('discount_amount must be >= 0')
-    except ValueError as exc:
-        errors.append(str(exc))
-        discount_amount = 0
-
-    subtotal = sum(item['price_int'] for group in normalized_services for item in group['items'])
-    if discount_amount > subtotal:
-        errors.append('discount_amount cannot exceed subtotal')
-
-    if errors:
-        raise ValueError('Invalid quotation data:\n- ' + '\n- '.join(errors))
-    return {
-        'services': normalized_services,
-        'fee_details': fee_details,
-        'process_data': process_data,
-        'doc_data': doc_data,
-        'notes': normalized_notes,
-        'doc_notes_text': normalized_doc_notes,
-        'discount_amount': discount_amount,
-        'warnings': warnings,
-    }
+from scripts.quotation_schema import validate_and_normalize_data
 
 def main():
 
@@ -331,8 +108,8 @@ def main():
     parser.add_argument('--output', default=None, help='Output .docx path (default: CWD)')
     parser.add_argument('--data', required=True, help='Quotation data file (.json, .yaml, .yml)')
     parser.add_argument('--vat-rate', type=float, default=None, help='VAT rate override (e.g. 0.06, 0.01, 0.11)')
-    parser.add_argument('--title-line1', default='印尼投资', help='Title first line (default: 印尼投资)')
-    parser.add_argument('--title-line2', default='综合服务方案', help='Title second line (default: 综合服务方案)')
+    parser.add_argument('--title-line1', default=None, help='Title first line (default: quote_meta.title_line1 or 印尼投资)')
+    parser.add_argument('--title-line2', default=None, help='Title second line (default: quote_meta.title_line2 or 综合服务方案)')
     parser.add_argument('--quote-date', default=None, help='Quote date override (default: today, format: YYYY-MM-DD)')
     args = parser.parse_args()
 
@@ -376,17 +153,39 @@ def main():
         return ''.join((t.text or '') for t in paragraph.findall('.//' + w('t')))
 
     def replace_paragraph_text(paragraph, value):
-        """Replace ALL text content in a paragraph with a single clean run.
-        Removes existing w:r elements and adds one new run with the value,
-        preserving paragraph-level formatting (w:pPr)."""
-        # Keep pPr if it exists
+        """Replace text runs in a paragraph while preserving drawing/image runs.
+        Finds the first text run's rPr and uses it for the new text content.
+        Falls back to make_run(value, sz='24') if no text run rPr found."""
         pPr = paragraph.find(w('pPr'))
-        # Remove all existing children except pPr
+        # Find the first TEXT run's rPr (w:r with w:t but no w:drawing)
+        orig_rpr = None
+        for run in paragraph.findall(w('r')):
+            if run.find(w('t')) is not None and run.find(w('drawing')) is None:
+                orig_rpr = run.find(w('rPr'))
+                break
+        # Remove all text runs (ones with w:t), preserve drawing runs and pPr
+        new_children = []
+        if pPr is not None:
+            new_children.append(pPr)
         for child in list(paragraph):
-            if child.tag != w('pPr'):
-                paragraph.remove(child)
-        # Add a single run with the new text
-        paragraph.append(make_run(value, sz='24'))
+            if child.tag == w('pPr'):
+                continue
+            if child.tag == w('r') and child.find(w('t')) is not None and child.find(w('drawing')) is None:
+                continue  # Skip text runs
+            new_children.append(child)  # Preserve drawing runs and other elements
+        # Add a single text run with the new value
+        if orig_rpr is not None:
+            new_run = ET.Element(w('r'))
+            new_run.append(ET.fromstring(ET.tostring(orig_rpr)))
+            t = ET.SubElement(new_run, w('t'))
+            t.text = str(value)
+            new_children.append(new_run)
+        else:
+            new_children.append(make_run(value, sz='24'))
+        # Rebuild paragraph
+        paragraph.clear()
+        for child in new_children:
+            paragraph.append(child)
         return True
 
     def apply_china_header(unpack_dir, entity_key):
@@ -419,8 +218,13 @@ def main():
                 text_paragraphs.append(new_p)
 
         surplus_start = len(lines_to_write)
+        # Don't remove surplus paragraphs — clear their text to preserve
+        # the header's overall spacing, so the decorative blue line stays
+        # at the same position as the original template.
         for p in text_paragraphs[surplus_start:]:
-            root.remove(p)
+            for run in p.findall(w('r')):
+                if run.find(w('t')) is not None and run.find(w('drawing')) is None:
+                    p.remove(run)
 
         tree.write(header_path, xml_declaration=True, encoding='UTF-8')
         print(f"✅ Updated template header for {cfg['company']}")
@@ -455,11 +259,11 @@ def main():
         return rpr
 
     def make_run(text, font='FangSong', sz='24', bold=False, color=None, hint='eastAsia'):
-        """Create a w:r element."""
+        """Create a w:r element. XML special characters are escaped automatically by ElementTree."""
         r = ET.Element(w('r'))
         r.append(make_rpr(font, sz, bold, color, hint))
         t = ET.SubElement(r, w('t'))
-        t.text = text
+        t.text = str(text)
         return r
 
     def make_para(runs_or_text, spacing_before=0, spacing_after=0, line='280',
@@ -711,30 +515,29 @@ def main():
     doc_data = quotation_data['doc_data']
     notes = quotation_data['notes']
     doc_notes_text = quotation_data['doc_notes_text']
+    quote_meta = quotation_data.get('quote_meta', {})
     DISCOUNT_AMOUNT_INT = quotation_data['discount_amount']
 
-    # ====== PRICING CONFIGURATION (full Decimal chain) ======
-    # All financial amounts travel as Decimal through the calculation pipeline.
-    # Only converted to string at the final formatting stage.
+    # ====== PRICING CONFIGURATION (shared module) ======
+    # All financial calculations go through scripts.quotation_common to keep
+    # validate_data.py and build_quotation.py consistent.
 
-    CURRENCY = entity_cfg['currency']
-    CURRENCY_SYMBOL = '￥' if CURRENCY == 'RMB' else 'Rp'
-    DECIMAL_PLACES = 2 if CURRENCY == 'RMB' else 0
+    meta = quotation_data.get('_meta', {}) if isinstance(quotation_data.get('_meta', {}), dict) else {}
+    CURRENCY = meta.get('target_currency') or entity_cfg['currency']
+    if CURRENCY not in ('IDR', 'RMB', 'USD'):
+        raise ValueError(f"Unsupported target currency: {CURRENCY}")
+    CURRENCY_SYMBOL = '￥' if CURRENCY == 'RMB' else ('$' if CURRENCY == 'USD' else 'Rp')
 
-    # VAT rate: CLI override → entity config → currency default
+    # VAT rate: CLI override → entity config
     if args.vat_rate is not None:
-        VAT_RATE = Decimal(str(args.vat_rate))
+        VAT_RATE = float(args.vat_rate)
     else:
-        VAT_RATE = Decimal(str(entity_cfg['vat_rate']))
+        VAT_RATE = float(entity_cfg['vat_rate'])
 
-    # Use :g format to strip unnecessary trailing zeros (e.g. 11.0% → 11%, 1.0% → 1%)
-    vat_pct = float(VAT_RATE * 100)
-    vat_label_pct = f"{vat_pct:g}%"
+    vat_label_pct = vat_percent_label(VAT_RATE)
     VAT_LABEL = f"增值税 {vat_label_pct}"
 
-    # All amounts in Decimal for precision throughout the pipeline
-    SUBTOTAL_D = Decimal(sum(item['price_int'] for svc in services_data for item in svc['items']))
-    DISCOUNT_D = Decimal(DISCOUNT_AMOUNT_INT)
+    SUBTOTAL_D = sum(item['price_int'] for svc in services_data for item in svc['items'])
 
     # Price magnitude guard — catch RMB/IDR data mix-up
     all_prices = [item['price_int'] for svc in services_data for item in svc['items']]
@@ -742,42 +545,26 @@ def main():
         print("⚠️  WARNING: Some prices appear too small for IDR (min: Rp 1,000,000). Did you forget to update services_data from a previous RMB quote?")
     elif CURRENCY == 'RMB' and any(p >= 1_000_000 for p in all_prices):
         print("⚠️  WARNING: Some prices appear too large for RMB (>= 1,000,000). Did you forget to convert from IDR?")
+    elif CURRENCY == 'USD' and any(p < 50 for p in all_prices if p > 0):
+        print("⚠️  WARNING: Some prices appear too small for USD (min: $50). Did you forget to convert from IDR?")
+    elif CURRENCY == 'USD' and any(p >= 500_000 for p in all_prices):
+        print("⚠️  WARNING: Some prices appear too large for USD (>= 500,000). Did you forget to convert from IDR?")
 
-    # Discounted subtotal
-    DISCOUNTED_D = SUBTOTAL_D - DISCOUNT_D
+    amounts = calculate_amounts(SUBTOTAL_D, DISCOUNT_AMOUNT_INT, VAT_RATE, CURRENCY)
+    DISCOUNT_D = amounts['discount']
+    DISCOUNTED_D = amounts['discounted']
+    VAT_D = amounts['vat']
+    GRAND_TOTAL_D = amounts['total']
 
-    # VAT calculation — fully Decimal, quantize at output
-    vat_d = DISCOUNTED_D * VAT_RATE
-    if DECIMAL_PLACES == 2:
-        VAT_D = vat_d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-    else:
-        VAT_D = vat_d.quantize(Decimal('1'), rounding=ROUND_HALF_UP)
-
-    # Grand total
-    GRAND_TOTAL_D = DISCOUNTED_D + VAT_D
-
-    # Format helpers with precision rules + currency symbol:
-    # - Service prices, subtotal, discount: ALWAYS integer (both RMB and IDR)
-    # - VAT and grand total: RMB allows 2dp, IDR must be integer
-    # - ￥ for RMB (no space), Rp for IDR (with space)
+    # Local aliases so the rest of the template code can stay unchanged.
     def fmt_price_int(val_d):
-        """Format service prices / subtotal / discount — Decimal input, always integer with currency symbol."""
-        formatted = f'{int(val_d):,}'
-        return f'￥{formatted}' if CURRENCY == 'RMB' else f'Rp {formatted}'
+        return format_price_int(val_d, CURRENCY)
 
     def fmt_price_vat(val_d):
-        """Format VAT — Decimal input, RMB always 2dp, IDR integer, with currency symbol."""
-        if CURRENCY == 'RMB':
-            return f'￥{float(val_d):,.2f}'
-        else:
-            return f'Rp {int(val_d):,}'
+        return format_price_vat(val_d, CURRENCY)
 
     def fmt_price_total(val_d):
-        """Format grand total — Decimal input, RMB always 2dp, IDR integer, with currency symbol."""
-        if CURRENCY == 'RMB':
-            return f'￥{float(val_d):,.2f}'
-        else:
-            return f'Rp {int(val_d):,}'
+        return format_price_total(val_d, CURRENCY)
 
     print(f"Entity: {entity} | Currency: {CURRENCY} | VAT: {vat_label_pct}")
     print(f"Subtotal: {fmt_price_int(SUBTOTAL_D)} | Discount: {fmt_price_int(DISCOUNT_D)} | Discounted: {fmt_price_int(DISCOUNTED_D)}")
@@ -787,24 +574,30 @@ def main():
     body_children = []
 
     # 1. Header Info Lines
-    body_children.append(make_info_line('公司名称     ：', ''))
-    body_children.append(make_info_line('联系人      ：', ''))
-    body_children.append(make_info_line('联系方式     ：', ''))
-    # Quote date: use --quote-date if provided, otherwise today
-    if args.quote_date:
+    body_children.append(make_info_line('公司名称     ：', quote_meta.get('customer_name', '')))
+    body_children.append(make_info_line('联系人      ：', quote_meta.get('contact_name', '')))
+    body_children.append(make_info_line('联系方式     ：', quote_meta.get('contact_info', '')))
+    # Quote date: CLI override → quote_meta → today
+    quote_date_raw = args.quote_date or quote_meta.get('quote_date')
+    if quote_date_raw:
         try:
-            qd = date.fromisoformat(args.quote_date)
+            qd = date.fromisoformat(quote_date_raw)
             QUOTE_DATE = f"{qd.year}年{qd.month}月{qd.day}日"
         except ValueError:
-            print(f"⚠️  WARNING: Invalid --quote-date format '{args.quote_date}', using today.", file=sys.stderr)
-            QUOTE_DATE = f"{date.today().year}年{date.today().month}月{date.today().day}日"
+            print(
+                f"❌ Invalid quote date '{quote_date_raw}'. Use YYYY-MM-DD format.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
     else:
         QUOTE_DATE = f"{date.today().year}年{date.today().month}月{date.today().day}日"
     body_children.append(make_info_line('报价日期     ：', QUOTE_DATE))
-    body_children.append(make_info_line('合同号       ：', ''))
+    body_children.append(make_info_line('合同号       ：', quote_meta.get('contract_no', '')))
 
-    # 2. Title
-    body_children.append(make_title(args.title_line1, args.title_line2))
+    # 2. Title: CLI override → quote_meta → defaults
+    title_line1 = args.title_line1 or quote_meta.get('title_line1') or '印尼投资'
+    title_line2 = args.title_line2 or quote_meta.get('title_line2') or '综合服务方案'
+    body_children.append(make_title(title_line1, title_line2))
 
     # 3. Section Header
     body_children.append(make_section_header('1.服务内容'))
@@ -841,7 +634,7 @@ def main():
         if svc['category']:
             tbl.append(make_category_row(svc['category']))
         for item in svc['items']:
-            price_display = f'￥{item["price"]}' if CURRENCY == 'RMB' else f'Rp {item["price"]}'
+            price_display = f'￥{item["price"]}' if CURRENCY == 'RMB' else (f'$ {item["price"]}' if CURRENCY == 'USD' else f'Rp {item["price"]}')
             cells = [
                 make_data_cell(item['id'], COLS[0], jc='center'),
                 make_data_cell(item['display_name'], COLS[1], bold=True),
@@ -911,15 +704,16 @@ def main():
                 [make_run(item, sz='21')],
                 spacing_after=0, line='280', indent_left=540
             ))
-        body_children.append(make_para(
-            [make_run('费用不含：', sz='21', bold=True)],
-            spacing_after=0, line='280', indent_left=360
-        ))
-        for item in fd['exclude']:
+        if fd['exclude']:
             body_children.append(make_para(
-                [make_run(item, sz='21')],
-                spacing_after=0, line='280', indent_left=540
+                [make_run('费用不含：', sz='21', bold=True)],
+                spacing_after=0, line='280', indent_left=360
             ))
+            for item in fd['exclude']:
+                body_children.append(make_para(
+                    [make_run(item, sz='21')],
+                    spacing_after=0, line='280', indent_left=540
+                ))
         if fd['note']:
             body_children.append(make_para(
                 [make_run('备注：', sz='21', bold=True)],
@@ -931,10 +725,10 @@ def main():
                     spacing_after=0, line='280', indent_left=540
                 ))
 
-    # 6. Payment Terms — loaded from entity config
+    # 6. Payment Terms — quotation data can override entity defaults.
     body_children.append(make_para('', spacing_before=100, spacing_after=0))
     body_children.append(make_section_header('2.付款条件：'))
-    payment_terms = entity_cfg.get('payment_terms', [])
+    payment_terms = quote_meta.get('payment_terms') or entity_cfg.get('payment_terms', [])
     for term in payment_terms:
         body_children.append(make_para(
             [make_run(term, sz='21')],

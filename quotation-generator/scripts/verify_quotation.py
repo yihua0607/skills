@@ -52,6 +52,8 @@ def detect_currency(paragraph_texts):
             return 'RMB'
         if 'Rp' in text:
             return 'IDR'
+        if re.search(r'\$\s?\d', text):
+            return 'USD'
     return 'RMB'
 
 
@@ -86,6 +88,8 @@ def parse_formatted_amount(text, currency='RMB'):
     text = text.strip()
     if currency == 'RMB':
         text = text.replace('￥', '').replace('¥', '')
+    elif currency == 'USD':
+        text = text.replace('$', '')
     else:
         text = re.sub(r'^Rp\s*', '', text, flags=re.I)
     text = text.replace(',', '').replace(' ', '')
@@ -131,25 +135,44 @@ def extract_address_from_bank(bank_lines):
     return None
 
 
-def extract_signature_company(paragraph_texts, entity_config):
-    """Extract company name from signature section by dynamically matching
-    against all companies in the entity config.
-
-    Sorts candidates by length (longest first) so that subsidiaries like
-    '北京山海图科技有限公司西安分公司' match before their parent
-    '北京山海图科技有限公司'.
-    """
-    if not entity_config:
-        return None
-    # Collect all company names, sorted longest-first for correct precedence
-    candidates = sorted(
+def _company_candidates(entity_config):
+    """Return company names sorted longest-first for subsidiary precedence."""
+    return sorted(
         [cfg.get('company', '') for cfg in entity_config.values() if cfg.get('company')],
         key=len, reverse=True,
     )
-    for _, text in paragraph_texts:
-        for company in candidates:
-            if company and company in text:
-                return company
+
+
+def extract_signature_company(tables, entity_config):
+    """Extract company name only from the signature table.
+
+    The signature table is identified by the visible labels '报价人' and
+    '同意报价人'. Matching the whole document is unsafe because bank/header
+    sections also contain company names and can mask a missing or wrong
+    signature company.
+    """
+    if not entity_config:
+        return None
+    candidates = _company_candidates(entity_config)
+    for tbl in tables:
+        rows = tbl.findall(w('tr'))
+        signature_row_idx = None
+        for idx, row in enumerate(rows):
+            row_text = ''.join((t.text or '') for t in row.findall('.//' + w('t'))).strip()
+            if '报价人' in row_text and '同意报价人' in row_text:
+                signature_row_idx = idx
+                break
+        if signature_row_idx is None:
+            continue
+
+        # Search the label row and the following rows in this table only. This
+        # supports templates that put the company on the same row or just below.
+        for row in rows[signature_row_idx:signature_row_idx + 4]:
+            row_text = ''.join((t.text or '') for t in row.findall('.//' + w('t'))).strip()
+            for company in candidates:
+                if company and company in row_text:
+                    return company
+        return None
     return None
 
 
@@ -177,8 +200,82 @@ def extract_service_names_from_table(tables):
             name_text = ''.join((t.text or '') for t in cells[1].findall('.//' + w('t'))).strip()
             # Strip quantity suffix for comparison: "公司注册×2" → "公司注册"
             base_name = re.sub(r'\s*[x×]\d+$', '', name_text)
-            if base_name and base_name not in ('服务内容', '小计', '优惠金额', '增值税', '含税总计'):
+            # Skip summary rows like "小计", "优惠金额", "增值税 11%", "含税总计"
+            summary_prefixes = ('服务内容', '小计', '优惠金额', '增值税', '含税总计')
+            if base_name and not any(base_name.startswith(p) for p in summary_prefixes):
                 names.append(base_name)
+    return names
+
+
+def _is_header_cell(tc):
+    """Return True if a table cell is a header cell (light blue fill)."""
+    tcPr = tc.find(w('tcPr'))
+    if tcPr is None:
+        return False
+    fill = tcPr.find(w('shd'))
+    if fill is not None and fill.get(w('val')) == 'clear' and fill.get(w('fill')) == 'BDD6EE':
+        return True
+    return False
+
+
+def _is_category_row(tr):
+    """Return True if a row spans all columns (category header)."""
+    tc = tr.find(w('tc'))
+    if tc is None:
+        return False
+    tcPr = tc.find(w('tcPr'))
+    if tcPr is None:
+        return False
+    gridSpan = tcPr.find(w('gridSpan'))
+    if gridSpan is not None:
+        return True
+    return False
+
+
+def extract_names_from_table_column(tables, table_index, column_index):
+    """Extract non-empty names from a specific column of a specific table.
+
+    Skips header rows and category rows. Strips quantity suffixes.
+    """
+    names = []
+    if not tables or table_index >= len(tables):
+        return names
+    tbl = tables[table_index]
+    for row in tbl.findall(w('tr')):
+        if _is_category_row(row):
+            continue
+        cells = row.findall(w('tc'))
+        if len(cells) <= column_index:
+            continue
+        cell = cells[column_index]
+        if _is_header_cell(cell):
+            continue
+        name_text = ''.join((t.text or '') for t in cell.findall('.//' + w('t'))).strip()
+        # Strip quantity suffix for comparison: "公司注册×2" → "公司注册"
+        base_name = re.sub(r'\s*[x×]\d+$', '', name_text)
+        if base_name and base_name != '项目':
+            names.append(base_name)
+    return names
+
+
+def extract_fee_section_names(paragraph_texts):
+    """Extract service names from the fee details section.
+
+    The fee details section starts after '*备注：' and ends before '2.付款条件：'.
+    Service names are paragraphs matching 'N. 服务名'.
+    """
+    names = []
+    in_fee_section = False
+    for _, text in paragraph_texts:
+        if text.startswith('*备注：'):
+            in_fee_section = True
+            continue
+        if in_fee_section and ('2.付款条件' in text or '2.付款方式' in text):
+            break
+        if in_fee_section:
+            fee_match = re.match(r'^\d+\.\s+(.+)$', text)
+            if fee_match:
+                names.append(fee_match.group(1).strip())
     return names
 
 
@@ -315,6 +412,16 @@ def verify_amounts(amounts, currency):
     return issues
 
 
+def load_data_for_verify(data_path):
+    if not data_path:
+        return None, []
+    try:
+        with open(data_path, 'r', encoding='utf-8') as f:
+            return json.load(f), []
+    except Exception as exc:
+        return None, [f"Cannot read data file: {exc}"]
+
+
 def cross_check_with_data(document_amounts, data_path, currency):
     """Cross-check document amounts with input data file."""
     issues = []
@@ -389,10 +496,16 @@ def main():
         sys.exit(1)
 
     data_path = None
+    data_for_verify = None
     if args.data:
         data_path = os.path.abspath(args.data)
         if not os.path.exists(data_path):
             print(f"❌ Data file not found: {data_path}")
+            sys.exit(1)
+        data_for_verify, data_load_issues = load_data_for_verify(data_path)
+        if data_load_issues:
+            for issue in data_load_issues:
+                print(f"❌ {issue}")
             sys.exit(1)
 
     unpack_dir = tempfile.mkdtemp(prefix='quotation-verify-')
@@ -416,13 +529,40 @@ def main():
         currency = detect_currency(para_texts)
         print(f"货币: {currency}")
 
-        # Detect entity from document content if not provided
-        detected_entity = args.entity or detect_entity(para_texts, entity_config)
+        actual_entity = detect_entity(para_texts, entity_config)
+        cli_entity = args.entity
+        meta_entity = None
+        expected_currency = None
+        if data_for_verify:
+            meta = data_for_verify.get('_meta') if isinstance(data_for_verify, dict) else {}
+            if isinstance(meta, dict):
+                meta_entity = meta.get('applicable_entity')
+                expected_currency = meta.get('target_currency')
+
+        detected_entity = cli_entity or meta_entity or actual_entity
         if detected_entity:
             print(f"签约主体: {detected_entity}")
         else:
             print("⚠️  无法自动识别签约主体，部分交叉验证将跳过")
             all_warnings.append("无法识别签约主体，跳过主体配置交叉验证")
+
+        entity_checks = [
+            ('命令行主体', cli_entity),
+            ('数据_meta主体', meta_entity),
+            ('文档签约主体', actual_entity),
+        ]
+        for i, (left_label, left_value) in enumerate(entity_checks):
+            if not left_value:
+                continue
+            for right_label, right_value in entity_checks[i + 1:]:
+                if not right_value:
+                    continue
+                if left_value != right_value:
+                    print(f"❌ {left_label} '{left_value}' 与 {right_label} '{right_value}' 不一致")
+                    all_issues.append(f"{left_label} '{left_value}' ≠ {right_label} '{right_value}'")
+        if expected_currency and expected_currency != currency:
+            print(f"❌ 文档币种 '{currency}' 与数据目标币种 '{expected_currency}' 不一致")
+            all_issues.append(f"文档币种 '{currency}' ≠ 数据目标币种 '{expected_currency}'")
 
         # ── 1. Header vs bank info consistency ──
         header_xml_path = os.path.join(unpack_dir, 'word', 'header1.xml')
@@ -444,6 +584,15 @@ def main():
         bank_address = extract_address_from_bank(bank_lines)
         print(f"银行公司名: {bank_company}")
         print(f"银行地址: {bank_address}")
+
+        # Bank account company is the authoritative signing-entity anchor.
+        if detected_entity and bank_company:
+            cfg_company = entity_config.get(detected_entity, {}).get('company')
+            if cfg_company and bank_company != cfg_company:
+                print(f"❌ 银行公司名 '{bank_company}' 与配置 '{cfg_company}' 不一致")
+                all_issues.append(f"银行公司名 '{bank_company}' ≠ 配置 '{cfg_company}' (entity={detected_entity})")
+            elif cfg_company:
+                print(f"✅ 银行公司名与配置一致 (entity={detected_entity})")
 
         # Check company name
         if header_company and bank_company:
@@ -470,82 +619,44 @@ def main():
             print("⚠️  银行信息中未找到地址字段，无法核对")
             all_warnings.append("银行信息中无地址字段，无法核对页眉地址")
 
-        # ── 2. Signature company vs header company ──
-        sig_company = extract_signature_company(para_texts, entity_config)
+        tables = doc_body.findall('.//' + w('tbl'))
+
+        # ── 2. Signature company vs bank company ──
+        sig_company = extract_signature_company(tables, entity_config)
         if sig_company:
             print(f"签名公司名: {sig_company}")
-            if header_company:
-                if sig_company == header_company:
-                    print("✅ 签名公司名与页眉公司名一致")
+            if bank_company:
+                if sig_company == bank_company:
+                    print("✅ 签名公司名与银行公司名一致")
                 else:
-                    print(f"❌ 签名公司名 '{sig_company}' 与页眉 '{header_company}' 不一致")
-                    all_issues.append(f"签名公司名 '{sig_company}' ≠ 页眉 '{header_company}'")
-
-            # Cross-check with entity config if detected
-            if detected_entity:
-                cfg_company = entity_config.get(detected_entity, {}).get('company')
-                if cfg_company and sig_company != cfg_company:
-                    print(f"❌ 签名公司名 '{sig_company}' 与配置 '{cfg_company}' 不一致")
-                    all_issues.append(f"签名公司名 '{sig_company}' ≠ 配置 '{cfg_company}' (entity={detected_entity})")
-                elif cfg_company:
-                    print(f"✅ 签名公司名与配置一致 (entity={detected_entity})")
+                    print(f"❌ 签名公司名 '{sig_company}' 与银行 '{bank_company}' 不一致")
+                    all_issues.append(f"签名公司名 '{sig_company}' ≠ 银行 '{bank_company}'")
+            else:
+                print("❌ 银行信息中未找到公司名，无法核对签名公司名")
+                all_issues.append("银行信息中未找到公司名，无法核对签名公司名")
         else:
-            all_warnings.append("未在文档中找到签名公司名")
+            print("❌ 未在签名区域找到签名公司名")
+            all_issues.append("未在签名区域找到签名公司名")
 
         # ── 3. Service name coverage ──
-        tables = doc_body.findall('.//' + w('tbl'))
         doc_service_names = extract_service_names_from_table(tables)
         if doc_service_names:
             print(f"文档中的服务名: {', '.join(doc_service_names)}")
-            # Check against entity config bank_lines doesn't apply here,
-            # but we can check that all service names appear in the other sections
-            fee_names = set()
-            process_names = set()
-            doc_names = set()
-            for _, text in para_texts:
-                # Fee details section: "1. 服务名" pattern
-                fee_match = re.match(r'^\d+\.\s+(.+)$', text)
-                if fee_match:
-                    fee_names.add(fee_match.group(1))
-                # Process table and doc table — check by matching service names
-                for name in doc_service_names:
-                    if name in text and text.startswith(name):
-                        process_names.add(name)
-                        doc_names.add(name)
-
-            # More precise extraction from tables
-            if len(tables) >= 2:
-                # Process table (second table)
-                ptbl = tables[1]
-                for row in ptbl.findall(w('tr')):
-                    cells = row.findall(w('tc'))
-                    if len(cells) >= 2:
-                        tcPr = cells[1].find(w('tcPr'))
-                        if tcPr is not None:
-                            fill = tcPr.find(w('shd'))
-                            if fill is not None and fill.get(w('fill')) == 'BDD6EE':
-                                continue
-                        name = ''.join((t.text or '') for t in cells[1].findall('.//' + w('t'))).strip()
-                        if name and name != '项目':
-                            process_names.add(name)
-
-            if len(tables) >= 3:
-                # Doc table (third table)
-                dtbl = tables[2]
-                for row in dtbl.findall(w('tr')):
-                    cells = row.findall(w('tc'))
-                    if len(cells) >= 2:
-                        tcPr = cells[1].find(w('tcPr'))
-                        if tcPr is not None:
-                            fill = tcPr.find(w('shd'))
-                            if fill is not None and fill.get(w('fill')) == 'BDD6EE':
-                                continue
-                        name = ''.join((t.text or '') for t in cells[1].findall('.//' + w('t'))).strip()
-                        if name and name != '项目':
-                            doc_names.add(name)
-
             service_set = set(doc_service_names)
-            for section_name, section_set in [('流程及交付', process_names), ('所需材料', doc_names)]:
+
+            # Extract names from the three structured locations:
+            # - Fee details section (paragraphs between *备注 and 2.付款条件)
+            # - Process & deliverables table (second table, column 1)
+            # - Required documents table (third table, column 1)
+            fee_names = set(extract_fee_section_names(para_texts))
+            process_names = set(extract_names_from_table_column(tables, 1, 1)) if len(tables) >= 2 else set()
+            doc_names = set(extract_names_from_table_column(tables, 2, 1)) if len(tables) >= 3 else set()
+
+            for section_name, section_set in [
+                ('费用明细', fee_names),
+                ('流程及交付', process_names),
+                ('所需材料', doc_names),
+            ]:
                 missing = sorted(service_set - section_set)
                 extra = sorted(section_set - service_set)
                 if missing:

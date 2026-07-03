@@ -18,7 +18,7 @@ import urllib.request
 import urllib.error
 
 
-ENDPOINT = "https://uatlocal.shanhaimap.com/apis/jeecg-app/app/product/aiCode/resolve"
+ENDPOINT = "https://server.shanhaimap.com/apis/jeecg-app/app/product/aiCode/resolve"
 MAX_RETRIES = 2
 TIMEOUT_SECONDS = 15
 
@@ -121,6 +121,14 @@ def clean_detail(value):
     return html_to_markdown(text)
 
 
+def parse_ai_code_arg(value):
+    """Return the API aiCode exactly as provided, e.g. 服务名-19位编码."""
+    raw = str(value).strip()
+    if not raw:
+        raise ValueError(f'Cannot parse aiCode from input: {value}. Expected non-empty 服务名-19位编码.')
+    return raw
+
+
 def request_services(ai_codes):
     """POST to the resolve endpoint with retry logic.
 
@@ -166,7 +174,9 @@ def request_services(ai_codes):
             import time
             time.sleep(1)
 
-    # All retries exhausted — output structured error JSON for Agent consumption
+    # All retries exhausted — output structured error JSON for Agent consumption.
+    # The upstream API itself does not provide an errors field; this is our
+    # normalized wrapper so agents can surface the message consistently.
     error_output = {
         "success": False,
         "code": -1,
@@ -174,6 +184,10 @@ def request_services(ai_codes):
         "error_type": "network_timeout",
         "last_error": str(last_error) if last_error else "unknown",
         "services": [],
+        "errors": [{
+            "aiCode": None,
+            "message": "无法获取服务详情，请检查网络",
+        }],
     }
     json.dump(error_output, sys.stdout, ensure_ascii=False, indent=2)
     print()
@@ -190,12 +204,13 @@ def iter_service_records(payload):
         yield result.get("aiCode"), payload.get("success"), payload.get("message"), result
 
 
-def normalize_record(query_ai_code, ok, message, record):
+def normalize_record(query_ai_code, ok, message, record, original_input=None):
     execute_unit = record.get("executeUnit") or {}
     usd_rate = record.get("rateToUsd")
     if usd_rate is None:
         usd_rate = record.get("usdRate")
     return {
+        "原始输入": original_input,
         "查询aiCode": query_ai_code,
         "查询成功": ok,
         "查询消息": message,
@@ -216,29 +231,71 @@ def main():
     parser.add_argument("ai_code", nargs="+", help="One or more values like 服务名-19位编码.")
     args = parser.parse_args()
 
-    payload = request_services(args.ai_code)
+    try:
+        parsed_ai_codes = [parse_ai_code_arg(value) for value in args.ai_code]
+    except ValueError as exc:
+        output = {
+            "success": False,
+            "code": -2,
+            "message": str(exc),
+            "services": [],
+            "errors": [{"aiCode": None, "message": str(exc)}],
+        }
+        json.dump(output, sys.stdout, ensure_ascii=False, indent=2)
+        print()
+        print(f"❌ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    original_by_code = dict(zip(parsed_ai_codes, args.ai_code))
+    payload = request_services(parsed_ai_codes)
 
     # Check for partial failures
     services = [
-        normalize_record(query_ai_code, ok, message, record)
+        normalize_record(query_ai_code, ok, message, record, original_by_code.get(str(query_ai_code)))
         for query_ai_code, ok, message, record in iter_service_records(payload)
     ]
 
     failed_services = [s for s in services if s.get("查询成功") is not True]
+    has_item_failure = bool(failed_services)
+    top_level_failure = payload.get("success") is False
+    no_services = not services
+    should_abort = top_level_failure or has_item_failure or no_services
+    errors = [
+        {
+            "aiCode": fs.get("查询aiCode"),
+            "message": fs.get("查询消息") or "未知错误",
+        }
+        for fs in failed_services
+    ]
+
     if failed_services:
-        print(f"⚠️  {len(failed_services)}/{len(services)} 个服务查询失败:", file=sys.stderr)
+        print(f"❌ {len(failed_services)}/{len(services)} 个服务查询失败，已中断报价单生成:", file=sys.stderr)
         for fs in failed_services:
             print(f"  - {fs.get('查询aiCode', '?')}: {fs.get('查询消息', '未知错误')}", file=sys.stderr)
 
+    if no_services:
+        no_services_message = payload.get("message") or "未查询到任何服务"
+        print(f"❌ 未查询到任何服务，已中断报价单生成: {no_services_message}", file=sys.stderr)
+        errors.append({"aiCode": None, "message": no_services_message})
+
     output = {
-        "success": payload.get("success"),
+        "success": False if should_abort else payload.get("success"),
         "code": payload.get("code"),
-        "message": payload.get("message"),
-        "partial_failure": len(failed_services) > 0 and len(failed_services) < len(services),
+        "message": payload.get("message") or ("未查询到任何服务" if no_services else None),
+        "partial_failure": has_item_failure,
         "services": services,
+        "errors": errors,
     }
     json.dump(output, sys.stdout, ensure_ascii=False, indent=2)
     print()
+
+    if top_level_failure:
+        api_message = payload.get("message") or "未知错误"
+        print(f"❌ API message: {api_message}", file=sys.stderr)
+        sys.exit(1)
+
+    if has_item_failure or no_services:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,87 @@
+{
+  "_meta": {
+    "description": "最小报价数据示例；price 为目标报价币种的整数总价。",
+    "applicable_entity": "xian",
+    "query_result_file": "queried_services.json",
+    "source_currency": "IDR",
+    "target_currency": "RMB",
+    "exchange_rates": [
+      {
+        "service_name": "儿童玩具-SNI认证",
+        "ai_code": "儿童玩具-SNI认证-2072304344749555713",
+        "rateToCny": "2173.91",
+        "rateToUsd": "16000",
+        "rate_source": "ShanhaiMap aiCode API"
+      }
+    ]
+  },
+  "quote_meta": {
+    "title_line1": "印尼投资",
+    "title_line2": "认证服务方案",
+    "quote_date": "2026-07-03",
+    "customer_name": "",
+    "contact_name": "",
+    "contact_info": "",
+    "contract_no": "",
+    "payment_terms": [
+      "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
+    ]
+  },
+  "services": [
+    {
+      "category": null,
+      "items": [
+        {
+          "id": "1",
+          "name": "儿童玩具-SNI认证",
+          "quantity": 1,
+          "days": "30",
+          "price": 115000,
+          "note": "本服务用于儿童玩具产品在印尼市场销售前的 SNI 认证申请，包含资料审核、申请提交及认证流程跟进。"
+        }
+      ]
+    }
+  ],
+  "discount_amount": 0,
+  "notes": [
+    {
+      "text": "以上服务报价不包括：文件翻译费用（如需）、资料快递费用（国际）、差旅费/考察费（如有）。",
+      "indent": 360
+    }
+  ],
+  "fee_details": [
+    {
+      "name": "儿童玩具-SNI认证",
+      "include": [
+        "服务费",
+        "认证申请资料整理"
+      ],
+      "exclude": [],
+      "note": ""
+    }
+  ],
+  "process_data": [
+    {
+      "name": "儿童玩具-SNI认证",
+      "process": [
+        "第一步：收集资料",
+        "第二步：提交申请",
+        "第三步：跟进审核并取得结果"
+      ],
+      "deliverables": [
+        "1. SNI 认证结果文件"
+      ]
+    }
+  ],
+  "doc_data": [
+    {
+      "name": "儿童玩具-SNI认证",
+      "docs": [
+        "1. 产品资料",
+        "2. 公司资料",
+        "3. 测试报告（如有）"
+      ]
+    }
+  ],
+  "doc_notes_text": []
+}

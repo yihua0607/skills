@@ -18,6 +18,21 @@ import os
 import sys
 import re
 
+# Ensure imports work when this script is run directly as `python3 scripts/validate_data.py`.
+_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _SKILL_DIR not in sys.path:
+    sys.path.insert(0, _SKILL_DIR)
+
+from scripts.quotation_common import (
+    parse_money_int,
+    calculate_amounts,
+    format_price_int,
+    format_price_vat,
+    format_price_total,
+    vat_percent_label,
+)
+from scripts.quotation_schema import validate_and_normalize_data as schema_validate_and_normalize_data
+
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENTITY_CONFIG_PATH = os.path.join(SKILL_DIR, 'config', 'entities.json')
 
@@ -51,19 +66,6 @@ def load_entity_config():
     return config, universal_excludes
 
 
-def parse_money_int(value, path):
-    """Parse integer amount — same logic as build_quotation.py."""
-    if isinstance(value, bool):
-        raise ValueError(f'{path} must be an integer amount, not boolean')
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        raw = value.replace(',', '').strip()
-        if raw.isdigit():
-            return int(raw)
-    raise ValueError(f'{path} must be an integer amount or comma-formatted integer string')
-
-
 def validate_quotation_data(data, entity_key, entity_config, universal_excludes=None):
     """Validate quotation data and return list of errors and warnings."""
     errors = []
@@ -72,6 +74,16 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
     if not isinstance(data, dict):
         errors.append('Quotation data must be a JSON object')
         return errors, warnings
+
+    try:
+        build_validated = schema_validate_and_normalize_data(data)
+        warnings.extend(build_validated.get('warnings', []))
+    except ValueError as exc:
+        message = str(exc)
+        if message.startswith('Invalid quotation data:\n- '):
+            errors.extend(message.split('\n- ')[1:])
+        else:
+            errors.append(message)
 
     # ── Required top-level keys ──
     required_keys = ('services', 'fee_details', 'process_data', 'doc_data')
@@ -85,7 +97,23 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
         return errors, warnings
 
     entity_cfg = entity_config[entity_key]
-    currency = entity_cfg['currency']
+    entity_default_currency = entity_cfg['currency']
+    currency = entity_default_currency
+
+    meta = data.get('_meta', {})
+    if meta is not None and not isinstance(meta, dict):
+        errors.append('_meta must be an object when provided')
+        meta = {}
+    if isinstance(meta, dict):
+        meta_entity = meta.get('applicable_entity')
+        if meta_entity and meta_entity != entity_key:
+            errors.append(f'_meta.applicable_entity ({meta_entity}) must match --entity ({entity_key})')
+        target_currency = meta.get('target_currency')
+        if target_currency:
+            if target_currency not in ('IDR', 'RMB', 'USD'):
+                errors.append(f'_meta.target_currency ({target_currency}) must be IDR, RMB, or USD')
+            else:
+                currency = target_currency
 
     # ── Services ──
     services_data = data.get('services')
@@ -138,10 +166,10 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
             except ValueError as exc:
                 errors.append(str(exc))
             # note
-            note = item.get('note', '')
-            if not isinstance(note, str):
-                errors.append(f'{item_path}.note must be text')
-            elif note and len(note) < 40:
+            note = item.get('note')
+            if not isinstance(note, str) or not note.strip():
+                errors.append(f'{item_path}.note is required and must be non-empty text')
+            elif len(note) < 40:
                 warnings.append(f'{item_path}.note is short ({len(note)} chars); confirm it contains enough basic information')
 
     # Duplicate service names
@@ -157,6 +185,10 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
             warnings.append('Some prices appear too small for IDR (min: Rp 1,000,000). Did you forget to update from a previous RMB quote?')
         elif currency == 'RMB' and any(p >= 1_000_000 for p in all_prices):
             warnings.append('Some prices appear too large for RMB (>= 1,000,000). Did you forget to convert from IDR?')
+        elif currency == 'USD' and any(p < 50 for p in all_prices if p > 0):
+            warnings.append('Some prices appear too small for USD (min: $50). Did you forget to convert from IDR?')
+        elif currency == 'USD' and any(p >= 500_000 for p in all_prices):
+            warnings.append('Some prices appear too large for USD (>= 500,000). Did you forget to convert from IDR?')
 
     # ── Fee details ──
     fee_details = data.get('fee_details')
@@ -319,14 +351,12 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
         errors.append(f'discount_amount ({discount_int}) cannot exceed subtotal ({subtotal})')
 
     # ── VAT sanity check (pre-flight) ──
-    vat_rate = entity_cfg['vat_rate']
-    discounted = subtotal - discount_int
-    vat = round(discounted * vat_rate, 2) if currency == 'RMB' else round(discounted * vat_rate)
-    total = discounted + vat
-    currency_symbol = '￥' if currency == 'RMB' else 'Rp'
-    vat_pct = f'{vat_rate * 100:g}%'
-    print(f"  预估: 小计={currency_symbol}{subtotal:,} | 优惠={currency_symbol}{discount_int:,} | "
-          f"增值税({vat_pct})={currency_symbol}{vat:,} | 含税总计={currency_symbol}{total:,}")
+    amounts = calculate_amounts(subtotal, discount_int, entity_cfg['vat_rate'], currency)
+    vat_pct = vat_percent_label(amounts['vat_rate'])
+    print(f"  预估: 小计={format_price_int(amounts['subtotal'], currency)} | "
+          f"优惠={format_price_int(amounts['discount'], currency)} | "
+          f"增值税({vat_pct})={format_price_vat(amounts['vat'], currency)} | "
+          f"含税总计={format_price_total(amounts['total'], currency)}")
 
     # ── doc_notes_text ──
     doc_notes_text = data.get('doc_notes_text', data.get('doc_notes', []))
@@ -337,6 +367,35 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
             for i, item in enumerate(doc_notes_text):
                 if not isinstance(item, str) or not item.strip():
                     errors.append(f'doc_notes_text[{i}] must be non-empty text')
+
+    # ── quote_meta overrides ──
+    quote_meta = data.get('quote_meta', {})
+    if quote_meta is None:
+        quote_meta = {}
+    if not isinstance(quote_meta, dict):
+        errors.append('quote_meta must be an object when provided')
+        quote_meta = {}
+    else:
+        for key in ('title_line1', 'title_line2', 'quote_date', 'customer_name', 'contact_name', 'contact_info', 'contract_no'):
+            value = quote_meta.get(key)
+            if value is not None and not isinstance(value, str):
+                errors.append(f'quote_meta.{key} must be text when provided')
+        quote_date = quote_meta.get('quote_date')
+        if isinstance(quote_date, str) and quote_date.strip():
+            try:
+                from datetime import date
+                date.fromisoformat(quote_date.strip())
+            except ValueError:
+                errors.append('quote_meta.quote_date must use YYYY-MM-DD format when provided')
+
+    payment_terms = quote_meta.get('payment_terms')
+    if payment_terms is not None:
+        if not isinstance(payment_terms, list) or not payment_terms:
+            errors.append('quote_meta.payment_terms must be a non-empty list when provided')
+        else:
+            for i, item in enumerate(payment_terms):
+                if not isinstance(item, str) or not item.strip():
+                    errors.append(f'payment_terms[{i}] must be non-empty text')
 
     return errors, warnings
 
