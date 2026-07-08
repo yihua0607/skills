@@ -1,0 +1,4 @@
+interface:
+  display_name: "印尼商务签初审"
+  short_description: "收集并初审印尼单次和多次商务签申请资料与文件类型"
+  default_prompt: "Use $indonesia-business-visa-review to collect and preliminarily review Indonesia single-entry or multiple-entry business visa documents."
