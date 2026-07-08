@@ -31,6 +31,7 @@ Before reviewing a case, read `references/indonesia-business-visa.md`. Use it as
    - Ask whether the customer will use Shanhaitu as the sponsor company.
    - If yes, company documents are not required.
    - If no, company documents are required.
+   - When the user asks to list required materials and the sponsor condition is unknown, ask for the sponsor condition first. Do not list both Shanhaitu-sponsor and external-sponsor material branches.
    - If the caller requests direct batch review and the sponsor condition is unknown, do not infer it; list `是否使用山海图做担保公司` under `缺失资料`.
 
 3. Classify every uploaded or described file.
@@ -42,6 +43,7 @@ Before reviewing a case, read `references/indonesia-business-visa.md`. Use it as
 4. Build the required document checklist.
    - Personal documents are required for both single-entry and multiple-entry business visas.
    - Multiple-entry business visa additionally requires an English resume.
+   - For single-entry business visa cases, do not mention English resume at all.
    - If Shanhaitu is the sponsor, company documents and company bank statements are not required and company bank statements cannot replace personal bank statements as proof of funds.
    - If Shanhaitu is not the sponsor, add company documents.
    - When Shanhaitu is not the sponsor, personal bank statement and company bank statement are alternatives, but each must meet its own threshold: personal bank statement requires at least RMB 15,000; company bank statement requires at least RMB 68,000 or USD 10,000 equivalent.
@@ -90,11 +92,9 @@ If the caller explicitly sets `debug=false`, `生产模式`, or `隐藏推理过
     依据：
 - 规则命中摘要：
   - ...
-- 未展示的不适用材料：
-  - ...
 ```
 
-Debug information must be concise and auditable. Show classification evidence, matched rule names, missing-condition logic, and why a material is not applicable. Do not reveal full chain-of-thought or hidden internal reasoning.
+Debug information must be concise and auditable. Show classification evidence, matched rule names, and missing-condition logic. Do not list or explain materials that are not applicable to the current case. Do not reveal full chain-of-thought or hidden internal reasoning.
 
 ## Result Rules
 
@@ -105,6 +105,7 @@ Debug information must be concise and auditable. Show classification evidence, m
 - Keep reasons concise and factual; list the file name or document type and the exact failed rule.
 - Do not invent missing facts. If a field cannot be seen or confirmed, treat it as missing or failed according to whether the field is required for that document.
 - Never list materials that are not applicable to the current case. For example, do not mention resume status for single-entry business visa cases, and do not mention company documents or company bank statements when Shanhaitu is the sponsor.
+- When listing required materials, only list materials for the current confirmed scenario. If a condition is unknown, ask for that condition first instead of showing alternative branches.
 
 ## Optional JSON Output
 
