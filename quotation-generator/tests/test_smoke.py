@@ -243,6 +243,64 @@ class TestQuotationSmoke(unittest.TestCase):
                 self.assertNotIn(old_term, all_text)
                 self.assertIn('￥1,000', all_text)
 
+    def test_rebuild_stops_without_overwriting_when_payment_terms_cannot_be_extracted(self):
+        """A rebuild must fail closed when visible payment terms cannot be preserved."""
+        with tempfile.TemporaryDirectory(prefix='quotation-payment-preserve-failure-') as tmpdir:
+            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
+            output_path = os.path.join(tmpdir, '报价单-西安-付款标题已修改.docx')
+            edited_path = os.path.join(tmpdir, '报价单-西安-付款标题已修改-临时.docx')
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path, '--output', output_path]
+            )
+            self.assertEqual(rc, 0, f"initial build failed:\nstdout: {out}\nstderr: {err}")
+
+            _replace_docx_visible_text(
+                output_path,
+                edited_path,
+                '2.付款条件：',
+                '2.结算安排：',
+            )
+            shutil.copy(edited_path, output_path)
+            with open(output_path, 'rb') as f:
+                original_bytes = f.read()
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path, '--output', output_path]
+            )
+
+            self.assertEqual(rc, 2, f"rebuild should stop:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('请询问用户并确认付款方式', err)
+            with open(output_path, 'rb') as f:
+                self.assertEqual(f.read(), original_bytes)
+
+            confirmed_term = '用户确认付款方式：首付款 40%，尾款 60%。'
+            with open(data_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            data['quote_meta']['payment_terms'] = [confirmed_term]
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                [
+                    '--entity', 'xian',
+                    '--data', data_path,
+                    '--output', output_path,
+                    '--overwrite-payment-terms',
+                ]
+            )
+            self.assertEqual(rc, 0, f"confirmed rebuild failed:\nstdout: {out}\nstderr: {err}")
+            with zipfile.ZipFile(output_path, 'r') as zf:
+                root = ET.fromstring(zf.read('word/document.xml'))
+                all_text = ''.join(
+                    t.text or ''
+                    for t in root.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
+                )
+                self.assertIn(confirmed_term, all_text)
+
     def test_rebuild_default_output_preserves_existing_payment_terms(self):
         """Default output path should also preserve edited payment terms when the file exists."""
         with tempfile.TemporaryDirectory(prefix='quotation-default-output-preserve-') as tmpdir:
@@ -513,6 +571,106 @@ class TestQuotationSmoke(unittest.TestCase):
             rc, out, err = _run_script('convert_currency.py', ['--query-result', query_path, '--to', 'RMB'])
             self.assertNotEqual(rc, 0)
             self.assertIn('rateToCny is required', out)
+
+
+    def test_single_convert_no_json_only_stdout_is_human_readable(self):
+        """Without --json-only, stdout must not contain JSON — human-readable only."""
+        rc, out, err = _run_script(
+            'convert_currency.py',
+            ['--amount', '250000000', '--from', 'IDR', '--to', 'RMB', '--rateToCny', '2173.91']
+        )
+        self.assertEqual(rc, 0, f"convert_currency.py failed:\nstdout: {out}\nstderr: {err}")
+        # Human-readable output must be present.
+        self.assertIn('IDR', out)
+        self.assertIn('RMB', out)
+        # JSON keys must NOT appear in stdout.
+        self.assertNotIn('"from_currency"', out)
+        self.assertNotIn('"converted"', out)
+
+    def test_batch_convert_no_json_only_stdout_is_human_readable(self):
+        """Batch mode without --json-only must not dump JSON to stdout."""
+        with tempfile.TemporaryDirectory(prefix='quotation-nojson-batch-') as tmpdir:
+            query_path = os.path.join(tmpdir, 'queried_services.json')
+            with open(query_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'success': True,
+                    'services': [{
+                        '服务名称': '测试服务',
+                        '服务币种': 'IDR',
+                        '服务价格': 250000000,
+                        '人民币兑换服务币种汇率': '2173.91',
+                        '美元兑换服务币种汇率': '16000',
+                    }],
+                }, f, ensure_ascii=False, indent=2)
+
+            rc, out, err = _run_script('convert_currency.py', ['--query-result', query_path, '--to', 'RMB'])
+            self.assertEqual(rc, 0, f"convert_currency.py failed:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('IDR', out)
+            self.assertIn('RMB', out)
+            # JSON structure must NOT appear in stdout.
+            self.assertNotIn('"conversions"', out)
+
+    def test_shanghai_end_to_end(self):
+        """Smoke test using shanghai entity (RMB, 1% VAT)."""
+        with tempfile.TemporaryDirectory(prefix='quotation-smoke-') as tmpdir:
+            src = os.path.join(SKILL_ROOT, 'examples', 'minimal_quotation.json')
+            data_path = os.path.join(tmpdir, 'quotation.json')
+            with open(src, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            data['_meta']['applicable_entity'] = 'shanghai'
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            output_path = os.path.join(tmpdir, '报价单-上海-测试.docx')
+
+            rc, out, err = _run_script('validate_data.py', ['--entity', 'shanghai', '--data', data_path])
+            self.assertEqual(rc, 0, f"validate_data.py failed:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('数据校验通过', out)
+            self.assertIn('1%', out)  # Verify 1% VAT rate
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'shanghai', '--data', data_path, '--output', output_path]
+            )
+            self.assertEqual(rc, 0, f"build_quotation.py failed:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('VAT: 1%', out)
+
+            rc, out, err = _run_script('verify_quotation.py', ['--input', output_path, '--data', data_path])
+            self.assertEqual(rc, 0, f"verify_quotation.py failed:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('验证通过', out)
+
+            _assert_docx_valid(self, output_path)
+
+    def test_shanghai_new_end_to_end(self):
+        """Smoke test using shanghai_new entity (RMB, 1% VAT)."""
+        with tempfile.TemporaryDirectory(prefix='quotation-smoke-') as tmpdir:
+            src = os.path.join(SKILL_ROOT, 'examples', 'minimal_quotation.json')
+            data_path = os.path.join(tmpdir, 'quotation.json')
+            with open(src, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            data['_meta']['applicable_entity'] = 'shanghai_new'
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            output_path = os.path.join(tmpdir, '报价单-上海新企业-测试.docx')
+
+            rc, out, err = _run_script('validate_data.py', ['--entity', 'shanghai_new', '--data', data_path])
+            self.assertEqual(rc, 0, f"validate_data.py failed:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('数据校验通过', out)
+            self.assertIn('1%', out)  # Verify 1% VAT rate
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'shanghai_new', '--data', data_path, '--output', output_path]
+            )
+            self.assertEqual(rc, 0, f"build_quotation.py failed:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('VAT: 1%', out)
+
+            rc, out, err = _run_script('verify_quotation.py', ['--input', output_path, '--data', data_path])
+            self.assertEqual(rc, 0, f"verify_quotation.py failed:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('验证通过', out)
+
+            _assert_docx_valid(self, output_path)
 
 
 if __name__ == '__main__':

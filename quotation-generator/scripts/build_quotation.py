@@ -6,10 +6,10 @@ Usage:
   python3 scripts/build_quotation.py --entity xian --data quotation.json --output /path/to/output.docx
   python3 scripts/build_quotation.py --entity jakarta --data quotation.json --output /path/to/output.docx
 
-The script reads quotation data from JSON/YAML, edits the bundled template XML, and outputs a .docx.
+The script reads quotation data from JSON, edits the bundled template XML, and outputs a .docx.
 Entity configuration is loaded from config/entities.json — no business data is hardcoded in this script.
 """
-import zipfile, os, sys, argparse, tempfile, shutil, json, re
+import zipfile, os, sys, argparse, tempfile, shutil, json
 from datetime import date
 from xml.etree import ElementTree as ET
 
@@ -19,12 +19,13 @@ if _SKILL_DIR not in sys.path:
     sys.path.insert(0, _SKILL_DIR)
 
 from scripts.quotation_common import (
-    parse_money_int,
     calculate_amounts,
     format_price_int,
     format_price_vat,
     format_price_total,
+    format_price_display,
     vat_percent_label,
+    load_entity_config,
 )
 from scripts.sync_payment_terms import extract_payment_terms, check_payment_terms_reasonableness
 
@@ -37,64 +38,23 @@ TEMPLATES = {
     'jakarta': os.path.join(SKILL_DIR, 'assets', '报价单模板-雅加达公司.docx'),
 }
 
-# Load entity configuration from external JSON — keeps business data out of the script.
-ENTITY_CONFIG_PATH = os.path.join(SKILL_DIR, 'config', 'entities.json')
-
-def load_entity_config():
-    """Load entity configuration from config/entities.json.
-
-    Validates that every entity contains all required fields.
-    Skips the _meta key (used for schema metadata and universal excludes).
-    """
-    if not os.path.exists(ENTITY_CONFIG_PATH):
-        print(f"❌ Entity config not found: {ENTITY_CONFIG_PATH}", file=sys.stderr)
-        sys.exit(1)
-    with open(ENTITY_CONFIG_PATH, 'r', encoding='utf-8') as f:
-        raw = json.load(f)
-
-    required_fields = ('template', 'company', 'header_lines', 'vat_rate',
-                       'currency', 'allowed_currencies', 'payment_terms', 'bank_lines')
-    errors = []
-    for key, cfg in raw.items():
-        if key.startswith('_'):
-            continue  # Skip meta/annotation keys
-        for field in required_fields:
-            if field not in cfg:
-                errors.append(f"Entity '{key}' missing required field: {field}")
-
-    if errors:
-        print(f"❌ Invalid entity config:\n- " + '\n- '.join(errors), file=sys.stderr)
-        sys.exit(1)
-
-    # Remove _meta before returning — it's not an entity
-    cleaned = {k: v for k, v in raw.items() if not k.startswith('_')}
-    return cleaned
-
-ENTITY_CONFIG = load_entity_config()
-
-REQUIRED_TOP_LEVEL_KEYS = ('services', 'fee_details', 'process_data', 'doc_data')
+ENTITY_CONFIG, _ = load_entity_config()
 
 
 def load_quotation_data(path):
-    """Load quotation data from JSON, or YAML when PyYAML is available."""
+    """Load quotation data from JSON."""
     if not path:
-        raise ValueError('Missing --data. Provide a JSON/YAML quotation data file.')
+        raise ValueError('Missing --data. Provide a JSON quotation data file.')
 
     data_path = os.path.abspath(path)
     if not os.path.exists(data_path):
         raise ValueError(f'Data file not found: {data_path}')
 
     ext = os.path.splitext(data_path)[1].lower()
+    if ext != '.json':
+        raise ValueError('Unsupported data file type. Use .json.')
     with open(data_path, 'r', encoding='utf-8') as f:
-        if ext == '.json':
-            return json.load(f)
-        if ext in ('.yaml', '.yml'):
-            try:
-                import yaml
-            except ImportError as exc:
-                raise ValueError('YAML input requires PyYAML. Use JSON to keep the skill dependency-free.') from exc
-            return yaml.safe_load(f)
-        raise ValueError('Unsupported data file type. Use .json, .yaml, or .yml.')
+        return json.load(f)
 
 
 from scripts.quotation_schema import validate_and_normalize_data
@@ -107,7 +67,7 @@ def main():
                         choices=list(ENTITY_CONFIG.keys()),
                         help='Signing entity (required): jakarta/beijing/xian/shenzhen/shanghai/shanghai_new')
     parser.add_argument('--output', default=None, help='Output .docx path (default: CWD)')
-    parser.add_argument('--data', required=True, help='Quotation data file (.json, .yaml, .yml)')
+    parser.add_argument('--data', required=True, help='Quotation data file (.json)')
     parser.add_argument('--vat-rate', type=float, default=None, help='VAT rate override (e.g. 0.06, 0.01, 0.11)')
     parser.add_argument('--title-line1', default=None, help='Title first line (default: quote_meta.title_line1 or 印尼投资)')
     parser.add_argument('--title-line2', default=None, help='Title second line (default: quote_meta.title_line2 or 综合服务方案)')
@@ -136,7 +96,7 @@ def main():
     else:
         name = f'报价单-{entity_cfg["company"]}'
         OUTPUT = os.path.join(os.getcwd(), f'{name}.docx')
-    UNPACK = os.path.join(tempfile.gettempdir(), f'quotation-build-{os.getpid()}', '')
+    UNPACK = tempfile.mkdtemp(prefix='quotation-build-')
 
     NS = {
         'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
@@ -533,9 +493,12 @@ def main():
             print(f"✅ Preserved payment terms from existing .docx: {os.path.abspath(preserve_payment_source)}")
         except Exception as exc:
             print(
-                f"⚠️  WARNING: Could not preserve payment terms from {preserve_payment_source}: {exc}",
+                f"❌ 无法从旧报价单保留付款方式: {preserve_payment_source}: {exc}。"
+                "请询问用户并确认付款方式；用户明确提供后，将付款方式写入本次 quotation.json，"
+                "并使用 --overwrite-payment-terms 重新生成。",
                 file=sys.stderr,
             )
+            sys.exit(2)
 
     # ====== PRICING CONFIGURATION (shared module) ======
     # All financial calculations go through scripts.quotation_common to keep
@@ -561,9 +524,6 @@ def main():
             file=sys.stderr,
         )
         sys.exit(2)
-    CURRENCY_SYMBOL = '￥' if CURRENCY == 'RMB' else ('$' if CURRENCY == 'USD' else 'Rp')
-
-    # VAT rate: CLI override → entity config
     if args.vat_rate is not None:
         VAT_RATE = float(args.vat_rate)
     else:
@@ -669,7 +629,7 @@ def main():
         if svc['category']:
             tbl.append(make_category_row(svc['category']))
         for item in svc['items']:
-            price_display = f'￥{item["price"]}' if CURRENCY == 'RMB' else (f'$ {item["price"]}' if CURRENCY == 'USD' else f'Rp {item["price"]}')
+            price_display = format_price_display(item["price"], CURRENCY)
             cells = [
                 make_data_cell(item['id'], COLS[0], jc='center'),
                 make_data_cell(item['display_name'], COLS[1], bold=True),

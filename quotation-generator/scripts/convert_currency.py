@@ -283,13 +283,18 @@ def main():
         if not args.to_currency:
             parser.error('--to is required with --query-result')
         results = batch_convert(args.query_result, args.to_currency)
-        for r in results:
-            print(format_output(r), file=sys.stderr if args.json_only else sys.stdout)
 
-        # Output structured JSON for Agent consumption
-        output = {'conversions': results, 'to_currency': args.to_currency}
-        json.dump(output, sys.stdout, ensure_ascii=False, indent=2)
-        print()
+        if args.json_only:
+            # Agent mode: human-readable → stderr, JSON → stdout
+            for r in results:
+                print(format_output(r), file=sys.stderr)
+            output = {'conversions': results, 'to_currency': args.to_currency}
+            json.dump(output, sys.stdout, ensure_ascii=False, indent=2)
+            print()
+        else:
+            # Human mode: human-readable only on stdout
+            for r in results:
+                print(format_output(r))
         if any('error' in r for r in results):
             sys.exit(1)
         return
@@ -329,11 +334,13 @@ def main():
         sys.exit(1)
 
     # Human-readable output
-    print(format_output(result), file=sys.stderr if args.json_only else sys.stdout)
-
-    # Structured JSON output for Agent consumption
-    json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
-    print()
+    if args.json_only:
+        print(format_output(result), file=sys.stderr)
+        # Structured JSON output for Agent consumption — stdout is clean JSON
+        json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
+        print()
+    else:
+        print(format_output(result))
 
 
 if __name__ == '__main__':

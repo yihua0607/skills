@@ -19,7 +19,7 @@ import urllib.error
 
 
 ENDPOINT = "https://server.shanhaimap.com/apis/jeecg-app/app/product/aiCode/resolve"
-MAX_RETRIES = 2
+MAX_RETRIES = 3
 TIMEOUT_SECONDS = 15
 AI_CODE_PATTERN = re.compile(r'^.+-\d{19}$')
 PURE_CODE_PATTERN = re.compile(r'^\d{19}$')
@@ -175,10 +175,10 @@ def request_services(ai_codes):
             last_error = exc
             print(f"⚠️  Request attempt {attempt}/{MAX_RETRIES} failed: {exc}", file=sys.stderr)
 
-        # Brief pause before retry
+        # Exponential backoff before retry: 1s → 2s → 4s
         if attempt < MAX_RETRIES:
             import time
-            time.sleep(1)
+            time.sleep(2 ** (attempt - 1))
 
     # All retries exhausted — output structured error JSON for Agent consumption.
     # The upstream API itself does not provide an errors field; this is our

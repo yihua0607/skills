@@ -54,7 +54,7 @@ def validate_and_normalize_data(data):
     warnings = []
 
     if not isinstance(data, dict):
-        raise ValueError('Quotation data must be a JSON/YAML object')
+        raise ValueError('Quotation data must be a JSON object')
 
     for key in REQUIRED_TOP_LEVEL_KEYS:
         if key not in data:

@@ -24,15 +24,9 @@ W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if SKILL_DIR not in sys.path:
     sys.path.insert(0, SKILL_DIR)
-ENTITY_CONFIG_PATH = os.path.join(SKILL_DIR, 'config', 'entities.json')
 
 from scripts.sync_payment_terms import extract_payment_terms, check_payment_terms_reasonableness
-
-def load_entity_config():
-    if not os.path.exists(ENTITY_CONFIG_PATH):
-        return {}
-    with open(ENTITY_CONFIG_PATH, 'r', encoding='utf-8') as f:
-        return json.load(f)
+from scripts.quotation_common import load_entity_config
 
 
 def w(tag):
@@ -105,6 +99,7 @@ def detect_entity(paragraph_texts, entity_config):
         for doc_line in bank_section:
             if company in doc_line:
                 return entity_key
+    print("⚠️  WARNING: Could not auto-detect signing entity from bank info; entity-specific checks will be skipped.", file=sys.stderr)
     return None
 
 
@@ -415,11 +410,11 @@ def verify_amounts(amounts, currency):
     # Check VAT calculation: VAT = (subtotal - discount) * vat_rate
     if vat_rate is not None and vat is not None:
         expected_vat = (subtotal - discount) * vat_rate
-        if currency == 'RMB':
+        if currency in ('RMB', 'USD'):
             expected_vat = round(expected_vat, 2)
         else:
             expected_vat = round(expected_vat)
-        tolerance = 0.02 if currency == 'RMB' else 2
+        tolerance = 0.02 if currency in ('RMB', 'USD') else 2
         if abs(vat - expected_vat) > tolerance:
             issues.append(
                 f"VAT mismatch: document={vat}, expected={expected_vat} "
@@ -428,7 +423,7 @@ def verify_amounts(amounts, currency):
     # Check total = discounted subtotal + VAT
     if total is not None and vat is not None:
         expected_total = (subtotal - discount) + vat
-        tolerance = 0.02 if currency == 'RMB' else 2
+        tolerance = 0.02 if currency in ('RMB', 'USD') else 2
         if abs(total - expected_total) > tolerance:
             issues.append(
                 f"Total mismatch: document={total}, expected={expected_total} "
@@ -513,7 +508,7 @@ def main():
                         help='Expected signing entity (for config-based checks)')
     args = parser.parse_args()
 
-    entity_config = load_entity_config()
+    entity_config, _ = load_entity_config()
 
     input_path = os.path.abspath(args.input)
     if not os.path.exists(input_path):

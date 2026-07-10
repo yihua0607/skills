@@ -1,11 +1,11 @@
 ---
 name: quotation-generator
-version: 1.7.101
+version: 1.8.0
 description: >
   山海图公司报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
   支持 6 签约主体、IDR/RMB/USD 三种报价币种。
-last_updated: "2026-07-03"
+last_updated: "2026-07-10"
 ---
 
 # 山海图报价单生成器
@@ -38,16 +38,16 @@ last_updated: "2026-07-03"
 
 ## 签约主体
 
-| 签约主体 | 公司全称 | `--entity` | 模板 | 增值税 | 币种 |
-|----------|----------|------------|------|--------|------|
-| 雅加达 | PT. SHAN HAI MAP | `jakarta` | 雅加达 | 11% | IDR/Rp，可按客户要求改 RMB/￥ 或 USD/$ |
-| 北京 | 北京山海图科技有限公司 | `beijing` | 中国 | 6% | RMB/￥，可按客户要求改 USD/$ |
-| 西安 | 北京山海图科技有限公司西安分公司 | `xian` | 中国 | 6% | RMB/￥，可按客户要求改 USD/$ |
-| 深圳 | 北京山海图科技有限公司深圳分公司 | `shenzhen` | 中国 | 6% | RMB/￥，可按客户要求改 USD/$ |
-| 上海 | 北京山海图科技有限公司上海分公司 | `shanghai` | 中国 | 1% | RMB/￥，可按客户要求改 USD/$ |
-| 上海新企业 | 上海山海图新企业咨询有限公司 | `shanghai_new` | 中国 | 1% | RMB/￥，可按客户要求改 USD/$ |
+| 签约主体 | `--entity` | 增值税 | 默认币种 | 可切换币种 |
+|----------|------------|--------|----------|-----------|
+| PT. SHAN HAI MAP (雅加达) | `jakarta` | 11% | IDR | RMB, USD |
+| 北京山海图科技有限公司 | `beijing` | 6% | RMB | USD |
+| 北京山海图科技有限公司西安分公司 | `xian` | 6% | RMB | USD |
+| 北京山海图科技有限公司深圳分公司 | `shenzhen` | 6% | RMB | USD |
+| 北京山海图科技有限公司上海分公司 | `shanghai` | 1% | RMB | USD |
+| 上海山海图新企业咨询有限公司 | `shanghai_new` | 1% | RMB | USD |
 
-实体配置见 `config/entities.json`。标题、日期、客户、合同号、付款条件写入 `quote_meta`。
+完整银行账户、地址、税号等详见 `docs/entity_reference.md`。实体配置源文件见 `config/entities.json`。标题、日期、客户、合同号、付款条件写入 `quote_meta`。
 
 ## 场景判断
 
@@ -73,6 +73,8 @@ cd <skill-root>
 - 如果 `--output` 指向已存在的 `.docx`，自动从该旧文件读取付款方式并用于本次重建。
 - 如果输出到新文件但需要沿用某个旧报价单的付款方式，传 `--preserve-payment-from "$WORKDIR/已编辑报价单.docx"`。
 - 只有明确要用 `quotation.json` / 实体默认付款方式覆盖旧文件时，才传 `--overwrite-payment-terms`。
+- 如果指定了旧 `.docx` 但付款方式提取失败，必须立即中止；不得回退到 `quotation.json` 或实体默认付款方式，也不得覆盖旧文件。
+- Agent 必须向用户询问并确认付款方式。用户明确告知后，将其写入本次工作目录的 `quote_meta.payment_terms`，并传 `--overwrite-payment-terms` 重新生成；这不属于从旧文档同步数据。
 - `validate` / `build` / `verify` 会提醒明显不合理的付款方式：付款比例合计超过 100%，或付款金额合计大于合同含税总计。
 
 ```bash
