@@ -22,7 +22,11 @@ from xml.etree import ElementTree as ET
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if SKILL_DIR not in sys.path:
+    sys.path.insert(0, SKILL_DIR)
 ENTITY_CONFIG_PATH = os.path.join(SKILL_DIR, 'config', 'entities.json')
+
+from scripts.sync_payment_terms import extract_payment_terms, check_payment_terms_reasonableness
 
 def load_entity_config():
     if not os.path.exists(ENTITY_CONFIG_PATH):
@@ -55,6 +59,27 @@ def detect_currency(paragraph_texts):
         if re.search(r'\$\s?\d', text):
             return 'USD'
     return 'RMB'
+
+
+def detect_currency_from_tables(tables):
+    """Detect currency from service/summary table amount cells."""
+    for tbl in tables:
+        for row in tbl.findall(w('tr')):
+            cells = row.findall(w('tc'))
+            if len(cells) < 4:
+                continue
+            amount_text = ''.join(
+                (t.text or '') for t in cells[3].findall('.//' + w('t'))
+            ).strip()
+            if not amount_text:
+                continue
+            if '￥' in amount_text or '¥' in amount_text:
+                return 'RMB'
+            if re.search(r'\bRp\s*[\d,]', amount_text, flags=re.I):
+                return 'IDR'
+            if re.search(r'\$\s*[\d,]', amount_text):
+                return 'USD'
+    return None
 
 
 def detect_entity(paragraph_texts, entity_config):
@@ -526,7 +551,8 @@ def main():
         doc_root = doc_tree.getroot()
         doc_body = doc_root.find(w('body'))
         para_texts = extract_paragraph_texts(doc_root)
-        currency = detect_currency(para_texts)
+        tables = doc_body.findall('.//' + w('tbl')) if doc_body is not None else []
+        currency = detect_currency_from_tables(tables) or detect_currency(para_texts)
         print(f"货币: {currency}")
 
         actual_entity = detect_entity(para_texts, entity_config)
@@ -539,7 +565,7 @@ def main():
                 meta_entity = meta.get('applicable_entity')
                 expected_currency = meta.get('target_currency')
 
-        detected_entity = cli_entity or meta_entity or actual_entity
+        detected_entity = cli_entity or actual_entity or meta_entity
         if detected_entity:
             print(f"签约主体: {detected_entity}")
         else:
@@ -618,8 +644,6 @@ def main():
         elif header_address and not bank_address:
             print("⚠️  银行信息中未找到地址字段，无法核对")
             all_warnings.append("银行信息中无地址字段，无法核对页眉地址")
-
-        tables = doc_body.findall('.//' + w('tbl'))
 
         # ── 2. Signature company vs bank company ──
         sig_company = extract_signature_company(tables, entity_config)
@@ -702,6 +726,21 @@ def main():
                 all_issues.append(ai)
             if not amount_issues:
                 print("✅ 金额内部一致性验证通过")
+
+            try:
+                payment_terms = extract_payment_terms(input_path)
+                payment_warnings = check_payment_terms_reasonableness(
+                    payment_terms,
+                    contract_total=amounts.get('total'),
+                    currency=currency,
+                )
+                for warning in payment_warnings:
+                    print(f"⚠️  {warning}")
+                    all_warnings.append(warning)
+            except Exception as exc:
+                warning = f"未能检查付款方式合理性: {exc}"
+                print(f"⚠️  {warning}")
+                all_warnings.append(warning)
 
             # ── 7. Cross-check with input data ──
             if data_path:

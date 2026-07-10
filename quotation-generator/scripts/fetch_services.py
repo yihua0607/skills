@@ -21,6 +21,8 @@ import urllib.error
 ENDPOINT = "https://server.shanhaimap.com/apis/jeecg-app/app/product/aiCode/resolve"
 MAX_RETRIES = 2
 TIMEOUT_SECONDS = 15
+AI_CODE_PATTERN = re.compile(r'^.+-\d{19}$')
+PURE_CODE_PATTERN = re.compile(r'^\d{19}$')
 
 
 # ====== HTML-to-Markdown converter (using markdownify) ======
@@ -126,6 +128,10 @@ def parse_ai_code_arg(value):
     raw = str(value).strip()
     if not raw:
         raise ValueError(f'Cannot parse aiCode from input: {value}. Expected non-empty 服务名-19位编码.')
+    if PURE_CODE_PATTERN.fullmatch(raw):
+        raise ValueError(f'不支持纯19位数字编码查询: {raw}. 请提供完整的 服务名-19位编码。')
+    if not AI_CODE_PATTERN.fullmatch(raw):
+        raise ValueError(f'Cannot parse aiCode from input: {value}. Expected 服务名-19位编码。')
     return raw
 
 
@@ -246,7 +252,11 @@ def main():
         print(f"❌ {exc}", file=sys.stderr)
         sys.exit(1)
 
-    original_by_code = dict(zip(parsed_ai_codes, args.ai_code))
+    original_by_code = {}
+    for parsed, original in zip(parsed_ai_codes, args.ai_code):
+        original_by_code[parsed] = original
+        suffix = parsed.rsplit('-', 1)[-1]
+        original_by_code[suffix] = original
     payload = request_services(parsed_ai_codes)
 
     # Check for partial failures

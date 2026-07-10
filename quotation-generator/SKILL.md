@@ -1,11 +1,10 @@
 ---
 name: quotation-generator
-version: 1.7.3.1
+version: 1.7.101
 description: >
   山海图公司报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
   支持 6 签约主体、IDR/RMB/USD 三种报价币种。
-version: "2.4"
 last_updated: "2026-07-03"
 ---
 
@@ -26,13 +25,14 @@ last_updated: "2026-07-03"
 | 5 | 汇率留档但不入报价单 | API 返回的 `rateToCny/rateToUsd` 随 `queried_services.json` 和 `_meta` 留档；客户可见报价单不写汇率说明 |
 | 6 | 公共不含项去重 | 多个/全部服务共同适用的费用不含项抽取到 `notes`；各服务 `exclude` 只留服务特有项 |
 | 7 | 金额符号 | 人民币 `￥` 无空格；印尼盾 `Rp ` 后跟空格；美元 `$ ` 后跟空格 |
+| 8 | 付款方式只提醒 | 付款方式留给用户最终处理；脚本只检查明显不合理项并 warning，例如付款比例合计 >100%、付款金额合计 > 合同含税总计 |
 
 ### 流程规则
 
 | # | 规则 | 要点 |
 |---|------|------|
 | 1 | aiCode 必先 fetch | 只接受 `服务名-19位数字编码`；脚本会将完整字符串作为 `aiCodes` 请求参数；不截取末尾 19 位数字编码 |
-| 2 | 手改 `.docx` 优先 | 用户提供/说明手改过报价单时，先同步客户可见内容，再重新 build |
+| 2 | 手改 `.docx` 优先 | 用户提供/说明手改过报价单时，先保留客户可见内容，再重新 build；付款方式由 build 自动从旧 `.docx` 保留，不必写回 `quotation.json` |
 | 3 | 输出位置 | 最终生成的 `.docx` 必须放在用户当前工作目录；`quotation.json`、`queried_services.json` 等过程文件写入用户工作目录下的独立留档目录；不写 skill 根目录；修改已有报价单时输出新文件 |
 | 4 | Agent 不改脚本 | 执行报价任务不得修改 build/validate/verify/fetch 等脚本；业务/数据问题按业务处理，只有严重脚本缺陷才提示联系 SKILL 开发者 |
 
@@ -60,20 +60,27 @@ cd <skill-root>
 | 场景 | 条件 | 路径 |
 |------|------|------|
 | A 新建 | 用户提供 aiCode，工作区无 quotation.json | fetch → organize → validate → build → verify |
-| B 修改 | 用户未提供 aiCode | 定位 → 同步手改 → 修改 → validate → build → verify |
-| C 追加 | 用户提供 aiCode + 既有 quotation.json | 定位 → 同步手改 → fetch 新服务 → 合并 → validate → build → verify |
+| B 修改 | 用户未提供 aiCode | 定位 → 保留手改/快照对比 → 修改 → validate → build → verify |
+| C 追加 | 用户提供 aiCode + 既有 quotation.json | 定位 → 保留手改/快照对比 → fetch 新服务 → 合并 → validate → build → verify |
 
 找不到既有 quotation.json 时要求用户提供，不从 sample 凭空改。
 
-## 手改 `.docx` 同步
+## 手改 `.docx` 保留
 
-`sync_payment_terms.py` 仅当确认 `.docx` 只改了付款条件/付款方式时使用：
+付款方式/付款条件属于客户可见手改内容。初次生成的默认付款方式只作占位，后续用户手动修改或让 Agent 修改后，重新生成服务、金额、优惠时不得把付款方式还原为 `quotation.json` 或实体默认值。脚本只做合理性提醒，不因付款方式 warning 阻断生成。
+
+`build_quotation.py` 默认行为：
+- 如果 `--output` 指向已存在的 `.docx`，自动从该旧文件读取付款方式并用于本次重建。
+- 如果输出到新文件但需要沿用某个旧报价单的付款方式，传 `--preserve-payment-from "$WORKDIR/已编辑报价单.docx"`。
+- 只有明确要用 `quotation.json` / 实体默认付款方式覆盖旧文件时，才传 `--overwrite-payment-terms`。
+- `validate` / `build` / `verify` 会提醒明显不合理的付款方式：付款比例合计超过 100%，或付款金额合计大于合同含税总计。
 
 ```bash
-python3 scripts/sync_payment_terms.py --input "$WORKDIR/已编辑报价单.docx" --data "$WORKDIR/quotation.json"
+python3 scripts/build_quotation.py --entity xian --data "$WORKDIR/quotation.json" --output "$USER_WORKDIR/报价单.docx"
+python3 scripts/build_quotation.py --entity xian --data "$WORKDIR/quotation.json" --preserve-payment-from "$WORKDIR/已编辑报价单.docx" --output "$USER_WORKDIR/新版报价单.docx"
 ```
 
-其他任何可能包含手动修改的 `.docx`，走快照流程：
+`sync_payment_terms.py` 仅作为兼容工具保留；一般不需要使用。其他任何可能包含手动修改的 `.docx`，仍走快照流程：
 
 ```bash
 python3 scripts/extract_docx_snapshot.py --input "$WORKDIR/已编辑报价单.docx" --output "$WORKDIR/docx_snapshot.json"
@@ -187,9 +194,8 @@ validate error → 必须修复，warning → 判断后处理。`--entity` 必�
 | 金额或币种异常 | 检查 `discount_amount`、服务整数总价、汇率和实体币种；重新运行预检 |
 | 公共不含项重复出现在 `exclude` | 从各服务 `exclude` 移除公共项，在 `notes` 中统一显示 |
 | `build` 报 `Invalid quotation data` | 先跑 `validate_data.py` 定位字段并修正 |
-| `verify` 失败 | 优先修改 `quotation.json` 后重新 build；不要手改 `.docx` |
+| `verify` 失败 | 除付款方式等客户最终处理内容外，优先修改 `quotation.json` 后重新 build；不要手改其他 `.docx` 内容 |
 
 业务/数据问题包括但不限于：数据填写错误、缺字段、金额不一致、实体选择错误、页眉公司名称和签约名称不一致、金额过大疑似选错币种、付款金额与合同金额不一致、付款条件/优惠/税率/签约主体等业务口径不明确。此类问题应修数据或向用户确认，不许提示联系 SKILL 开发者。
 
 只有排除业务/数据问题后，同一份有效数据仍触发脚本异常、校验逻辑明显错误、生成内容与配置矛盾，且严重影响报价正确性或无法交付时，才暂停交付，展示缺陷问题、输入数据/命令/报错摘要，并提示联系 SKILL 开发者。执行报价任务时不得修改 skill 脚本，不得绕过校验。
-

@@ -31,6 +31,7 @@ from scripts.quotation_common import (
     format_price_total,
     vat_percent_label,
 )
+from scripts.sync_payment_terms import check_payment_terms_reasonableness
 from scripts.quotation_schema import validate_and_normalize_data as schema_validate_and_normalize_data
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -38,7 +39,7 @@ ENTITY_CONFIG_PATH = os.path.join(SKILL_DIR, 'config', 'entities.json')
 
 REQUIRED_ENTITY_FIELDS = [
     'template', 'company', 'header_lines', 'vat_rate', 'currency',
-    'payment_terms', 'bank_lines',
+    'allowed_currencies', 'payment_terms', 'bank_lines',
 ]
 
 
@@ -114,6 +115,11 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
                 errors.append(f'_meta.target_currency ({target_currency}) must be IDR, RMB, or USD')
             else:
                 currency = target_currency
+        allowed_currencies = entity_cfg.get('allowed_currencies', [entity_default_currency])
+        if currency not in allowed_currencies:
+            errors.append(
+                f'_meta.target_currency ({currency}) is not allowed for --entity ({entity_key}); '
+                f'allowed: {", ".join(allowed_currencies)}')
 
     # ── Services ──
     services_data = data.get('services')
@@ -396,6 +402,12 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
             for i, item in enumerate(payment_terms):
                 if not isinstance(item, str) or not item.strip():
                     errors.append(f'payment_terms[{i}] must be non-empty text')
+            if not errors:
+                warnings.extend(check_payment_terms_reasonableness(
+                    payment_terms,
+                    contract_total=amounts.get('total'),
+                    currency=currency,
+                ))
 
     return errors, warnings
 

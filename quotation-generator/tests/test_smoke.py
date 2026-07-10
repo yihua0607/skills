@@ -49,6 +49,30 @@ def _assert_docx_valid(test_case, docx_path):
         ET.fromstring(xml_bytes)
 
 
+def _replace_docx_visible_text(src_path, dst_path, old_text, new_text):
+    """Replace visible text in word/document.xml while keeping the .docx package valid."""
+    W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+
+    def w(tag):
+        return f'{{{W}}}{tag}'
+
+    replaced = False
+    with zipfile.ZipFile(src_path, 'r') as src, zipfile.ZipFile(dst_path, 'w', zipfile.ZIP_DEFLATED) as dst:
+        document_xml = src.read('word/document.xml')
+        root = ET.fromstring(document_xml)
+        for text_el in root.findall('.//' + w('t')):
+            if text_el.text == old_text:
+                text_el.text = new_text
+                replaced = True
+        modified_xml = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+
+        for item in src.infolist():
+            data = modified_xml if item.filename == 'word/document.xml' else src.read(item.filename)
+            dst.writestr(item, data)
+    if not replaced:
+        raise AssertionError(f"Text not found in {src_path}: {old_text}")
+
+
 class TestQuotationSmoke(unittest.TestCase):
 
     def test_jakarta_end_to_end(self):
@@ -178,6 +202,162 @@ class TestQuotationSmoke(unittest.TestCase):
             self.assertIn('Invalid quote date', err)
             self.assertFalse(os.path.exists(output_path))
 
+    def test_rebuild_same_output_preserves_existing_payment_terms(self):
+        """Rebuilding services/discounts should not overwrite edited payment terms."""
+        with tempfile.TemporaryDirectory(prefix='quotation-payment-preserve-') as tmpdir:
+            src = os.path.join(SKILL_ROOT, 'examples', 'minimal_quotation.json')
+            data_path = os.path.join(tmpdir, 'quotation.json')
+            shutil.copy(src, data_path)
+            output_path = os.path.join(tmpdir, '报价单-西安-测试.docx')
+            edited_path = os.path.join(tmpdir, '报价单-西安-手改付款.docx')
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path, '--output', output_path]
+            )
+            self.assertEqual(rc, 0, f"initial build failed:\nstdout: {out}\nstderr: {err}")
+
+            old_term = '合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。'
+            edited_term = '客户手动修改付款方式：合同签订后一次性支付合同金额的 100%。'
+            _replace_docx_visible_text(output_path, edited_path, old_term, edited_term)
+            shutil.copy(edited_path, output_path)
+
+            with open(data_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            data['discount_amount'] = 1000
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path, '--output', output_path]
+            )
+            self.assertEqual(rc, 0, f"rebuild failed:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('Preserved payment terms', out)
+
+            with zipfile.ZipFile(output_path, 'r') as zf:
+                xml_bytes = zf.read('word/document.xml')
+                root = ET.fromstring(xml_bytes)
+                all_text = ''.join(t.text or '' for t in root.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t'))
+                self.assertIn(edited_term, all_text)
+                self.assertNotIn(old_term, all_text)
+                self.assertIn('￥1,000', all_text)
+
+    def test_rebuild_default_output_preserves_existing_payment_terms(self):
+        """Default output path should also preserve edited payment terms when the file exists."""
+        with tempfile.TemporaryDirectory(prefix='quotation-default-output-preserve-') as tmpdir:
+            src = os.path.join(SKILL_ROOT, 'examples', 'minimal_quotation.json')
+            data_path = os.path.join(tmpdir, 'quotation.json')
+            shutil.copy(src, data_path)
+            output_path = os.path.join(tmpdir, '报价单-北京山海图科技有限公司西安分公司.docx')
+            edited_path = os.path.join(tmpdir, '报价单-西安-默认输出手改付款.docx')
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path],
+                cwd=tmpdir,
+            )
+            self.assertEqual(rc, 0, f"initial default build failed:\nstdout: {out}\nstderr: {err}")
+            self.assertTrue(os.path.exists(output_path))
+
+            old_term = '合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。'
+            edited_term = '客户手动修改默认输出付款方式：尾款以最终确认邮件为准。'
+            _replace_docx_visible_text(output_path, edited_path, old_term, edited_term)
+            shutil.copy(edited_path, output_path)
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path],
+                cwd=tmpdir,
+            )
+            self.assertEqual(rc, 0, f"default rebuild failed:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('Preserved payment terms', out)
+
+            with zipfile.ZipFile(output_path, 'r') as zf:
+                root = ET.fromstring(zf.read('word/document.xml'))
+                all_text = ''.join(t.text or '' for t in root.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t'))
+                self.assertIn(edited_term, all_text)
+                self.assertNotIn(old_term, all_text)
+
+    def test_numbered_payment_terms_are_preserved_and_checked(self):
+        """Numbered payment term lines are terms, not section headings."""
+        with tempfile.TemporaryDirectory(prefix='quotation-numbered-payment-') as tmpdir:
+            src = os.path.join(SKILL_ROOT, 'examples', 'minimal_quotation.json')
+            data_path = os.path.join(tmpdir, 'quotation.json')
+            shutil.copy(src, data_path)
+            output_path = os.path.join(tmpdir, '报价单-西安-编号付款.docx')
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path, '--output', output_path]
+            )
+            self.assertEqual(rc, 0, f"initial build failed:\nstdout: {out}\nstderr: {err}")
+
+            old_term = '合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。'
+            numbered_terms = '1. 首付款 70%，金额 ￥70,000\n2. 尾款 50%，金额 ￥60,000'
+            edited_path = os.path.join(tmpdir, '报价单-西安-编号付款-已编辑.docx')
+            _replace_docx_visible_text(output_path, edited_path, old_term, numbered_terms)
+            shutil.copy(edited_path, output_path)
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path, '--output', output_path]
+            )
+            self.assertEqual(rc, 0, f"rebuild failed:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('Preserved payment terms', out)
+            self.assertIn('付款方式比例合计', err)
+            self.assertIn('付款方式金额合计', err)
+
+            rc, out, err = _run_script('verify_quotation.py', ['--input', output_path, '--data', data_path])
+            self.assertEqual(rc, 0, f"verify should warn only:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('付款方式比例合计', out)
+            self.assertIn('付款方式金额合计', out)
+
+    def test_payment_terms_percentage_over_100_warns_but_does_not_fail(self):
+        """Payment terms are user-managed, but obviously invalid percentages should warn."""
+        with tempfile.TemporaryDirectory(prefix='quotation-payment-warning-') as tmpdir:
+            src = os.path.join(SKILL_ROOT, 'examples', 'minimal_quotation.json')
+            data_path = os.path.join(tmpdir, 'quotation.json')
+            with open(src, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            data['quote_meta']['payment_terms'] = ['首付款 70%，金额 ￥70,000；尾款 50%，金额 ￥60,000。']
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            output_path = os.path.join(tmpdir, '报价单-付款比例提醒.docx')
+            rc, out, err = _run_script('validate_data.py', ['--entity', 'xian', '--data', data_path])
+            self.assertEqual(rc, 0, f"validate_data.py should warn only:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('付款方式比例合计', out)
+            self.assertIn('付款方式金额合计', out)
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path, '--output', output_path]
+            )
+            self.assertEqual(rc, 0, f"build_quotation.py should warn only:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('付款方式比例合计', err)
+            self.assertIn('付款方式金额合计', err)
+
+            rc, out, err = _run_script('verify_quotation.py', ['--input', output_path, '--data', data_path])
+            self.assertEqual(rc, 0, f"verify_quotation.py should warn only:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('付款方式比例合计', out)
+            self.assertIn('付款方式金额合计', out)
+
+    def test_payment_terms_amount_over_contract_without_percentage_warns(self):
+        """Payment amount warnings must work even when no percentages are present."""
+        with tempfile.TemporaryDirectory(prefix='quotation-payment-amount-warning-') as tmpdir:
+            src = os.path.join(SKILL_ROOT, 'examples', 'minimal_quotation.json')
+            data_path = os.path.join(tmpdir, 'quotation.json')
+            with open(src, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            data['quote_meta']['payment_terms'] = ['首付款 ￥70,000；尾款 ￥60,000。']
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            rc, out, err = _run_script('validate_data.py', ['--entity', 'xian', '--data', data_path])
+            self.assertEqual(rc, 0, f"validate_data.py should warn only:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('付款方式金额合计', out)
+
     def test_verify_fails_when_signature_company_missing(self):
         """Signature company must be present and match the bank account company."""
         W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -224,12 +404,16 @@ class TestQuotationSmoke(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='quotation-meta-mismatch-') as tmpdir:
             src = os.path.join(SKILL_ROOT, 'examples', 'minimal_quotation.json')
             data_path = os.path.join(tmpdir, 'quotation.json')
+            bad_data_path = os.path.join(tmpdir, 'quotation-bad-meta.json')
             with open(src, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            data['_meta']['applicable_entity'] = 'jakarta'
-            data['_meta']['target_currency'] = 'IDR'
             with open(data_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            bad_data = json.loads(json.dumps(data))
+            bad_data['_meta']['applicable_entity'] = 'jakarta'
+            bad_data['_meta']['target_currency'] = 'IDR'
+            with open(bad_data_path, 'w', encoding='utf-8') as f:
+                json.dump(bad_data, f, ensure_ascii=False, indent=2)
 
             output_path = os.path.join(tmpdir, '报价单-西安-测试.docx')
             rc, out, err = _run_script(
@@ -238,7 +422,7 @@ class TestQuotationSmoke(unittest.TestCase):
             )
             self.assertEqual(rc, 0, f"build_quotation.py failed:\nstdout: {out}\nstderr: {err}")
 
-            rc, out, err = _run_script('verify_quotation.py', ['--input', output_path, '--data', data_path])
+            rc, out, err = _run_script('verify_quotation.py', ['--input', output_path, '--data', bad_data_path])
             self.assertNotEqual(rc, 0)
             self.assertIn('文档签约主体', out)
             self.assertIn('文档币种', out)
@@ -259,11 +443,29 @@ class TestQuotationSmoke(unittest.TestCase):
                 'build_quotation.py',
                 ['--entity', 'xian', '--data', data_path, '--output', output_path]
             )
-            self.assertEqual(rc, 0, f"build_quotation.py failed:\nstdout: {out}\nstderr: {err}")
-
-            rc, out, err = _run_script('verify_quotation.py', ['--entity', 'xian', '--input', output_path, '--data', data_path])
             self.assertNotEqual(rc, 0)
-            self.assertIn('数据_meta主体', out)
+            self.assertIn('_meta.applicable_entity', err)
+            self.assertFalse(os.path.exists(output_path))
+
+    def test_build_rejects_meta_target_currency_not_allowed_for_entity(self):
+        """Build must reject target currencies that the selected entity cannot quote."""
+        with tempfile.TemporaryDirectory(prefix='quotation-build-currency-mismatch-') as tmpdir:
+            src = os.path.join(SKILL_ROOT, 'examples', 'minimal_quotation.json')
+            data_path = os.path.join(tmpdir, 'quotation.json')
+            with open(src, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            data['_meta']['target_currency'] = 'IDR'
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            output_path = os.path.join(tmpdir, '报价单-西安-测试.docx')
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path, '--output', output_path]
+            )
+            self.assertNotEqual(rc, 0)
+            self.assertIn('_meta.target_currency', err)
+            self.assertFalse(os.path.exists(output_path))
 
     def test_validate_rejects_meta_target_currency_mismatch(self):
         """Preflight should catch _meta currency drift before build."""

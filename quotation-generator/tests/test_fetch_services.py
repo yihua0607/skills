@@ -150,7 +150,7 @@ class TestFetchServices(unittest.TestCase):
         self.assertEqual(output["services"], [])
         self.assertEqual(output["errors"], [{"aiCode": None, "message": "ok"}])
 
-    def test_labeled_ai_code_args_send_only_19_digit_suffix(self):
+    def test_labeled_ai_code_args_send_full_service_name_and_19_digit_code(self):
         captured = {}
 
         def fake_request(ai_codes):
@@ -185,7 +185,7 @@ class TestFetchServices(unittest.TestCase):
                 redirect_stdout(stdout), redirect_stderr(stderr):
             fetch_services.main()
 
-        self.assertEqual(captured["ai_codes"], ["2070441813847769898"])
+        self.assertEqual(captured["ai_codes"], ["电力代表处注册-2070441813847769898"])
         output = json.loads(stdout.getvalue())
         self.assertTrue(output["success"])
         self.assertEqual(output["services"][0]["原始输入"], "电力代表处注册-2070441813847769898")

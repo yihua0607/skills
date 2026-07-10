@@ -26,6 +26,7 @@ from scripts.quotation_common import (
     format_price_total,
     vat_percent_label,
 )
+from scripts.sync_payment_terms import extract_payment_terms, check_payment_terms_reasonableness
 
 # Skill root directory (where SKILL.md lives)
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -52,7 +53,7 @@ def load_entity_config():
         raw = json.load(f)
 
     required_fields = ('template', 'company', 'header_lines', 'vat_rate',
-                       'currency', 'payment_terms', 'bank_lines')
+                       'currency', 'allowed_currencies', 'payment_terms', 'bank_lines')
     errors = []
     for key, cfg in raw.items():
         if key.startswith('_'):
@@ -111,6 +112,10 @@ def main():
     parser.add_argument('--title-line1', default=None, help='Title first line (default: quote_meta.title_line1 or 印尼投资)')
     parser.add_argument('--title-line2', default=None, help='Title second line (default: quote_meta.title_line2 or 综合服务方案)')
     parser.add_argument('--quote-date', default=None, help='Quote date override (default: today, format: YYYY-MM-DD)')
+    parser.add_argument('--preserve-payment-from', default=None,
+                        help='Existing .docx whose visible payment terms should be preserved for this rebuild')
+    parser.add_argument('--overwrite-payment-terms', action='store_true',
+                        help='Use quotation.json/entity payment terms even when rebuilding over an existing .docx')
     args = parser.parse_args()
 
     entity = args.entity
@@ -518,14 +523,44 @@ def main():
     quote_meta = quotation_data.get('quote_meta', {})
     DISCOUNT_AMOUNT_INT = quotation_data['discount_amount']
 
+    preserved_payment_terms = None
+    preserve_payment_source = args.preserve_payment_from
+    if not preserve_payment_source and os.path.exists(OUTPUT):
+        preserve_payment_source = OUTPUT
+    if preserve_payment_source and not args.overwrite_payment_terms:
+        try:
+            preserved_payment_terms = extract_payment_terms(os.path.abspath(preserve_payment_source))
+            print(f"✅ Preserved payment terms from existing .docx: {os.path.abspath(preserve_payment_source)}")
+        except Exception as exc:
+            print(
+                f"⚠️  WARNING: Could not preserve payment terms from {preserve_payment_source}: {exc}",
+                file=sys.stderr,
+            )
+
     # ====== PRICING CONFIGURATION (shared module) ======
     # All financial calculations go through scripts.quotation_common to keep
     # validate_data.py and build_quotation.py consistent.
 
     meta = quotation_data.get('_meta', {}) if isinstance(quotation_data.get('_meta', {}), dict) else {}
+    meta_entity = meta.get('applicable_entity')
+    if meta_entity and meta_entity != entity:
+        print(
+            f"❌ _meta.applicable_entity ({meta_entity}) must match --entity ({entity})",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     CURRENCY = meta.get('target_currency') or entity_cfg['currency']
     if CURRENCY not in ('IDR', 'RMB', 'USD'):
-        raise ValueError(f"Unsupported target currency: {CURRENCY}")
+        print(f"❌ Unsupported target currency: {CURRENCY}", file=sys.stderr)
+        sys.exit(2)
+    allowed_currencies = entity_cfg.get('allowed_currencies', [entity_cfg['currency']])
+    if CURRENCY not in allowed_currencies:
+        print(
+            f"❌ _meta.target_currency ({CURRENCY}) is not allowed for --entity ({entity}); "
+            f"allowed: {', '.join(allowed_currencies)}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     CURRENCY_SYMBOL = '￥' if CURRENCY == 'RMB' else ('$' if CURRENCY == 'USD' else 'Rp')
 
     # VAT rate: CLI override → entity config
@@ -725,10 +760,12 @@ def main():
                     spacing_after=0, line='280', indent_left=540
                 ))
 
-    # 6. Payment Terms — quotation data can override entity defaults.
+    # 6. Payment Terms — visible edits in an existing .docx win on rebuild.
     body_children.append(make_para('', spacing_before=100, spacing_after=0))
     body_children.append(make_section_header('2.付款条件：'))
-    payment_terms = quote_meta.get('payment_terms') or entity_cfg.get('payment_terms', [])
+    payment_terms = preserved_payment_terms or quote_meta.get('payment_terms') or entity_cfg.get('payment_terms', [])
+    for warning in check_payment_terms_reasonableness(payment_terms, contract_total=GRAND_TOTAL_D, currency=CURRENCY):
+        print(f'⚠️  WARNING: {warning}', file=sys.stderr)
     for term in payment_terms:
         body_children.append(make_para(
             [make_run(term, sz='21')],

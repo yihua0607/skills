@@ -7,6 +7,7 @@
       "header_lines",
       "vat_rate",
       "currency",
+      "allowed_currencies",
       "payment_terms",
       "bank_lines"
     ],
@@ -26,6 +27,7 @@
     ],
     "vat_rate": 0.11,
     "currency": "IDR",
+    "allowed_currencies": ["IDR", "RMB", "USD"],
     "payment_terms": [
       "甲方应在收到发票后 5 个工作日内支付合同金额的 100%。"
     ],
@@ -46,6 +48,7 @@
     ],
     "vat_rate": 0.06,
     "currency": "RMB",
+    "allowed_currencies": ["RMB", "USD"],
     "payment_terms": [
       "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
     ],
@@ -67,6 +70,7 @@
     ],
     "vat_rate": 0.06,
     "currency": "RMB",
+    "allowed_currencies": ["RMB", "USD"],
     "payment_terms": [
       "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
     ],
@@ -88,6 +92,7 @@
     ],
     "vat_rate": 0.06,
     "currency": "RMB",
+    "allowed_currencies": ["RMB", "USD"],
     "payment_terms": [
       "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
     ],
@@ -109,6 +114,7 @@
     ],
     "vat_rate": 0.01,
     "currency": "RMB",
+    "allowed_currencies": ["RMB", "USD"],
     "payment_terms": [
       "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
     ],
@@ -133,6 +139,7 @@
     ],
     "vat_rate": 0.01,
     "currency": "RMB",
+    "allowed_currencies": ["RMB", "USD"],
     "payment_terms": [
       "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
     ],
