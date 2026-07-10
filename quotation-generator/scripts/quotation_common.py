@@ -67,7 +67,7 @@ def load_entity_config():
 
 
 def parse_money_int(value, path):
-    """Parse integer amount — same logic as build_quotation.py and validate_data.py."""
+    """Parse integer amount from a JSON field value."""
     if isinstance(value, bool):
         raise ValueError(f'{path} must be an integer amount, not boolean')
     if isinstance(value, int):
@@ -155,21 +155,19 @@ def format_price_int(val, currency):
 def format_price_vat(val, currency):
     """Format VAT — RMB/USD keeps 2 decimals, IDR integer."""
     val_d = _to_decimal(val)
-    symbol = _currency_symbol(currency)
     if currency in ('RMB', 'USD'):
         val_d = val_d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        return f'{symbol}{val_d:,.2f}'
-    return f'{symbol} {int(val_d):,}'
+        return format_price_display(f'{val_d:,.2f}', currency)
+    return format_price_display(f'{int(val_d):,}', currency)
 
 
 def format_price_total(val, currency):
     """Format grand total — RMB/USD keeps 2 decimals, IDR integer."""
     val_d = _to_decimal(val)
-    symbol = _currency_symbol(currency)
     if currency in ('RMB', 'USD'):
         val_d = val_d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        return f'{symbol}{val_d:,.2f}'
-    return f'{symbol} {int(val_d):,}'
+        return format_price_display(f'{val_d:,.2f}', currency)
+    return format_price_display(f'{int(val_d):,}', currency)
 
 
 def vat_percent_label(vat_rate):

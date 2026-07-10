@@ -134,13 +134,14 @@
     "header_lines": ["公司名", "地址", ""],
     "vat_rate": 0.06,
     "currency": "RMB 或 IDR",
+    "allowed_currencies": ["RMB", "USD"],
     "payment_terms": ["付款条件文本"],
     "bank_lines": ["银行信息行1", "银行信息行2", ...]
   }
 }
 ```
 
-然后在 `build_quotation.py` 的 `--entity choices` 中添加新 key（脚本已自动从 config 加载所有 key），并在雅加达/中国模板目录中确保有对应模板文件。
+然后确保 `template` 字段引用的是已有模板类型（`china` 或 `jakarta`）。脚本会自动从 `config/entities.json` 加载所有实体 key，不需要修改 `build_quotation.py` 的 `--entity choices`。
 
 > 无需修改 `build_quotation.py` 的生成逻辑、无需修改 `SKILL.md` 的签约主体表（但建议更新本文档和 SKILL.md 中的表格供 Agent 参考）。
 
