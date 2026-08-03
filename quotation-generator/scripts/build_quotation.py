@@ -625,13 +625,15 @@ def main():
     tbl.append(hdr_row)
 
     # Service rows
+    seq = 0
     for svc in services_data:
         if svc['category']:
             tbl.append(make_category_row(svc['category']))
         for item in svc['items']:
+            seq += 1
             price_display = format_price_display(item["price"], CURRENCY)
             cells = [
-                make_data_cell(item['id'], COLS[0], jc='center'),
+                make_data_cell(str(seq), COLS[0], jc='center'),
                 make_data_cell(item['display_name'], COLS[1], bold=True),
                 make_data_cell(item['days'], COLS[2], jc='center'),
                 make_data_cell(price_display, COLS[3], jc='right', price=True),

@@ -1,11 +1,11 @@
 ---
 name: quotation-generator
-version: 1.8.0
+version: 1.8.6
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
   支持 6 签约主体、IDR/RMB/USD 三种报价币种。
-last_updated: "2026-07-13"
+last_updated: "2026-07-31"
 ---
 
 # 山海图报价单生成器
@@ -35,7 +35,7 @@ last_updated: "2026-07-13"
 | 2 | 手改 `.docx` 优先 | 用户提供/说明手改过报价单时，先保留客户可见内容，再重新 build；付款方式由 build 自动从旧 `.docx` 保留，不必写回 `quotation.json` |
 | 3 | 输出位置 | 最终生成的 `.docx` 放在 `quotation/YYYY-MM/` 下（YYYY-MM 为报价单日期所在年月）；`quotation.json`、`queried_services.json` 等过程文件写入其子目录；不写 skill 根目录；修改已有报价单时输出新文件 |
 | 4 | Agent 不改脚本 | 执行报价任务不得修改 build/validate/verify/fetch 等脚本；业务/数据问题按业务处理，只有严重脚本缺陷才提示联系 SKILL 开发者 |
-| 5 | 重复 aiCode 不累加 | 用户重复输入同一 aiCode 时，只更新服务数据（价格、内容等），不将数量×2 或价格翻倍；大概率是用户误重复输入 |
+| 5 | 重复 aiCode 不累加 | 用户重复输入同一 aiCode 时，数量和价格不翻倍，也不累加；大概率是用户误重复输入。若用户明确要求"多加一行"，则在报价单中新增同名服务行（用序号或 aiCode 末三位区分），每行各自独立 |
 
 ## 签约主体
 
@@ -194,7 +194,7 @@ price:   13,333                            （直接写入 quotation.json）
 
 ## 整理服务内容
 
-从 API Markdown 服务内容提取结构化数据：
+从 API Markdown 服务内容提取结构化数据。**5 个以上服务时**，使用 `execute_code` 批量提取，详见 `references/bulk-extraction-pattern.md`。
 
 | API 内容 | 目标字段 | 规则 |
 |---------|----------|------|
@@ -252,6 +252,7 @@ validate error → 必须修复，warning → 判断后处理。`--entity` 必�
 
 | 问题 | 处理 |
 |------|------|
+| 服务内容表格「序号」列显示服务编码而非数字 | `build_quotation.py` v1.8.6 起使用自增计数器（1, 2, 3...）生成序号，不再依赖 `item['id']`。旧数据即使 `id` 填了服务编码也不影响显示 |
 | 页眉/银行/签名不一致 | 检查 `--entity` 和 `config/entities.json`；属于业务/数据问题，不提示联系 SKILL 开发者 |
 | 服务名覆盖缺失 | 补齐 `fee_details/process_data/doc_data` 中缺失的同名条目 |
 | 金额或币种异常 | 检查 `discount_amount`、服务整数总价、汇率和实体币种；重新运行预检 |
@@ -264,7 +265,16 @@ validate error → 必须修复，warning → 判断后处理。`--entity` 必�
 | 美元报价缺少 SWIFT CODE | beijing/xian/shenzhen 未配置 SWIFT CODE → 提醒用户并提供参考 `references/entity-bank-info.md`；用户确认后可补入 `config/entities.json` |
 | 服务币种不支持（如 MYR） | `convert_currency.py` 不支持 MYR → HKD 等非 IDR/RMB/USD 币种。手动换算：`MYR 价格 ÷ rateToCny = RMB 价格`，取整后写入 quotation.json；马币原价写入各服务 `note` 字段，并在 `notes` 中汇总马币报价及汇率说明。`_meta` 中注明源币种和汇率公式 |
 | `fee_details[].include` 不能为空 | validate 报 `include is required and must be a non-empty list` → API 未列费用包含项的服务，至少填 `"山海图服务费"` |
+| 用户提供分享链接而非 aiCode | 山海图分享链接（`#/products/productDetailInner?sharingRecordId=xxx`）中的 `sharingRecordId` 不是 aiCode，无法用于 `aiCode/resolve` API（返回"AI Code 无效"）。除 `aiCode/resolve` 外的所有产品接口均需登录认证。**不要反复尝试不同 aiCode 组合**——直接告知用户分享链接不可用，要求提供完整的 `服务名-19位数字编码` 格式 aiCode。若是规格化产品（如 ODI 按投资额/股东数定价），同时向用户确认所选规格和价格 |\n| API 返回 "AI Code 无效" | aiCode 中服务名部分的空格必须与数据库完全一致（如 `JSHK 账户维护` 不能写成 `JSHK账户维护`）。若用户坚持 aiCode 正确，检查空格是否遗漏后再重试 |
 | 修改付款比例后 docx 仍显示旧比例 | build 默认从旧 `.docx` 保留付款方式。`quotation.json` 改了付款条件但 rebuild 后未生效 → 必须加 `--overwrite-payment-terms` 强制覆盖 |
+| 换算后价格与官网差 1 元 | `convert_currency.py` 使用整数截断（floor），不是四舍五入。例如 18,400,000 ÷ 2,250 = 8,177.78，脚本得 8,177，官网四舍五入得 8,178。用户指出差异时，用 `round()` 修正后再写入 quotation.json 并重建 |
+| 调整服务顺序后报价单未变化 | 仅修改 `services[].items[]` 的顺序不够，必须同步将 `fee_details`、`process_data`、`doc_data` 按新顺序重排：提取目标 names_order 后用 `sorted(q[key], key=lambda x: names_order.index(x["name"]))` 对三者重排 |
+| 追加服务时复用已有查询数据 | 同一批次多个报价单共享部分 aiCode 时，可从已有 `queried_services.json` 提取目标服务，避免重复 fetch；从已转换价格列表中对应取值 |
+| BPO/百分比定价服务 | BPO 业务流程外包等按比例收费的服务，`price` 设为 0，费率结构在 `note` 和 `notes` 中说明（如"8%月用工总成本"），押金等附加费同样在备注说明。validate 会报 price 过小 warning，可忽略 |
+| 测试费作为独立行项 | 用户要求加测试费时，新增独立服务行项（如"样品测试费"），单独列金额，填写简略 `process/deliverables/docs`（如 `["样品送检"]`），`days` 填 `"-"` |
+| 用户用「条」表示百万 | 「条」= juta = 百万印尼盾，如「120条」= Rp120,000,000。报价单按数字填，不保留「条」字；向用户展示时可直接换算展示 |
+| `rateToCny=1.0` 且 `服务币种=IDR` | 这是 API 数据标记错误：实际为人民币定价服务，系统误标为 IDR。不要按 IDR 换算，直接当 RMB 价格处理。**必须向用户展示此异常并确认报价币种**——用户可能选 RMB（直接用 API 价格）或 IDR（需用户提供真实汇率重新换算）。`_meta` 中注明此异常 |
+| `服务币种=IDR` 但 `rateToCny` 异常低 + 服务编码非 ID 前缀 | `rateToCny` 与 IDR 严重不匹配（如 0.6、4.0 而非 ~2250），且服务编码以 MY/VN/SG/TH/EG 等国家前缀开头 → API 币种标记错误，实际为对应国家币种（如 MY=马币、VN=越南盾）。**向用户展示异常**，结合服务编码前缀与同批次服务汇率一致性判断真实币种，确认后按实际币种换算。`_meta` 中注明此异常及判断依据 |\n| API 服务内容 Markdown 格式不一致导致提取失败 | API 返回的服务内容中，章节标题格式极不统一：`****费用包含：****`、`****费用包含********：****`、`费用包含：`（无星号）、`****费用不包含：****`（非\"费用不含\"）等。正则提取（如 `r'费用包含[：:]*\\s*\\n'`）频繁失败。**方案：使用 `str.find()` 定位关键标记 + 截取文本的方式更可靠**，忽略中间星号。`execute_code` 中编写 `extract_list(content, start_marker, end_marker)` 函数，基于 `find()` 而非正则 |\n| `doc_data[].docs` 为空导致 validate 失败 | 部分服务\"所需资料\"下直接写\"无\"——API 未返回资料清单。提取结果为 `[]` 会触发 `docs is required and must be a non-empty list`。**必须补兜底**：`docs = extract_list(...) or [\"请咨询山海图获取详细资料清单\"]` |
 
 业务/数据问题包括但不限于：数据填写错误、缺字段、金额不一致、实体选择错误、页眉公司名称和签约名称不一致、金额过大疑似选错币种、付款金额与合同金额不一致、付款条件/优惠/税率/签约主体等业务口径不明确。此类问题应修数据或向用户确认，不许提示联系 SKILL 开发者。
 
