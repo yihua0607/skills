@@ -33,6 +33,19 @@ def w(tag):
     return f'{{{W}}}{tag}'
 
 
+def normalize_company_name(name):
+    """Normalize company name for comparison: strip '.' and collapse whitespace.
+
+    Singapore entity (and others) may write the same legal name with or
+    without a trailing/embedded dot (e.g. 'Pte.Ltd' vs 'Pte.Ltd.' or
+    'PT. SHAN HAI MAP' vs 'PT SHAN HAI MAP'). A dot difference is a
+    formatting artifact, not a real mismatch.
+    """
+    if not name:
+        return ''
+    return re.sub(r'\s+', ' ', name.replace('.', '')).strip()
+
+
 def extract_paragraph_texts(root):
     """Extract text from all paragraphs in an XML element."""
     results = []
@@ -620,7 +633,7 @@ def main():
         # Bank account company is the authoritative signing-entity anchor.
         if detected_entity and bank_company:
             cfg_company = entity_config.get(detected_entity, {}).get('company')
-            if cfg_company and bank_company != cfg_company:
+            if cfg_company and normalize_company_name(bank_company) != normalize_company_name(cfg_company):
                 print(f"❌ 银行公司名 '{bank_company}' 与配置 '{cfg_company}' 不一致")
                 all_issues.append(f"银行公司名 '{bank_company}' ≠ 配置 '{cfg_company}' (entity={detected_entity})")
             elif cfg_company:
@@ -628,7 +641,8 @@ def main():
 
         # Check company name
         if header_company and bank_company:
-            if header_company == bank_company:
+            if (header_company == bank_company
+                    or normalize_company_name(header_company) == normalize_company_name(bank_company)):
                 print("✅ 页眉公司名与银行信息一致")
             elif header_company in bank_company or bank_company in header_company:
                 print(f"⚠️  页眉公司名 '{header_company}' 与银行 '{bank_company}' 相似但非完全一致")
@@ -656,7 +670,8 @@ def main():
         if sig_company:
             print(f"签名公司名: {sig_company}")
             if bank_company:
-                if sig_company == bank_company:
+                if (sig_company == bank_company
+                        or normalize_company_name(sig_company) == normalize_company_name(bank_company)):
                     print("✅ 签名公司名与银行公司名一致")
                 else:
                     print(f"❌ 签名公司名 '{sig_company}' 与银行 '{bank_company}' 不一致")

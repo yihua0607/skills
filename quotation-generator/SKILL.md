@@ -1,6 +1,6 @@
 ---
 name: quotation-generator
-version: 1.9.0
+version: 1.9.1
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
@@ -253,6 +253,7 @@ validate error → 必须修复，warning → 判断后处理。`--entity` 必�
 
 | 问题 | 处理 |
 |------|------|
+| verify 报页眉公司名与银行公司名不一致但只差一个 `.` | 正常现象（如 `Pte.Ltd` vs `Pte.Ltd.`、`PT. SHAN HAI MAP` vs `PT SHAN HAI MAP`）。verify v1.9.1 起用 `normalize_company_name()`（去点号 + 归一化空白）比较，点号差异不再判为异常；真正不同的公司名仍报错 |
 | 服务内容表格「序号」列显示服务编码而非数字 | `build_quotation.py` v1.8.6 起使用自增计数器（1, 2, 3...）生成序号，不再依赖 `item['id']`。旧数据即使 `id` 填了服务编码也不影响显示 |
 | 页眉/银行/签名不一致 | 检查 `--entity` 和 `config/entities.json`；属于业务/数据问题，不提示联系 SKILL 开发者 |
 | 服务名覆盖缺失 | 补齐 `fee_details/process_data/doc_data` 中缺失的同名条目 |
