@@ -153,5 +153,30 @@
       "SWIFT CODE：BKCHCNBJ300",
       "地址：上海市青浦区虹桥LM世界中心L3-B栋 305A"
     ]
+  },
+  "singapore": {
+    "template": "singapore",
+    "company": "SHAN HAI MAP CONSULTANCY PTE.LTD",
+    "header_lines": [
+      "SHAN HAI MAP CONSULTANCY PTE.LTD",
+      "1 North Bridge Road, #06-14 High Street Centre, SINGAPORE 179094",
+      "Web: www.shanhaimap.com"
+    ],
+    "vat_rate": 0.0,
+    "currency": "SGD",
+    "allowed_currencies": ["SGD", "RMB", "USD"],
+    "payment_terms": [
+      "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
+    ],
+    "bank_lines": [
+      "Beneficiary Name: SHAN HAI MAP CONSULTANCY PTE.LTD",
+      "Beneficiary Bank: Oversea-Chinese Banking Corporation Limited",
+      "Beneficiary Bank Address: 63 Chulia Street, #10-00, OCBC Centre Singapore 049514",
+      "Beneficiary Bank Swift Code: OCBCSGSGS",
+      "OCBC Bank Code: 7339",
+      "OCBC Branch Code: First 3 digits of your account number",
+      "Multi-currency Account: 687482901201",
+      "SGD Current Account: 701714438001"
+    ]
   }
 }

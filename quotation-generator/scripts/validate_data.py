@@ -80,8 +80,8 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
             errors.append(f'_meta.applicable_entity ({meta_entity}) must match --entity ({entity_key})')
         target_currency = meta.get('target_currency')
         if target_currency:
-            if target_currency not in ('IDR', 'RMB', 'USD'):
-                errors.append(f'_meta.target_currency ({target_currency}) must be IDR, RMB, or USD')
+            if target_currency not in ('IDR', 'RMB', 'USD', 'SGD'):
+                errors.append(f'_meta.target_currency ({target_currency}) must be IDR, RMB, USD, or SGD')
             else:
                 currency = target_currency
         allowed_currencies = entity_cfg.get('allowed_currencies', [entity_default_currency])
@@ -89,6 +89,20 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
             errors.append(
                 f'_meta.target_currency ({currency}) is not allowed for --entity ({entity_key}); '
                 f'allowed: {", ".join(allowed_currencies)}')
+
+    # ── Notes must not contain currency exchange / rate info ──
+    notes = data.get('notes', [])
+    if notes:
+        rate_keywords = ['汇率', '折算', '原币种', '兑换']
+        for i, note in enumerate(notes):
+            text = note.get('text', '') if isinstance(note, dict) else str(note)
+            for kw in rate_keywords:
+                if kw in text:
+                    errors.append(
+                        f'notes[{i}] contains prohibited currency exchange keyword "{kw}". '
+                        'Notes must not describe currency conversion or exchange rates.'
+                    )
+                    break
 
     # ── Entity-specific checks that depend on validated data ──
     if schema_ok and validated is not None:
@@ -143,7 +157,7 @@ def main():
         description='Validate quotation data before building .docx — catch errors early.')
     parser.add_argument('--data', required=True, help='Quotation data file (.json)')
     parser.add_argument('--entity', required=True,
-                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new'],
+                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore'],
                         help='Signing entity (required)')
     args = parser.parse_args()
 

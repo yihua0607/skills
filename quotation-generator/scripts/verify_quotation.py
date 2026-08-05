@@ -50,6 +50,8 @@ def detect_currency(paragraph_texts):
             return 'RMB'
         if 'Rp' in text:
             return 'IDR'
+        if 'S$' in text:
+            return 'SGD'
         if re.search(r'\$\s?\d', text):
             return 'USD'
     return 'RMB'
@@ -71,6 +73,8 @@ def detect_currency_from_tables(tables):
                 return 'RMB'
             if re.search(r'\bRp\s*[\d,]', amount_text, flags=re.I):
                 return 'IDR'
+            if re.search(r'\bS\$\s*[\d,]', amount_text):
+                return 'SGD'
             if re.search(r'\$\s*[\d,]', amount_text):
                 return 'USD'
     return None
@@ -87,8 +91,8 @@ def detect_entity(paragraph_texts, entity_config):
         # Try matching on account number — most unique identifier
         for doc_line in bank_section:
             for cfg_line in bank_lines:
-                # Extract account number patterns
-                account_match = re.search(r'(账号|账户号码|银行账号)\s*[：:]\s*(\S+)', cfg_line)
+                # Extract account number patterns (Chinese or English)
+                account_match = re.search(r'(账号|账户号码|银行账号|Account No)\s*[：:]*\s*(\S+)', cfg_line)
                 if account_match:
                     account_num = account_match.group(2).replace(' ', '')
                     if account_num in doc_line.replace(' ', ''):
@@ -140,18 +144,25 @@ def extract_company_from_bank(bank_lines):
     """Extract company name from bank info lines."""
     for line in bank_lines:
         match = re.search(
-            r'(账户名称|开户名|户名)\s*[：:]\s*(.+)', line)
+            r'(账户名称|开户名|户名|Beneficiary Name)\s*[：:]\s*(.+)', line)
         if match:
             return match.group(2).strip()
     return None
 
 
 def extract_address_from_bank(bank_lines):
-    """Extract address from bank info lines."""
+    """Extract the company address from bank info lines.
+
+    Skips bank-specific address lines (e.g. 'Bank Address:') so that
+    only the company's own address is compared against the header.
+    """
     for line in bank_lines:
-        match = re.search(r'地址\s*[：:]\s*(.+)', line)
+        # Skip lines that are clearly the bank's own address
+        if re.match(r'\s*(Bank Address|银行地址)\s*[：:]', line, flags=re.I):
+            continue
+        match = re.search(r'(地址|Address)\s*[：:]\s*(.+)', line, flags=re.I)
         if match:
-            return match.group(1).strip()
+            return match.group(2).strip()
     return None
 
 
@@ -504,7 +515,7 @@ def main():
     parser.add_argument('--data', default=None,
                         help='Optional: input quotation data JSON for cross-checking')
     parser.add_argument('--entity', default=None,
-                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new'],
+                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore'],
                         help='Expected signing entity (for config-based checks)')
     args = parser.parse_args()
 

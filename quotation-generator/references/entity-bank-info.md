@@ -10,6 +10,7 @@
 | shenzhen (北京山海图科技有限公司深圳分公司) | — | ❌ 缺失 |
 | shanghai (北京山海图科技有限公司上海分公司) | BKCHCNBJ300 | ✅ 已配置 |
 | shanghai_new (上海山海图新企业咨询有限公司) | BKCHCNBJ300 | ✅ 已配置 |
+| singapore (SHAN HAI MAP CONSULTANCY PTE.LTD) | OCBCSGSG | ✅ 已配置 |
 
 ## 完整银行信息
 
@@ -60,3 +61,13 @@
 - 行号：104290020130
 - SWIFT CODE：BKCHCNBJ300
 - 地址：上海市青浦区虹桥LM世界中心L3-B栋 305A
+
+### singapore
+- Beneficiary Name: SHAN HAI MAP CONSULTANCY PTE.LTD
+- Beneficiary Bank: Oversea-Chinese Banking Corporation Limited (OCBC)
+- Bank Address: 63 Chulia Street, #10-00, OCBC Centre, Singapore 049514
+- SWIFT Code: OCBCSGSG
+- Bank Code: 7339
+- SGD Account No: 701714438001
+- Multi-Currency Account No (RMB/USD): 687482901201
+- 公司地址: 1 North Bridge Road, #06-14 High Street Centre, SINGAPORE 179094

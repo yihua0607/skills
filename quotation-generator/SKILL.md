@@ -1,11 +1,11 @@
 ---
 name: quotation-generator
-version: 1.8.6
+version: 1.9.0
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
-  支持 6 签约主体、IDR/RMB/USD 三种报价币种。
-last_updated: "2026-07-31"
+  支持 7 签约主体、IDR/RMB/USD/SGD 四种报价币种。
+last_updated: "2026-08-05"
 ---
 
 # 山海图报价单生成器
@@ -24,7 +24,7 @@ last_updated: "2026-07-31"
 | 4 | 服务名不带数量 | `services[].items[].name` 写基础服务名；数量写 `quantity` |
 | 5 | 汇率留档但不入报价单 | API 返回的 `rateToCny/rateToUsd` 随 `queried_services.json` 和 `_meta` 留档；客户可见报价单不写汇率说明 |
 | 6 | 公共不含项去重 | 多个/全部服务共同适用的费用不含项抽取到 `notes`；各服务 `exclude` 只留服务特有项 |
-| 7 | 金额符号 | 人民币 `￥` 无空格；印尼盾 `Rp ` 后跟空格；美元 `$ ` 后跟空格 |
+| 7 | 金额符号 | 人民币 `￥` 无空格；印尼盾 `Rp ` 后跟空格；美元 `$ ` 后跟空格；新加坡元 `S$ ` 后跟空格 |
 | 8 | 付款方式只提醒 | 付款方式留给用户最终处理；脚本只检查明显不合理项并 warning，例如付款比例合计 >100%、付款金额合计 > 合同含税总计 |
 
 ### 流程规则
@@ -47,10 +47,11 @@ last_updated: "2026-07-31"
 | 北京山海图科技有限公司深圳分公司 | `shenzhen` | 6% | RMB | USD |
 | 北京山海图科技有限公司上海分公司 | `shanghai` | 1% | RMB | USD |
 | 上海山海图新企业咨询有限公司 | `shanghai_new` | 1% | RMB | USD |
+| SHAN HAI MAP CONSULTANCY PTE.LTD (新加坡) | `singapore` | 0% | SGD | RMB, USD |
 
 完整银行账户、地址、税号等详见 `config/entities.json` 和 `references/entity-bank-info.md`。
 
-⚠️ **SWIFT CODE 注意**：生成美元（USD）报价时，银行信息中的 SWIFT CODE 仅 jakarta、shanghai、shanghai_new 三个实体已配置。beijing、xian、shenzhen 的 entities.json 中缺少 SWIFT CODE，用户可能提出疑问。若用户要求补全，需向用户确认具体 SWIFT CODE 后更新 `config/entities.json`。
+⚠️ **SWIFT CODE 注意**：生成美元（USD）报价时，银行信息中的 SWIFT CODE 仅 jakarta、shanghai、shanghai_new、singapore 四个实体已配置。beijing、xian、shenzhen 的 entities.json 中缺少 SWIFT CODE，用户可能提出疑问。若用户要求补全，需向用户确认具体 SWIFT CODE 后更新 `config/entities.json`。
 
 标题、日期、客户、合同号、付款条件写入 `quote_meta`。
 
@@ -152,9 +153,9 @@ tail -n +2 "$WORKDIR/queried_services_raw.json" > "$WORKDIR/queried_services.jso
 - 需要特定币种报价但未说明签约主体时，优先沿用当前/已选主体；没有当前主体时再向用户确认主体。
 - 多币种服务、追加到既有报价单、或主体/币种意图不明确时，必须确认。
 
-币种可由 `_meta.target_currency` 指定（`IDR`/`RMB`/`USD`），优先级高于实体配置默认币种；例如 `applicable_entity: jakarta` 且 `target_currency: USD` 表示使用雅加达主体生成美元报价单。
+币种可由 `_meta.target_currency` 指定（`IDR`/`RMB`/`USD`/`SGD`），优先级高于实体配置默认币种；例如 `applicable_entity: jakarta` 且 `target_currency: USD` 表示使用雅加达主体生成美元报价单。
 
-⚠️ **实体币种限制**：用户要求切换支付币种时，必须先查 `config/entities.json` 中该实体的 `allowed_currencies`，不可凭记忆假设。中国主体（beijing/xian/shenzhen/shanghai/shanghai_new）只支持 RMB 和 USD，不支持 IDR；雅加达（jakarta）支持 IDR、RMB、USD。IDR 报价只能用雅加达主体。若币种不被当前实体支持，向用户提供两个选项：(1) 在备注中标注等值金额；(2) 切换到支持该币种的实体。
+⚠️ **实体币种限制**：用户要求切换支付币种时，必须先查 `config/entities.json` 中该实体的 `allowed_currencies`，不可凭记忆假设。中国主体（beijing/xian/shenzhen/shanghai/shanghai_new）只支持 RMB 和 USD，不支持 IDR；雅加达（jakarta）支持 IDR、RMB、USD；新加坡（singapore）支持 SGD、RMB、USD。IDR 报价只能用雅加达主体，SGD 报价只能用新加坡主体。若币种不被当前实体支持，向用户提供两个选项：(1) 在备注中标注等值金额；(2) 切换到支持该币种的实体。
 
 换币种必须用脚本，不心算：
 
@@ -203,7 +204,7 @@ price:   13,333                            （直接写入 quotation.json）
 | 费用包含/服务包含 | `fee_details[].include` | 每条一项，保留原文 |
 | 费用不含/不包含 | `fee_details[].exclude` + `notes` | 公共不含项进 `notes`；服务特有项留 `exclude` |
 | 办理流程/服务流程 | `process_data[].process` | 每步一条，保留序号 |
-| 交付文件/交付材料 | `process_data[].deliverables` | 每项一条 |
+| 交付文件/交付材料 | `process_data[].deliverables` | 每项一条；**当交付文件数量 >1 时，每项前自动添加无序编号 `•`** |
 | 所需资料/所需材料 | `doc_data[].docs` | 每项一条，保留子层级编号 |
 
 忽略 API 内容里的付款方式、退款/售后、发票相关。用户明确指定报价单付款条件时写入 `quote_meta.payment_terms`。
@@ -264,6 +265,7 @@ validate error → 必须修复，warning → 判断后处理。`--entity` 必�
 | 用户质疑价格/计算公式 | 展示完整计算链路：API 总价 → 汇率 → 换算后总价 → 增值税 → 含税总计，每步附带来源值 |
 | 美元报价缺少 SWIFT CODE | beijing/xian/shenzhen 未配置 SWIFT CODE → 提醒用户并提供参考 `references/entity-bank-info.md`；用户确认后可补入 `config/entities.json` |
 | 服务币种不支持（如 MYR） | `convert_currency.py` 不支持 MYR → HKD 等非 IDR/RMB/USD 币种。手动换算：`MYR 价格 ÷ rateToCny = RMB 价格`，取整后写入 quotation.json；马币原价写入各服务 `note` 字段，并在 `notes` 中汇总马币报价及汇率说明。`_meta` 中注明源币种和汇率公式 |
+| 新加坡元（SGD）报价 | `convert_currency.py` 目前仅支持 IDR/RMB/USD 互转，不支持 SGD。若服务币种为 SGD，直接填入价格无需换算；若需从 IDR/RMB 换算至 SGD，需用户提供汇率后手动换算：`源币种价格 ÷ 汇率 = SGD 价格`，取整后写入 quotation.json。`_meta` 中注明源币种和汇率 |
 | `fee_details[].include` 不能为空 | validate 报 `include is required and must be a non-empty list` → API 未列费用包含项的服务，至少填 `"山海图服务费"` |
 | 用户提供分享链接而非 aiCode | 山海图分享链接（`#/products/productDetailInner?sharingRecordId=xxx`）中的 `sharingRecordId` 不是 aiCode，无法用于 `aiCode/resolve` API（返回"AI Code 无效"）。除 `aiCode/resolve` 外的所有产品接口均需登录认证。**不要反复尝试不同 aiCode 组合**——直接告知用户分享链接不可用，要求提供完整的 `服务名-19位数字编码` 格式 aiCode。若是规格化产品（如 ODI 按投资额/股东数定价），同时向用户确认所选规格和价格 |\n| API 返回 "AI Code 无效" | aiCode 中服务名部分的空格必须与数据库完全一致（如 `JSHK 账户维护` 不能写成 `JSHK账户维护`）。若用户坚持 aiCode 正确，检查空格是否遗漏后再重试 |
 | 修改付款比例后 docx 仍显示旧比例 | build 默认从旧 `.docx` 保留付款方式。`quotation.json` 改了付款条件但 rebuild 后未生效 → 必须加 `--overwrite-payment-terms` 强制覆盖 |

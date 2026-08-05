@@ -26,6 +26,7 @@ from scripts.quotation_common import (
     format_price_display,
     vat_percent_label,
     load_entity_config,
+    CURRENCY_NAMES,
 )
 from scripts.sync_payment_terms import extract_payment_terms, check_payment_terms_reasonableness
 
@@ -36,6 +37,7 @@ SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATES = {
     'china': os.path.join(SKILL_DIR, 'assets', '报价单模板-中国公司.docx'),
     'jakarta': os.path.join(SKILL_DIR, 'assets', '报价单模板-雅加达公司.docx'),
+    'singapore': os.path.join(SKILL_DIR, 'assets', '报价单模版-新加坡公司.docx'),
 }
 
 ENTITY_CONFIG, _ = load_entity_config()
@@ -513,7 +515,7 @@ def main():
         )
         sys.exit(2)
     CURRENCY = meta.get('target_currency') or entity_cfg['currency']
-    if CURRENCY not in ('IDR', 'RMB', 'USD'):
+    if CURRENCY not in ('IDR', 'RMB', 'USD', 'SGD'):
         print(f"❌ Unsupported target currency: {CURRENCY}", file=sys.stderr)
         sys.exit(2)
     allowed_currencies = entity_cfg.get('allowed_currencies', [entity_cfg['currency']])
@@ -608,7 +610,7 @@ def main():
     ET.SubElement(hdr_trPr, w('trHeight')).set(w('val'), '564')
     ET.SubElement(hdr_trPr, w('trHeight')).set(w('hRule'), 'atLeast')
 
-    price_label = '价格\n(总价)'
+    price_label = f'价格\n({CURRENCY_NAMES.get(CURRENCY, CURRENCY)})'
     hdr_texts = ['序号', '服务内容', '时间\n工作日', price_label, '备注']
     for i, ht in enumerate(hdr_texts):
         lines = ht.split('\n')
@@ -754,11 +756,17 @@ def main():
     ptbl.append(phdr_row)
 
     for i, pd in enumerate(process_data):
+        deliverables = pd['deliverables']
+        if isinstance(deliverables, list) and len(deliverables) > 1:
+            deliverables = [
+                item if item.startswith('•') else f"• {item}"
+                for item in deliverables
+            ]
         cells = [
             make_data_cell(str(i+1), PCOLS[0], jc='center'),
             make_data_cell(pd['name'], PCOLS[1], bold=True),
             make_data_cell(pd['process'], PCOLS[2], small=True),
-            make_data_cell(pd['deliverables'], PCOLS[3], small=True),
+            make_data_cell(deliverables, PCOLS[3], small=True),
         ]
         ptbl.append(make_table_row(cells))
 
@@ -897,8 +905,8 @@ def main():
             zf.extractall(UNPACK)
         print(f"  Unpacked to {UNPACK}")
 
-        # Apply header override for China template entities
-        if template_key == 'china':
+        # Apply header override for China/Singapore template entities
+        if template_key in ('china', 'singapore'):
             apply_china_header(UNPACK, entity)
 
         # Extract sectPr from the original template before editing

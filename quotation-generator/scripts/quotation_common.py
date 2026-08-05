@@ -15,6 +15,18 @@ CURRENCY_SYMBOLS = {
     'RMB': '￥',
     'IDR': 'Rp',
     'USD': '$',
+    'SGD': 'S$',
+}
+
+CURRENCY_NAMES = {
+    'RMB': '人民币',
+    'IDR': '印尼盾',
+    'USD': '美元',
+    'SGD': '新币',
+    'VND': '越南盾',
+    'MYR': '马币',
+    'THB': '泰铢',
+    'EGP': '埃及镑',
 }
 
 # Path to entity configuration, resolved relative to this module's location.
