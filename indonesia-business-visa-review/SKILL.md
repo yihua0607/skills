@@ -28,6 +28,35 @@ description: 用于山海图印尼商务签资料收集与初审，包括单次�
 - 使用山海图担保公司和不使用山海图担保公司的条件差异。
 - 银行流水、MOLINA、董事资料、印尼住所地址和跨文件一致性规则。
 
+## 图片资料像素初审（无视觉工具时）
+
+证件照（红底、有领）、护照页、KTP 等图片类资料，如果当前会话没有视觉分析工具，运行 `scripts/verify_id_photo.py <图片路径>` 做像素级判定：
+
+```bash
+uv run --with pillow python /opt/data/skills/indonesia-business-visa-review/scripts/verify_id_photo.py /path/to/img.bin
+```
+
+- 系统无 pip（PEP 668 保护），必须用 `uv run --with pillow` 临时装 Pillow；不要用系统 python3 直接跑。
+- 输出：尺寸、红底判定（顶部 15% 区域 60 格采样 ≥40 格为红）、领口区域 40x24 颜色网格（图 y 0.68~0.88、x 0.25~0.75 区域放大）。
+- 网格字符：R=红底、W=白/衣领、s=肤色、K=深色/头发、g=灰、o=其他。
+- 判定要点：红底 RGB 通常 ≈ (200~210, 10~20, 15~25)；领口区出现 W（白衬衫领）夹 s（脖子/胸口肤色）即视为有领；肩部以下整行变白是白衬衫占满画面，属正常，只要顶部/两侧红底清晰即可。
+- OCR 对人像照无效（rapidocr 实测只输出孤立数字），不要拿 OCR 结果判定证件照；OCR 只用于含文字的文件。
+- 护照页与证件照区分：护照页整体以白色/浅色为主且边缘无红色；红底人像即证件照。
+- WeCom 上传图片常存为 .bin 后缀，先看 magic bytes（ffd8ffe1=JPEG、89504e47=PNG、%PDF）确认真实格式，不要信扩展名。
+- 该脚本只能做颜色/构图判定，不能判断五官清晰度等；无法确认时按 skill 规则保守处理，不得编造通过。
+- 完整方法、阈值与 venv 装法见 `references/photo-verification.md`。
+
+## 扫描版 PDF 审核（无视觉工具时）
+
+护照扫描件、公司文件常以扫描版 PDF 上传（无文本层），需要 OCR 才能审核。流程：
+
+1. 先试文本层提取：`uv run --with pymupdf python -c "..."` 打开 PDF，`page.get_text()` 非空则直接读文本（银行流水等电子版 PDF 通常有文本层，无需 OCR；流水需检查户名、起止日期、余额）。
+2. 文本层为空 → 纯扫描件：用 `page.get_pixmap(dpi=200)` 渲染成 PNG 保存到临时目录。
+3. OCR：`uv run --with rapidocr-onnxruntime python -c "..."`。rapidocr 对中文护照识别效果好；系统无 pip（PEP 668），必须用 `uv run --with` 临时装，不要用系统 python3。
+4. MRZ 交叉验证：护照页底部机读区两行，第二行依次为 `证件号+校验位 国籍 出生日期YYMMDD+校验位 性别 有效期YYMMDD+校验位`。将 MRZ 解析出的护照号、出生日期、有效期与页面 OCR 文本交叉核对，一致才判定内容可读。
+5. 有效期判断：OCR 出的有效期至日期 ≥ 审核日期 + 12 个月才通过（例：审核 2026-08-06，到期须 ≥ 2027-08-06）。
+6. 图片型文件先看 magic bytes：`ffd8ffe1` = JPEG（WeCom 上传常存为 .bin 后缀，实为 JPEG），交给 verify_id_photo.py 做像素判定。
+
 ## 工作流
 
 审核任何文件前，必须先通过代码或系统命令获取当前日期，并将该日期记录为本轮审核日期。优先使用可执行环境中的日期能力，例如 `date +%F`、`python -c` 或运行环境提供的当前日期字段；不要只依赖模型记忆、对话中的相对日期或文件生成日期。

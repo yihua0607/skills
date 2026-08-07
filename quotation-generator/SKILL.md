@@ -1,11 +1,11 @@
 ---
 name: quotation-generator
-version: 1.9.1
+version: 1.9.3
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
-  支持 7 签约主体、IDR/RMB/USD/SGD 四种报价币种。
-last_updated: "2026-08-05"
+  支持 8 签约主体、IDR/RMB/USD/SGD 四种报价币种。
+last_updated: "2026-08-07"
 ---
 
 # 山海图报价单生成器
@@ -66,6 +66,10 @@ last_updated: "2026-08-05"
 2. ✅ 查询完成，列出服务名/数量/价格/币种 → 币种转换
 3. 📝 正在整理数据、生成报价单... → validate + build + verify
 4. ✅ 报价单已生成，附摘要表格
+
+## skill 维护与分发
+
+修改 SKILL.md 或脚本后，若需分发到其他用户：升 version、更新 last_updated、推送 GitHub（以及反向拉取仓库更新），完整流程见 `references/publish-to-github.md`。凭据已持久化（~/.git-credentials），push 免密。
 
 ## 场景判断
 
@@ -267,6 +271,8 @@ validate error → 必须修复，warning → 判断后处理。`--entity` 必�
 | 用户质疑价格/计算公式 | 展示完整计算链路：API 总价 → 汇率 → 换算后总价 → 增值税 → 含税总计，每步附带来源值 |
 | 美元报价缺少 SWIFT CODE | beijing/xian/shenzhen 未配置 SWIFT CODE → 提醒用户并提供参考 `references/entity-bank-info.md`；用户确认后可补入 `config/entities.json` |
 | 服务币种不支持（如 MYR） | `convert_currency.py` 不支持 MYR → HKD 等非 IDR/RMB/USD 币种。手动换算：`MYR 价格 ÷ rateToCny = RMB 价格`，取整后写入 quotation.json；马币原价写入各服务 `note` 字段，并在 `notes` 中汇总马币报价及汇率说明。`_meta` 中注明源币种和汇率公式 |
+| 用户指定数量与 API 返回数量不同 | API 数量=1 时 API 价格为单件价：用户要求 N 件 → 行项总价 = API 价格 × N（如 虚拟地址 10M×8=80M、工作签 14.5M×2=29M、财务报表审核 100M×4=400M）。API 数量>1 且用户未另定数量时，API 价格即总价，不再乘 |
+| 签约主体非 8 配置实体（如 PT. SHM TAX CONSULTING） | 用户基于既有 docx 报价单修改且要求保留原签约主体（"别的不用变"）时：用最接近模板实体（印尼主体 `jakarta`）+ 目标币种 build（增值税率跟随主体不随币种：jakarta 换 RMB 仍 11%），再用 python-docx 修改生成文件的银行户名/账号、签名表格公司名等，替换代码见 `references/entity-override-docx-edit.md`；verify 报"与实体配置不一致"属预期，以 docx 后编辑结果为准。用户为新报价指定非配置主体时仍须映射到 8 配置实体 |
 | 新加坡元（SGD）报价 | `convert_currency.py` 目前仅支持 IDR/RMB/USD 互转，不支持 SGD。若服务币种为 SGD，直接填入价格无需换算；若需从 IDR/RMB 换算至 SGD，需用户提供汇率后手动换算：`源币种价格 ÷ 汇率 = SGD 价格`，取整后写入 quotation.json。`_meta` 中注明源币种和汇率 |
 | `fee_details[].include` 不能为空 | validate 报 `include is required and must be a non-empty list` → API 未列费用包含项的服务，至少填 `"山海图服务费"` |
 | 用户提供分享链接而非 aiCode | 山海图分享链接（`#/products/productDetailInner?sharingRecordId=xxx`）中的 `sharingRecordId` 不是 aiCode，无法用于 `aiCode/resolve` API（返回"AI Code 无效"）。除 `aiCode/resolve` 外的所有产品接口均需登录认证。**不要反复尝试不同 aiCode 组合**——直接告知用户分享链接不可用，要求提供完整的 `服务名-19位数字编码` 格式 aiCode。若是规格化产品（如 ODI 按投资额/股东数定价），同时向用户确认所选规格和价格 |\n| API 返回 "AI Code 无效" | aiCode 中服务名部分的空格必须与数据库完全一致（如 `JSHK 账户维护` 不能写成 `JSHK账户维护`）。若用户坚持 aiCode 正确，检查空格是否遗漏后再重试 |
