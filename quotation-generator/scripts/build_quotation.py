@@ -38,6 +38,7 @@ TEMPLATES = {
     'china': os.path.join(SKILL_DIR, 'assets', '报价单模板-中国公司.docx'),
     'jakarta': os.path.join(SKILL_DIR, 'assets', '报价单模板-雅加达公司.docx'),
     'singapore': os.path.join(SKILL_DIR, 'assets', '报价单模版-新加坡公司.docx'),
+    'deyin': os.path.join(SKILL_DIR, 'assets', '报价单模版-德音人力.docx'),
 }
 
 ENTITY_CONFIG, _ = load_entity_config()
@@ -67,7 +68,7 @@ def main():
     parser = argparse.ArgumentParser(description='Generate quotation from template')
     parser.add_argument('--entity', required=True,
                         choices=list(ENTITY_CONFIG.keys()),
-                        help='Signing entity (required): jakarta/beijing/xian/shenzhen/shanghai/shanghai_new')
+                        help='Signing entity (required): jakarta/beijing/xian/shenzhen/shanghai/shanghai_new/singapore/deyin')
     parser.add_argument('--output', default=None, help='Output .docx path (default: CWD)')
     parser.add_argument('--data', required=True, help='Quotation data file (.json)')
     parser.add_argument('--vat-rate', type=float, default=None, help='VAT rate override (e.g. 0.06, 0.01, 0.11)')
@@ -808,12 +809,15 @@ def main():
         ))
 
     # 9. Footer - Bank Info — loaded from entity config
+    bank_lines_by_currency = entity_cfg.get('bank_lines_by_currency', {})
+    selected_bank_lines = bank_lines_by_currency.get(CURRENCY, entity_cfg['bank_lines'])
+
     body_children.append(make_para('', spacing_before=120, spacing_after=0))
     body_children.append(make_para(
-        [make_run('所有款项汇到山海图指定的银行账户，银行账户信息如下：', sz='24', bold=True)],
+        [make_run('所有款项汇到指定的银行账户，银行账户信息如下：', sz='24', bold=True)],
         spacing_after=0, line='280'
     ))
-    for line in entity_cfg['bank_lines']:
+    for line in selected_bank_lines:
         body_children.append(make_para(
             [make_run(line, sz='21')],
             spacing_after=0, line='280'
@@ -821,7 +825,7 @@ def main():
 
     body_children.append(make_para('', spacing_before=40, spacing_after=0))
     body_children.append(make_para(
-        [make_run('山海图应对客户提供的纸质或电子版的证件、资料负有妥善保管和保密义务，不得将上述秘密泄露给任何第三方或用于其他用途。', sz='21')],
+        [make_run('对于客户提供的纸质或电子版的证件、资料，应负有妥善保管和保密义务，不得将上述秘密泄露给任何第三方或用于其他用途。', sz='21')],
         spacing_after=0, line='280'
     ))
     body_children.append(make_para(

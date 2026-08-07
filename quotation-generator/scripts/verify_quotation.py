@@ -157,7 +157,7 @@ def extract_company_from_bank(bank_lines):
     """Extract company name from bank info lines."""
     for line in bank_lines:
         match = re.search(
-            r'(账户名称|开户名|户名|Beneficiary Name)\s*[：:]\s*(.+)', line)
+            r'(账户名称|账号名称|开户名|户名|Beneficiary Name|Atas Nama)\s*[：:]\s*(.+)', line)
         if match:
             return match.group(2).strip()
     return None
@@ -528,8 +528,8 @@ def main():
     parser.add_argument('--data', default=None,
                         help='Optional: input quotation data JSON for cross-checking')
     parser.add_argument('--entity', default=None,
-                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore'],
-                        help='Expected signing entity (for config-based checks)')
+                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore', 'deyin'],
+                        help='Expected signing entity (for config-based checks')
     args = parser.parse_args()
 
     entity_config, _ = load_entity_config()

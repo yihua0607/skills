@@ -178,5 +178,46 @@
       "Multi-currency Account: 687482901201",
       "SGD Current Account: 701714438001"
     ]
+  },
+  "deyin": {
+    "template": "deyin",
+    "company": "PT DEIN TALENT SOLUTIONS",
+    "header_lines": [],
+    "vat_rate": 0.11,
+    "currency": "IDR",
+    "allowed_currencies": ["IDR", "RMB", "USD"],
+    "payment_terms": [
+      "甲方应在收到发票后 5 个工作日内支付合同金额的 100%。"
+    ],
+    "bank_lines": [
+      "银行名称 Nama Bank：BNI (BANK NEGARA INDONESIA)",
+      "银行账号 No. Rek：2051075234",
+      "国际银行代码 Swift Code：BNINIDJAXXX",
+      "账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS",
+      "分行名称 Nama Cabang：BNI APL TOWER Grogol petamburan Jakarta Barat"
+    ],
+    "bank_lines_by_currency": {
+      "IDR": [
+        "银行名称 Nama Bank：BCA (BANK CENTRAL ASIA)",
+        "银行账号 No. Rek：6802 044 409",
+        "国际银行代码 Swift Code：CENAIDJAXXX",
+        "账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS",
+        "分行名称 Nama Cabang：BCA KCU BINTARO"
+      ],
+      "USD": [
+        "银行名称 Nama Bank：BNI (BANK NEGARA INDONESIA)",
+        "银行账号 No. Rek：2051075234",
+        "国际银行代码 Swift Code：BNINIDJAXXX",
+        "账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS",
+        "分行名称 Nama Cabang：BNI APL TOWER Grogol petamburan Jakarta Barat"
+      ],
+      "RMB": [
+        "银行名称 Nama Bank：BNI (BANK NEGARA INDONESIA)",
+        "银行账号 No. Rek：2051075234",
+        "国际银行代码 Swift Code：BNINIDJAXXX",
+        "账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS",
+        "分行名称 Nama Cabang：BNI APL TOWER Grogol petamburan Jakarta Barat"
+      ]
+    }
   }
 }

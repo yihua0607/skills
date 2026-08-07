@@ -48,6 +48,7 @@ last_updated: "2026-08-05"
 | 北京山海图科技有限公司上海分公司 | `shanghai` | 1% | RMB | USD |
 | 上海山海图新企业咨询有限公司 | `shanghai_new` | 1% | RMB | USD |
 | SHAN HAI MAP CONSULTANCY PTE.LTD (新加坡) | `singapore` | 0% | SGD | RMB, USD |
+| PT DEIN TALENT SOLUTIONS (德音人力) | `deyin` | 11% | IDR | RMB, USD |
 
 完整银行账户、地址、税号等详见 `config/entities.json` 和 `references/entity-bank-info.md`。
 

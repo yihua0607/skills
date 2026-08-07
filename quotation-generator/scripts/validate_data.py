@@ -157,8 +157,8 @@ def main():
         description='Validate quotation data before building .docx — catch errors early.')
     parser.add_argument('--data', required=True, help='Quotation data file (.json)')
     parser.add_argument('--entity', required=True,
-                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore'],
-                        help='Signing entity (required)')
+                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore', 'deyin'],
+                        help='Signing entity (required')
     args = parser.parse_args()
 
     entity_config, universal_excludes = load_entity_config()
