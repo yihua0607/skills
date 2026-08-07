@@ -66,6 +66,29 @@ cp -r quotation-generator/assets/新模板.docx /opt/data/skills/quotation-gener
 
 ⚠️ **不要覆盖本地独有文件**：`.venv/`（虚拟环境）、本地新增的 `references/bulk-extraction-pattern.md`、`references/publish-to-github.md` 等未推送的文件。`diff -rq` 输出中 `Only in /opt/data` 的行就是本地独有，直接忽略；远端新文件（`Only in quotation-generator`）要复制过来。
 
+## 双向同步（本地与仓库同时有新内容时）
+
+方向不是单向的：可能仓库刚被推送过（如 MacBook 上新增了实体），同时本地也有未推送的 SKILL.md 修复/章节。盲目 `cp -r` 覆盖任一侧都会丢内容。判定与合并：
+
+```bash
+# 1. 先看两侧动向
+git log --oneline -5                      # 仓库最近提交时间/内容
+grep -E "^(version|last_updated)" /opt/data/skills/quotation-generator/SKILL.md
+diff -rq /opt/data/skills/quotation-generator quotation-generator | grep -v -E "\.venv|\.DS_Store"
+```
+
+- 仓库有本地没有的文件/实体（`Only in quotation-generator` + git log 有对应提交）→ 拉：`cp` 远端 entities/模板/scripts 到本地，再 `python3 -c "import json; json.load(open(...))"` 校验。
+- 本地 SKILL.md 版本 > 仓库版本（本地有未推送章节/修复表）→ 推：把本地新增内容**合并进**仓库版 SKILL.md，不是整文件覆盖（远端可能刚加了实体行）。
+
+SKILL.md 合并要点：
+- 实体表加行（新主体插在表格末尾），并同步全局主体数量表述：`支持 N 签约主体`、修复表里的 `非 N 配置实体`/`映射到 N 配置实体` 全部更新，别只改表格。
+- 版本号取合并后新值：如仓库 1.9.1+deyin 行、本地 1.9.2（维护章节+修复表）→ 合并版 1.9.3，last_updated 更新，commit message 写清"合并 X + Y"。
+- SKILL.md 引用的 references（`grep -o "references/[a-z-]*\.md" SKILL.md` 去重）本地有而仓库没有的一并推送，避免断链。
+
+推送前验证：`python3 -c "import ast; [ast.parse(open(f).read()) for f in ['scripts/build_quotation.py','scripts/validate_data.py','scripts/verify_quotation.py']]"` + `json.load` entities.json。推送后再 `diff -rq` 一次，剩余差异应只有 `.venv`/`.DS_Store`/本地独有 references。
+
+**坑：全新 clone 无 git 身份**——`git commit` 报 `Author identity unknown`，先 `git config user.name "yihua0607" && git config user.email "yihua0607@users.noreply.github.com"`（仅本仓库，勿加 --global）再 commit。
+
 ## 版本号纪律
 
 每次 SKILL.md 内容变更（修复/规则/新增条目）都要：
