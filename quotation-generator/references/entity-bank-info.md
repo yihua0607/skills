@@ -11,6 +11,7 @@
 | shanghai (北京山海图科技有限公司上海分公司) | BKCHCNBJ300 | ✅ 已配置 |
 | shanghai_new (上海山海图新企业咨询有限公司) | BKCHCNBJ300 | ✅ 已配置 |
 | singapore (SHAN HAI MAP CONSULTANCY PTE.LTD) | OCBCSGSG | ✅ 已配置 |
+| thailand (SHAN HAI MAP (THAILAND) CO., LTD.) | KASITHBK | ✅ 已配置 |
 
 ## 完整银行信息
 
@@ -71,3 +72,11 @@
 - SGD Account No: 701714438001
 - Multi-Currency Account No (RMB/USD): 687482901201
 - 公司地址: 1 North Bridge Road, #06-14 High Street Centre, SINGAPORE 179094
+
+### thailand
+- Beneficiary Name: SHAN HAI MAP (THAILAND) CO., LTD.
+- Beneficiary Bank: Kasikorn PCL. Thailand, Central Rama 9 Branch (847)
+- Beneficiary Bank Address: 9/9 Central Plaza Tower, 5 Floor, Room 512-513, Rama9 rd Huaykhwang, HuayKwang BKK 10310
+- Beneficiary Bank Swift Code: KASITHBK
+- Account Number: 1931179981
+- 公司地址: Thanapoom Tower, 25th floor Unit A2, 1550 New Petchaburi Rd, Khwaeng Makkasan, Khet Ratchathewi, Bangkok 10400

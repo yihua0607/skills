@@ -47,6 +47,7 @@
     }
   ],
   "discount_amount": 0,
+  "withholding_tax": false,
   "notes": [
     {
       "text": "a. 以上办理时间均为收集齐资料开始的官方办理时间；",

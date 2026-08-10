@@ -26,7 +26,7 @@ if SKILL_DIR not in sys.path:
     sys.path.insert(0, SKILL_DIR)
 
 from scripts.sync_payment_terms import extract_payment_terms, check_payment_terms_reasonableness
-from scripts.quotation_common import load_entity_config
+from scripts.quotation_common import load_entity_config, currency_has_decimals
 
 
 def w(tag):
@@ -65,6 +65,8 @@ def detect_currency(paragraph_texts):
             return 'IDR'
         if 'S$' in text:
             return 'SGD'
+        if '฿' in text:
+            return 'THB'
         if re.search(r'\$\s?\d', text):
             return 'USD'
     return 'RMB'
@@ -75,21 +77,30 @@ def detect_currency_from_tables(tables):
     for tbl in tables:
         for row in tbl.findall(w('tr')):
             cells = row.findall(w('tc'))
-            if len(cells) < 4:
-                continue
-            amount_text = ''.join(
-                (t.text or '') for t in cells[3].findall('.//' + w('t'))
-            ).strip()
-            if not amount_text:
-                continue
-            if '￥' in amount_text or '¥' in amount_text:
-                return 'RMB'
-            if re.search(r'\bRp\s*[\d,]', amount_text, flags=re.I):
-                return 'IDR'
-            if re.search(r'\bS\$\s*[\d,]', amount_text):
-                return 'SGD'
-            if re.search(r'\$\s*[\d,]', amount_text):
-                return 'USD'
+            # 未合并行：金额在 cells[3]（服务数据行/旧汇总行）；合并汇总行：金额是最后一个非空单元格
+            candidates = []
+            if len(cells) >= 4:
+                candidates.append(''.join(
+                    (t.text or '') for t in cells[3].findall('.//' + w('t'))
+                ).strip())
+            for cell in reversed(cells):
+                txt = ''.join((t.text or '') for t in cell.findall('.//' + w('t'))).strip()
+                if txt:
+                    candidates.append(txt)
+                    break
+            for amount_text in candidates:
+                if not amount_text:
+                    continue
+                if '￥' in amount_text or '¥' in amount_text:
+                    return 'RMB'
+                if re.search(r'\bRp\s*[\d,]', amount_text, flags=re.I):
+                    return 'IDR'
+                if re.search(r'\bS\$\s*[\d,]', amount_text):
+                    return 'SGD'
+                if '฿' in amount_text:
+                    return 'THB'
+                if re.search(r'\$\s*[\d,]', amount_text):
+                    return 'USD'
     return None
 
 
@@ -127,6 +138,10 @@ def parse_formatted_amount(text, currency='RMB'):
         text = text.replace('￥', '').replace('¥', '')
     elif currency == 'USD':
         text = text.replace('$', '')
+    elif currency == 'THB':
+        text = text.replace('฿', '')
+    elif currency == 'SGD':
+        text = text.replace('S$', '')
     else:
         text = re.sub(r'^Rp\s*', '', text, flags=re.I)
     text = text.replace(',', '').replace(' ', '')
@@ -172,6 +187,8 @@ def extract_address_from_bank(bank_lines):
     for line in bank_lines:
         # Skip lines that are clearly the bank's own address
         if re.match(r'\s*(Bank Address|银行地址)\s*[：:]', line, flags=re.I):
+            continue
+        if re.match(r'\s*Beneficiary\s+Bank\s+Address\s*[：:]', line, flags=re.I):
             continue
         match = re.search(r'(地址|Address)\s*[：:]\s*(.+)', line, flags=re.I)
         if match:
@@ -244,8 +261,8 @@ def extract_service_names_from_table(tables):
             name_text = ''.join((t.text or '') for t in cells[1].findall('.//' + w('t'))).strip()
             # Strip quantity suffix for comparison: "公司注册×2" → "公司注册"
             base_name = re.sub(r'\s*[x×]\d+$', '', name_text)
-            # Skip summary rows like "小计", "优惠金额", "增值税 11%", "含税总计"
-            summary_prefixes = ('服务内容', '小计', '优惠金额', '增值税', '含税总计')
+            # Skip summary rows like "小计", "优惠金额", "增值税 11%", "含税总计", "预扣税"
+            summary_prefixes = ('服务内容', '小计', '优惠金额', '增值税', '含税总计', '预扣税')
             if base_name and not any(base_name.startswith(p) for p in summary_prefixes):
                 names.append(base_name)
     return names
@@ -389,14 +406,17 @@ def extract_summary_amounts(tables, currency):
         rows = tbl.findall(w('tr'))
         for row in rows:
             cells = row.findall(w('tc'))
-            if len(cells) < 4:
+            # 汇总行已改为合并单元格（label 跨列 + 金额跨列；泰国小计额外有空单元格）。
+            # 取「第一个非空文本」为 label、「最后一个非空文本」为金额，兼容合并/未合并两种结构。
+            texts = [
+                ''.join((t.text or '') for t in cell.findall('.//' + w('t'))).strip()
+                for cell in cells
+            ]
+            non_empty = [i for i, t in enumerate(texts) if t]
+            if len(non_empty) < 2:
                 continue
-            label = ''.join(
-                (t.text or '') for t in cells[1].findall('.//' + w('t'))
-            ).strip()
-            amount_text = ''.join(
-                (t.text or '') for t in cells[3].findall('.//' + w('t'))
-            ).strip()
+            label = texts[non_empty[0]]
+            amount_text = texts[non_empty[-1]]
             parsed = parse_formatted_amount(amount_text, currency)
 
             label_lower = label
@@ -409,6 +429,11 @@ def extract_summary_amounts(tables, currency):
                 rate_match = re.search(r'(\d+(?:\.\d+)?)%', label_lower)
                 if rate_match:
                     amounts['vat_rate'] = float(rate_match.group(1)) / 100
+            elif '预扣税' in label_lower and parsed is not None:
+                amounts['withholding_tax'] = parsed
+                rate_match = re.search(r'(\d+(?:\.\d+)?)%', label_lower)
+                if rate_match:
+                    amounts['withholding_tax_rate'] = float(rate_match.group(1)) / 100
             elif '含税总计' in label_lower and parsed is not None:
                 amounts['total'] = parsed
     return amounts
@@ -434,24 +459,43 @@ def verify_amounts(amounts, currency):
     # Check VAT calculation: VAT = (subtotal - discount) * vat_rate
     if vat_rate is not None and vat is not None:
         expected_vat = (subtotal - discount) * vat_rate
-        if currency in ('RMB', 'USD'):
+        if currency_has_decimals(currency):
             expected_vat = round(expected_vat, 2)
         else:
             expected_vat = round(expected_vat)
-        tolerance = 0.02 if currency in ('RMB', 'USD') else 2
+        tolerance = 0.02 if currency_has_decimals(currency) else 2
         if abs(vat - expected_vat) > tolerance:
             issues.append(
                 f"VAT mismatch: document={vat}, expected={expected_vat} "
                 f"(rate={vat_rate*100}% x ({subtotal}-{discount}))")
 
-    # Check total = discounted subtotal + VAT
+    # Check withholding tax calculation
+    wht = amounts.get('withholding_tax')
+    wht_rate = amounts.get('withholding_tax_rate')
+    if wht_rate is not None and wht is not None:
+        expected_wht = (subtotal - discount) * wht_rate
+        if currency_has_decimals(currency):
+            expected_wht = round(expected_wht, 2)
+        else:
+            expected_wht = round(expected_wht)
+        tolerance = 0.02 if currency_has_decimals(currency) else 2
+        # WHT is displayed as negative in document, but stored as positive in parsed amount
+        # Use absolute value for comparison
+        if abs(abs(wht) - expected_wht) > tolerance:
+            issues.append(
+                f"Withholding tax mismatch: document={wht}, expected={expected_wht} "
+                f"(rate={wht_rate*100}% x ({subtotal}-{discount}))")
+
+    # Check total = discounted subtotal + VAT - |WHT|
     if total is not None and vat is not None:
         expected_total = (subtotal - discount) + vat
-        tolerance = 0.02 if currency in ('RMB', 'USD') else 2
+        if wht is not None:
+            expected_total -= abs(wht)
+        tolerance = 0.02 if currency_has_decimals(currency) else 2
         if abs(total - expected_total) > tolerance:
             issues.append(
                 f"Total mismatch: document={total}, expected={expected_total} "
-                f"(subtotal={subtotal} - discount={discount} + vat={vat})")
+                f"(subtotal={subtotal} - discount={discount} + vat={vat} - wht={wht})")
 
     return issues
 
@@ -496,6 +540,14 @@ def cross_check_with_data(document_amounts, data_path, currency):
         issues.append(
             f"Discount mismatch: document={doc_discount} vs data={expected_discount}")
 
+    # Check withholding tax from data
+    expected_wht = data.get('withholding_tax', False)
+    doc_wht = document_amounts.get('withholding_tax')
+    if expected_wht and doc_wht is None:
+        issues.append("Withholding tax expected in data but not found in document")
+    elif not expected_wht and doc_wht is not None:
+        issues.append("Withholding tax found in document but not expected in data")
+
     # Check service name coverage in fee_details / process_data / doc_data
     doc_service_names = set()
     for group in data.get('services', []):
@@ -528,7 +580,7 @@ def main():
     parser.add_argument('--data', default=None,
                         help='Optional: input quotation data JSON for cross-checking')
     parser.add_argument('--entity', default=None,
-                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore', 'deyin'],
+                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore', 'deyin', 'thailand'],
                         help='Expected signing entity (for config-based checks')
     args = parser.parse_args()
 
@@ -653,7 +705,7 @@ def main():
                 all_issues.append(
                     f"页眉公司名 '{header_company}' ≠ 银行 '{bank_company}'")
 
-        # Check address
+        # Check address (only when bank info actually contains a company address)
         if header_address and bank_address:
             match, msg = check_address_similarity(header_address, bank_address)
             if match:
@@ -661,9 +713,6 @@ def main():
             else:
                 print(f"❌ 页眉地址与银行地址不一致: {msg}")
                 all_issues.append(msg)
-        elif header_address and not bank_address:
-            print("⚠️  银行信息中未找到地址字段，无法核对")
-            all_warnings.append("银行信息中无地址字段，无法核对页眉地址")
 
         # ── 2. Signature company vs bank company ──
         sig_company = extract_signature_company(tables, entity_config)

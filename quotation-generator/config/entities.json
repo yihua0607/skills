@@ -219,5 +219,29 @@
         "分行名称 Nama Cabang：BNI APL TOWER Grogol petamburan Jakarta Barat"
       ]
     }
+  },
+  "thailand": {
+    "template": "thailand",
+    "company": "SHAN HAI MAP (THAILAND) CO., LTD.",
+    "header_lines": [
+      "SHAN HAI MAP (THAILAND) CO., LTD.",
+      "Thanapoom Tower, 25th floor Unit A2, 1550 New Petchaburi Rd, ",
+      "Khwaeng Makkasan, Khet Ratchathewi, Bangkok 10400",
+      "Web: www.shanhaimap.com"
+    ],
+    "vat_rate": 0.07,
+    "withholding_tax_rate": 0.03,
+    "currency": "THB",
+    "allowed_currencies": ["THB", "RMB", "USD"],
+    "payment_terms": [
+      "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
+    ],
+    "bank_lines": [
+      "Beneficiary Name: SHAN HAI MAP (THAILAND) CO., LTD.",
+      "Beneficiary Bank: Kasikorn PCL. Thailand, Central Rama 9 Branch (847)",
+      "Beneficiary Bank Address: 9/9 Central Plaza Tower, 5 Floor, Room 512-513, Rama9 rd Huaykhwang, HuayKwang BKK 10310",
+      "Beneficiary Bank Swift Code: KASITHBK",
+      "Account Number: 1931179981"
+    ]
   }
 }

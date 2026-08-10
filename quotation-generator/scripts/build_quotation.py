@@ -39,6 +39,7 @@ TEMPLATES = {
     'jakarta': os.path.join(SKILL_DIR, 'assets', '报价单模板-雅加达公司.docx'),
     'singapore': os.path.join(SKILL_DIR, 'assets', '报价单模版-新加坡公司.docx'),
     'deyin': os.path.join(SKILL_DIR, 'assets', '报价单模版-德音人力.docx'),
+    'thailand': os.path.join(SKILL_DIR, 'assets', '报价单模板-泰国公司.docx'),
 }
 
 ENTITY_CONFIG, _ = load_entity_config()
@@ -68,7 +69,7 @@ def main():
     parser = argparse.ArgumentParser(description='Generate quotation from template')
     parser.add_argument('--entity', required=True,
                         choices=list(ENTITY_CONFIG.keys()),
-                        help='Signing entity (required): jakarta/beijing/xian/shenzhen/shanghai/shanghai_new/singapore/deyin')
+                        help='Signing entity (required): jakarta/beijing/xian/shenzhen/shanghai/shanghai_new/singapore/deyin/thailand')
     parser.add_argument('--output', default=None, help='Output .docx path (default: CWD)')
     parser.add_argument('--data', required=True, help='Quotation data file (.json)')
     parser.add_argument('--vat-rate', type=float, default=None, help='VAT rate override (e.g. 0.06, 0.01, 0.11)')
@@ -86,7 +87,8 @@ def main():
     template_key = entity_cfg['template']
 
     try:
-        quotation_data = validate_and_normalize_data(load_quotation_data(args.data))
+        raw_quotation = load_quotation_data(args.data)
+        quotation_data = validate_and_normalize_data(raw_quotation)
     except ValueError as exc:
         print(f'❌ {exc}', file=sys.stderr)
         sys.exit(2)
@@ -516,7 +518,7 @@ def main():
         )
         sys.exit(2)
     CURRENCY = meta.get('target_currency') or entity_cfg['currency']
-    if CURRENCY not in ('IDR', 'RMB', 'USD', 'SGD'):
+    if CURRENCY not in ('IDR', 'RMB', 'USD', 'SGD', 'THB'):
         print(f"❌ Unsupported target currency: {CURRENCY}", file=sys.stderr)
         sys.exit(2)
     allowed_currencies = entity_cfg.get('allowed_currencies', [entity_cfg['currency']])
@@ -534,6 +536,9 @@ def main():
 
     vat_label_pct = vat_percent_label(VAT_RATE)
     VAT_LABEL = f"增值税 {vat_label_pct}"
+    if template_key == 'thailand':
+        # 与泰国模板一致：注明税率以开票时泰国现行税率为准
+        VAT_LABEL = f"增值税 {vat_label_pct}（以开发票时泰国现行税率为准）"
 
     SUBTOTAL_D = sum(item['price_int'] for svc in services_data for item in svc['items'])
 
@@ -548,10 +553,26 @@ def main():
     elif CURRENCY == 'USD' and any(p >= 500_000 for p in all_prices):
         print("⚠️  WARNING: Some prices appear too large for USD (>= 500,000). Did you forget to convert from IDR?")
 
-    amounts = calculate_amounts(SUBTOTAL_D, DISCOUNT_AMOUNT_INT, VAT_RATE, CURRENCY)
+    # Withholding tax: enabled via quotation.json `withholding_tax: true`
+    # Only applied if entity config defines a withholding_tax_rate
+    WITHHOLDING_TAX_RATE = entity_cfg.get('withholding_tax_rate')
+    WITHHOLDING_ENABLED = False
+    if WITHHOLDING_TAX_RATE is not None:
+        WITHHOLDING_ENABLED = bool(quotation_data.get('withholding_tax', False))
+        if 'withholding_tax' not in raw_quotation:
+            print("⚠️  WARNING: entity supports withholding tax (withholding_tax_rate set) but "
+                  "quotation.json has no top-level `withholding_tax` field. WHT will NOT be "
+                  "deducted. Add `withholding_tax: true` to the TOP level of quotation.json "
+                  "(sibling of discount_amount, NOT inside _meta) to apply it.")
+
+    amounts = calculate_amounts(
+        SUBTOTAL_D, DISCOUNT_AMOUNT_INT, VAT_RATE, CURRENCY,
+        withholding_tax_rate=WITHHOLDING_TAX_RATE if WITHHOLDING_ENABLED else None
+    )
     DISCOUNT_D = amounts['discount']
     DISCOUNTED_D = amounts['discounted']
     VAT_D = amounts['vat']
+    WHT_D = amounts.get('withholding_tax')
     GRAND_TOTAL_D = amounts['total']
 
     # Local aliases so the rest of the template code can stay unchanged.
@@ -566,7 +587,8 @@ def main():
 
     print(f"Entity: {entity} | Currency: {CURRENCY} | VAT: {vat_label_pct}")
     print(f"Subtotal: {fmt_price_int(SUBTOTAL_D)} | Discount: {fmt_price_int(DISCOUNT_D)} | Discounted: {fmt_price_int(DISCOUNTED_D)}")
-    print(f"VAT: {fmt_price_vat(VAT_D)} | Total: {fmt_price_total(GRAND_TOTAL_D)}")
+    wht_info = f" | WHT: {fmt_price_int(WHT_D)}" if WITHHOLDING_ENABLED and WHT_D is not None else ""
+    print(f"VAT: {fmt_price_vat(VAT_D)}{wht_info} | Total: {fmt_price_total(GRAND_TOTAL_D)}")
 
     # ====== BUILD BODY CONTENT ======
     body_children = []
@@ -645,34 +667,57 @@ def main():
             tbl.append(make_table_row(cells))
 
     # Summary rows — all use Decimal values
+    # 汇总行布局（label 右对齐、金额左对齐，用模板原始 XML 核验）：
+    #   默认统一：label span3 + amount span2（中国/新加坡/德音模板一致）
+    #   泰国模板：小计行 = 空 c0 + label span2 + amount span2；税/总计行 = label span3 + amount span2
+    #   雅加达模板为 6 列(span4/span2)，builder 生成 5 列，统一适配 span3/span2
+    #   布局元组 = (leading_empty, label_span, amount_span, amount_align)
+    DEFAULT_LAYOUT = (0, 3, 2, 'left')
+    SUMMARY_LAYOUT = {
+        'thailand': ((1, 2, 2, 'left'), (0, 3, 2, 'left')),   # (小计行, 其他行)
+    }
+
     def summary_row(label, value_d, fmt='int', highlight=False):
         if fmt == 'vat':
             formatted = fmt_price_vat(value_d)
         elif fmt == 'total':
             formatted = fmt_price_total(value_d)
+        elif fmt == 'tax':
+            # 预扣税等税金：按币种保留小数（RMB/USD/THB/SGD 仅在有小数时显示小数位，IDR/VND 取整）
+            formatted = fmt_price_vat(value_d)
         else:
             formatted = fmt_price_int(value_d)
-        cells = [
-            make_empty_cell(COLS[0]),
-            make_data_cell(label, COLS[1], bold=True, jc='right'),
-            make_empty_cell(COLS[2]),
-            make_data_cell(formatted, COLS[3], bold=True, jc='right', price=True),
-            make_empty_cell(COLS[4]),
-        ]
-        if highlight:
-            cells[3] = make_tc(
-                [make_para(
-                    [make_run(formatted, sz='20', bold=True)],
-                    spacing_after=0, line='280', jc='right'
-                )],
-                COLS[3], fill='F2F2F2', valign='center'
-            )
+        subtotal_l, others_l = SUMMARY_LAYOUT.get(template_key, (DEFAULT_LAYOUT, DEFAULT_LAYOUT))
+        leading, label_span, amount_span, amount_align = (subtotal_l if label == '小计' else others_l)
+        label_w = sum(COLS[leading:leading + label_span])
+        amount_w = sum(COLS[leading + label_span:leading + label_span + amount_span])
+        cells = []
+        if leading:
+            cells.append(make_empty_cell(COLS[0]))
+        cells.append(make_tc(
+            [make_para(
+                [make_run(label, sz='24', bold=True)],
+                spacing_after=0, line='280', jc='right'
+            )],
+            label_w, span=label_span, valign='center'
+        ))
+        cells.append(make_tc(
+            [make_para(
+                [make_run(formatted, sz='20', bold=True)],
+                spacing_after=0, line='280', jc=amount_align
+            )],
+            amount_w, span=amount_span, valign='center',
+            fill=('F2F2F2' if highlight else None)
+        ))
         return make_table_row(cells)
 
     tbl.append(summary_row('小计', SUBTOTAL_D, fmt='int'))
     if DISCOUNT_D > 0:
         tbl.append(summary_row('优惠金额', DISCOUNT_D, fmt='int'))
     tbl.append(summary_row(VAT_LABEL, VAT_D, fmt='vat'))
+    if WITHHOLDING_ENABLED and WHT_D is not None:
+        wht_label = f"预扣税 {int(WITHHOLDING_TAX_RATE * 100)}%"
+        tbl.append(summary_row(wht_label, -WHT_D, fmt='tax'))
     tbl.append(summary_row('含税总计', GRAND_TOTAL_D, fmt='total', highlight=True))
 
     body_children.append(tbl)
@@ -910,7 +955,7 @@ def main():
         print(f"  Unpacked to {UNPACK}")
 
         # Apply header override for China/Singapore template entities
-        if template_key in ('china', 'singapore'):
+        if template_key in ('china', 'singapore', 'thailand'):
             apply_china_header(UNPACK, entity)
 
         # Extract sectPr from the original template before editing

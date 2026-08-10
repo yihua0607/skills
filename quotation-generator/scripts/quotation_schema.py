@@ -248,6 +248,12 @@ def validate_and_normalize_data(data):
         errors.append(str(exc))
         discount_amount = 0
 
+    # Withholding tax flag (optional, default False)
+    withholding_tax = data.get('withholding_tax', False)
+    if not isinstance(withholding_tax, bool):
+        errors.append('withholding_tax must be a boolean (true/false) when provided')
+        withholding_tax = False
+
     subtotal = sum(item['price_int'] for group in normalized_services for item in group['items'])
     if discount_amount > subtotal:
         errors.append('discount_amount cannot exceed subtotal')
@@ -264,5 +270,6 @@ def validate_and_normalize_data(data):
         'doc_notes_text': normalized_doc_notes,
         'quote_meta': quote_meta,
         'discount_amount': discount_amount,
+        'withholding_tax': withholding_tax,
         'warnings': warnings,
     }

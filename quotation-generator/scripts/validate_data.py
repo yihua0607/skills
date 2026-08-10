@@ -80,8 +80,8 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
             errors.append(f'_meta.applicable_entity ({meta_entity}) must match --entity ({entity_key})')
         target_currency = meta.get('target_currency')
         if target_currency:
-            if target_currency not in ('IDR', 'RMB', 'USD', 'SGD'):
-                errors.append(f'_meta.target_currency ({target_currency}) must be IDR, RMB, USD, or SGD')
+            if target_currency not in ('IDR', 'RMB', 'USD', 'SGD', 'THB'):
+                errors.append(f'_meta.target_currency ({target_currency}) must be IDR, RMB, USD, SGD, or THB')
             else:
                 currency = target_currency
         allowed_currencies = entity_cfg.get('allowed_currencies', [entity_default_currency])
@@ -133,11 +133,17 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
         # VAT sanity preview
         subtotal = sum(all_prices)
         discount_int = validated['discount_amount']
-        amounts = calculate_amounts(subtotal, discount_int, entity_cfg['vat_rate'], currency)
+        wht_rate = entity_cfg.get('withholding_tax_rate')
+        wht_enabled = validated.get('withholding_tax', False)
+        amounts = calculate_amounts(
+            subtotal, discount_int, entity_cfg['vat_rate'], currency,
+            withholding_tax_rate=wht_rate if wht_enabled else None
+        )
         vat_pct = vat_percent_label(amounts['vat_rate'])
+        wht_info = f" | 预扣税={format_price_int(amounts.get('withholding_tax', 0), currency)}" if amounts.get('withholding_tax') is not None else ""
         print(f"  预估: 小计={format_price_int(amounts['subtotal'], currency)} | "
               f"优惠={format_price_int(amounts['discount'], currency)} | "
-              f"增值税({vat_pct})={format_price_vat(amounts['vat'], currency)} | "
+              f"增值税({vat_pct})={format_price_vat(amounts['vat'], currency)}{wht_info} | "
               f"含税总计={format_price_total(amounts['total'], currency)}")
 
         # Payment terms reasonableness (user-managed; warn only)
@@ -157,7 +163,7 @@ def main():
         description='Validate quotation data before building .docx — catch errors early.')
     parser.add_argument('--data', required=True, help='Quotation data file (.json)')
     parser.add_argument('--entity', required=True,
-                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore', 'deyin'],
+                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore', 'deyin', 'thailand'],
                         help='Signing entity (required')
     args = parser.parse_args()
 

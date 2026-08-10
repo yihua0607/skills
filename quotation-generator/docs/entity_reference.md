@@ -122,6 +122,26 @@
 
 ---
 
+## 泰国 — SHAN HAI MAP (THAILAND) CO., LTD.
+
+| 项目 | 值 |
+|------|-----|
+| 参数 | `--entity thailand` |
+| 模板 | 泰国公司 |
+| 增值税 | 7% |
+| 预扣税 | 3% |
+| 币种 | ฿ 泰铢（THB） |
+| 页眉公司名 | SHAN HAI MAP (THAILAND) CO., LTD. |
+| 页眉地址 | Thanapoom Tower, 25th floor Unit A2, 1550 New Petchaburi Rd, |
+| | Khwaeng Makkasan, Khet Ratchathewi, Bangkok 10400 |
+| Beneficiary Name | SHAN HAI MAP (THAILAND) CO., LTD. |
+| Beneficiary Bank | Kasikorn PCL. Thailand, Central Rama 9 Branch (847) |
+| Beneficiary Bank Address | 9/9 Central Plaza Tower, 5 Floor, Room 512-513, Rama9 rd Huaykhwang, HuayKwang BKK 10310 |
+| SWIFT CODE | KASITHBK |
+| Account Number | 1931179981 |
+
+---
+
 ## 新增签约主体操作指南
 
 如需新增签约主体，只需编辑 `config/entities.json`，添加新实体条目：

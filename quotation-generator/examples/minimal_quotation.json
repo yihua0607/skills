@@ -43,6 +43,7 @@
     }
   ],
   "discount_amount": 0,
+  "withholding_tax": false,
   "notes": [
     {
       "text": "以上服务报价不包括：文件翻译费用（如需）、资料快递费用（国际）、差旅费/考察费（如有）。",
