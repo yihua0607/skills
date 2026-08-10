@@ -11,6 +11,7 @@
 | shanghai (北京山海图科技有限公司上海分公司) | BKCHCNBJ300 | ✅ 已配置 |
 | shanghai_new (上海山海图新企业咨询有限公司) | BKCHCNBJ300 | ✅ 已配置 |
 | singapore (SHAN HAI MAP CONSULTANCY PTE.LTD) | OCBCSGSG | ✅ 已配置 |
+| deyin (PT DEIN TALENT SOLUTIONS) | CENAIDJAXXX / BNINIDJAXXX | ✅ 已配置 |
 | thailand (SHAN HAI MAP (THAILAND) CO., LTD.) | KASITHBK | ✅ 已配置 |
 
 ## 完整银行信息
@@ -72,6 +73,27 @@
 - SGD Account No: 701714438001
 - Multi-Currency Account No (RMB/USD): 687482901201
 - 公司地址: 1 North Bridge Road, #06-14 High Street Centre, SINGAPORE 179094
+
+### deyin
+- 公司地址: OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5, JL. LINGKAR LUAR BARAT BLOK A NO.1, JAKARTA BARAT 11740
+- **IDR 账户**：
+  - 银行名称 Nama Bank：BCA (BANK CENTRAL ASIA)
+  - 银行账号 No. Rek：6802 044 409
+  - 国际银行代码 Swift Code：CENAIDJAXXX
+  - 账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS
+  - 分行名称 Nama Cabang：BCA KCU BINTARO
+- **USD 账户**：
+  - 银行名称 Nama Bank：BNI (BANK NEGARA INDONESIA)
+  - 银行账号 No. Rek：2051075234
+  - 国际银行代码 Swift Code：BNINIDJAXXX
+  - 账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS
+  - 分行名称 Nama Cabang：BNI APL TOWER Grogol petamburan Jakarta Barat
+- **RMB 账户**：
+  - 银行名称 Nama Bank：BNI (BANK NEGARA INDONESIA)
+  - 银行账号 No. Rek：2051075234
+  - 国际银行代码 Swift Code：BNINIDJAXXX
+  - 账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS
+  - 分行名称 Nama Cabang：BNI APL TOWER Grogol petamburan Jakarta Barat
 
 ### thailand
 - Beneficiary Name: SHAN HAI MAP (THAILAND) CO., LTD.
