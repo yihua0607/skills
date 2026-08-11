@@ -142,6 +142,24 @@
 
 ---
 
+## 越南 — CÔNG TY TNHH SHANHAIMAP VIỆT NAM
+
+| 项目 | 值 |
+|------|-----|
+| 参数 | `--entity vietnam` |
+| 中文名 | 山海图越南有限公司 |
+| 模板 | 越南公司 |
+| 增值税 | 8% |
+| 币种 | ₫ 越南盾（VND，整数） |
+| 页眉公司名 | 模板内置（脚本不覆盖） |
+| 银行 | Vietcombank - Chi nhánh Thăng Long |
+| VND 账号 | 104 799 1200 |
+| USD/RMB 账号 | 104 799 1540 |
+| SWIFT Code | BFTVVNVX |
+| 分行地址 | Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội |
+
+---
+
 ## 新增签约主体操作指南
 
 如需新增签约主体，只需编辑 `config/entities.json`，添加新实体条目：

@@ -80,8 +80,8 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
             errors.append(f'_meta.applicable_entity ({meta_entity}) must match --entity ({entity_key})')
         target_currency = meta.get('target_currency')
         if target_currency:
-            if target_currency not in ('IDR', 'RMB', 'USD', 'SGD', 'THB'):
-                errors.append(f'_meta.target_currency ({target_currency}) must be IDR, RMB, USD, SGD, or THB')
+            if target_currency not in ('IDR', 'RMB', 'USD', 'SGD', 'THB', 'VND'):
+                errors.append(f'_meta.target_currency ({target_currency}) must be IDR, RMB, USD, SGD, THB, or VND')
             else:
                 currency = target_currency
         allowed_currencies = entity_cfg.get('allowed_currencies', [entity_default_currency])
@@ -112,6 +112,8 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
         if all_prices:
             if currency == 'IDR' and any(p < 1_000_000 for p in all_prices if p > 0):
                 warnings.append('Some prices appear too small for IDR (min: Rp 1,000,000). Did you forget to update from a previous RMB quote?')
+            elif currency == 'VND' and any(p < 1_000_000 for p in all_prices if p > 0):
+                warnings.append('Some prices appear too small for VND (min: ₫ 1,000,000). Did you forget to update from a previous RMB/USD quote?')
             elif currency == 'RMB' and any(p >= 1_000_000 for p in all_prices):
                 warnings.append('Some prices appear too large for RMB (>= 1,000,000). Did you forget to convert from IDR?')
             elif currency == 'USD' and any(p < 50 for p in all_prices if p > 0):
@@ -163,7 +165,7 @@ def main():
         description='Validate quotation data before building .docx — catch errors early.')
     parser.add_argument('--data', required=True, help='Quotation data file (.json)')
     parser.add_argument('--entity', required=True,
-                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore', 'deyin', 'thailand'],
+                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore', 'deyin', 'thailand', 'vietnam'],
                         help='Signing entity (required')
     args = parser.parse_args()
 

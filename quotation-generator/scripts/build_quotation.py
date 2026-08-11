@@ -40,6 +40,7 @@ TEMPLATES = {
     'singapore': os.path.join(SKILL_DIR, 'assets', '报价单模版-新加坡公司.docx'),
     'deyin': os.path.join(SKILL_DIR, 'assets', '报价单模版-德音人力.docx'),
     'thailand': os.path.join(SKILL_DIR, 'assets', '报价单模板-泰国公司.docx'),
+    'vietnam': os.path.join(SKILL_DIR, 'assets', '报价单模版-越南公司.docx'),
 }
 
 ENTITY_CONFIG, _ = load_entity_config()
@@ -69,7 +70,7 @@ def main():
     parser = argparse.ArgumentParser(description='Generate quotation from template')
     parser.add_argument('--entity', required=True,
                         choices=list(ENTITY_CONFIG.keys()),
-                        help='Signing entity (required): jakarta/beijing/xian/shenzhen/shanghai/shanghai_new/singapore/deyin/thailand')
+                        help='Signing entity (required): jakarta/beijing/xian/shenzhen/shanghai/shanghai_new/singapore/deyin/thailand/vietnam')
     parser.add_argument('--output', default=None, help='Output .docx path (default: CWD)')
     parser.add_argument('--data', required=True, help='Quotation data file (.json)')
     parser.add_argument('--vat-rate', type=float, default=None, help='VAT rate override (e.g. 0.06, 0.01, 0.11)')
@@ -518,7 +519,7 @@ def main():
         )
         sys.exit(2)
     CURRENCY = meta.get('target_currency') or entity_cfg['currency']
-    if CURRENCY not in ('IDR', 'RMB', 'USD', 'SGD', 'THB'):
+    if CURRENCY not in ('IDR', 'RMB', 'USD', 'SGD', 'THB', 'VND'):
         print(f"❌ Unsupported target currency: {CURRENCY}", file=sys.stderr)
         sys.exit(2)
     allowed_currencies = entity_cfg.get('allowed_currencies', [entity_cfg['currency']])
@@ -546,6 +547,8 @@ def main():
     all_prices = [item['price_int'] for svc in services_data for item in svc['items']]
     if CURRENCY == 'IDR' and any(p < 1_000_000 for p in all_prices):
         print("⚠️  WARNING: Some prices appear too small for IDR (min: Rp 1,000,000). Did you forget to update services_data from a previous RMB quote?")
+    elif CURRENCY == 'VND' and any(p < 1_000_000 for p in all_prices if p > 0):
+        print("⚠️  WARNING: Some prices appear too small for VND (min: ₫ 1,000,000). Did you forget to update from a previous RMB/USD quote?")
     elif CURRENCY == 'RMB' and any(p >= 1_000_000 for p in all_prices):
         print("⚠️  WARNING: Some prices appear too large for RMB (>= 1,000,000). Did you forget to convert from IDR?")
     elif CURRENCY == 'USD' and any(p < 50 for p in all_prices if p > 0):

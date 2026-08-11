@@ -1,10 +1,10 @@
 ---
 name: quotation-generator
-version: 1.9.8
+version: 1.10.0
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
-  支持 9 签约主体、IDR/RMB/USD/SGD/THB 五种报价币种。
+  支持 10 签约主体、IDR/RMB/USD/SGD/THB/VND 六种报价币种。
 last_updated: "2026-08-10"
 ---
 
@@ -24,7 +24,7 @@ last_updated: "2026-08-10"
 | 4 | 服务名不带数量 | `services[].items[].name` 写基础服务名；数量写 `quantity` |
 | 5 | 汇率留档但不入报价单 | API 返回的 `rateToCny/rateToUsd` 随 `queried_services.json` 和 `_meta` 留档；客户可见报价单不写汇率说明 |
 | 6 | 公共不含项去重 | 多个/全部服务共同适用的费用不含项抽取到 `notes`；各服务 `exclude` 只留服务特有项 |
-| 7 | 金额符号 | 人民币 `￥` 无空格；印尼盾 `Rp ` 后跟空格；美元 `$ ` 后跟空格；新加坡元 `S$ ` 后跟空格；泰铢 `฿` 后跟空格 |
+| 7 | 金额符号 | 人民币 `￥` 无空格；印尼盾 `Rp ` 后跟空格；美元 `$ ` 后跟空格；新加坡元 `S$ ` 后跟空格；泰铢 `฿` 后跟空格；越南盾 `₫ ` 后跟空格 |
 | 8 | 付款方式只提醒 | 付款方式留给用户最终处理；脚本只检查明显不合理项并 warning，例如付款比例合计 >100%、付款金额合计 > 合同含税总计 |
 
 ### 流程规则
@@ -50,10 +50,11 @@ last_updated: "2026-08-10"
 | SHAN HAI MAP CONSULTANCY PTE.LTD (新加坡) | `singapore` | 0% | SGD | RMB, USD |
 | PT DEIN TALENT SOLUTIONS (德音人力) | `deyin` | 11% | IDR | RMB, USD |
 | SHAN HAI MAP (THAILAND) CO., LTD. (泰国) | `thailand` | 7% | THB | RMB, USD |
+| CÔNG TY TNHH SHANHAIMAP VIỆT NAM (越南) | `vietnam` | 8% | VND | RMB, USD |
 
 完整银行账户、地址、税号等详见 `config/entities.json` 和 `references/entity-bank-info.md`。
 
-⚠️ **SWIFT CODE 注意**：生成美元（USD）报价时，银行信息中的 SWIFT CODE 仅 jakarta、shanghai、shanghai_new、singapore、deyin、thailand 六个实体已配置。beijing、xian、shenzhen 的 entities.json 中缺少 SWIFT CODE，用户可能提出疑问。若用户要求补全，需向用户确认具体 SWIFT CODE 后更新 `config/entities.json`。
+⚠️ **SWIFT CODE 注意**：生成美元（USD）报价时，银行信息中的 SWIFT CODE 仅 jakarta、shanghai、shanghai_new、singapore、deyin、thailand、vietnam 七个实体已配置。beijing、xian、shenzhen 的 entities.json 中缺少 SWIFT CODE，用户可能提出疑问。若用户要求补全，需向用户确认具体 SWIFT CODE 后更新 `config/entities.json`。
 
 标题、日期、客户、合同号、付款条件写入 `quote_meta`。
 
@@ -149,17 +150,18 @@ tail -n +2 "$WORKDIR/queried_services_raw.json" > "$WORKDIR/queried_services.jso
 
 ## 确定实体与币种
 
-用户明确提到北京/西安/深圳/上海/上海新企业/雅加达/新加坡/德音人力/泰国时使用对应实体。用户未指定时：
+用户明确提到北京/西安/深圳/上海/上海新企业/雅加达/新加坡/德音人力/泰国/越南时使用对应实体。用户未指定时：
 - 服务原币种为 IDR 且用户未要求人民币/美元报价，默认倾向 `jakarta`。
 - 服务原币种为 THB 且用户未要求人民币/美元报价，默认倾向 `thailand`。
 - 服务原币种为 SGD 且用户未指定主体，默认倾向 `singapore`。
+- 服务原币种为 VND 且用户未要求人民币/美元报价，默认倾向 `vietnam`。
 - 客户要求人民币/美元付款时，不代表必须选择中国主体；`jakarta` 主体也可使用 RMB/USD 报价和收款。
 - 需要特定币种报价但未说明签约主体时，优先沿用当前/已选主体；没有当前主体时再向用户确认主体。
 - 多币种服务、追加到既有报价单、或主体/币种意图不明确时，必须确认。
 
 币种可由 `_meta.target_currency` 指定（`IDR`/`RMB`/`USD`/`SGD`/`THB`），优先级高于实体配置默认币种；例如 `applicable_entity: jakarta` 且 `target_currency: USD` 表示使用雅加达主体生成美元报价单。
 
-⚠️ **实体币种限制**：报价单币种仅支持**签约主体所在国家的本币**与**人民币/美元**外币（必须在该实体 `allowed_currencies` 内）。用户要求切换支付币种时，必须先查 `config/entities.json` 中该实体的 `allowed_currencies`，不可凭记忆假设。中国主体（beijing/xian/shenzhen/shanghai/shanghai_new）只支持 RMB 和 USD，不支持 IDR；印尼主体（jakarta、deyin）支持 IDR、RMB、USD；新加坡（singapore）支持 SGD、RMB、USD；泰国（thailand）支持 THB、RMB、USD。IDR 报价只能用印尼主体（jakarta / deyin），SGD 报价只能用新加坡主体（singapore），THB 报价只能用泰国主体（thailand）。若币种不被当前实体支持，向用户提供两个选项：(1) 在备注中标注等值金额；(2) 切换到支持该币种的实体。
+⚠️ **实体币种限制**：报价单币种仅支持**签约主体所在国家的本币**与**人民币/美元**外币（必须在该实体 `allowed_currencies` 内）。用户要求切换支付币种时，必须先查 `config/entities.json` 中该实体的 `allowed_currencies`，不可凭记忆假设。中国主体（beijing/xian/shenzhen/shanghai/shanghai_new）只支持 RMB 和 USD，不支持 IDR；印尼主体（jakarta、deyin）支持 IDR、RMB、USD；新加坡（singapore）支持 SGD、RMB、USD；泰国（thailand）支持 THB、RMB、USD；越南（vietnam）支持 VND、RMB、USD。IDR 报价只能用印尼主体（jakarta / deyin），SGD 报价只能用新加坡主体（singapore），THB 报价只能用泰国主体（thailand），VND 报价只能用越南主体（vietnam）。若币种不被当前实体支持，向用户提供两个选项：(1) 在备注中标注等值金额；(2) 切换到支持该币种的实体。
 
 ⚠️ **泰国预扣税**：使用泰国主体（`thailand`）报价时，**必须先询问用户是否需要扣除预扣税（Withholding Tax，税率 3%）**。若用户明确要求扣除，在 `quotation.json` **顶层**设置 `withholding_tax: true`（与 `discount_amount`/`notes` 同级，**不要放进 `_meta`**）；若用户明确说不需要，则不设置（`withholding_tax: false`），报价单中不显示和计算预扣税。注意：`withholding_tax` 缺失或误放 `_meta` 时，build 会静默按不扣税处理，报价单只显示增值税。
 
@@ -175,9 +177,9 @@ python3 scripts/convert_currency.py --amount 30000000 --from IDR --to USD --rate
 
 `rateToCny` 表示 `1 CNY = N 服务币种`，`rateToUsd` 表示 `1 USD = N 服务币种`。修改已有报价单时优先使用原始 `queried_services.json` 或 `quotation.json` 留档汇率；没有留档汇率，必须让用户提供或确认汇率。
 
-**服务币种**：API 返回的币种可能为 IDR、VND、CNY、MYR、SGD、THB、EGP，`rateToCny` 和 `rateToUsd` 对所有币种均有效。报价单目标币种仅支持**签约主体所在国家的本币**与**人民币/美元**外币，且须在对应实体 `allowed_currencies` 内（见『签约主体』表）：印尼主体（jakarta/deyin）本币 IDR，中国主体本币 RMB，新加坡主体本币 SGD，泰国主体本币 THB；RMB/USD 为通用外币。通过 `_meta.target_currency` 指定。换算公式通用：`RMB 价格 = 服务价格 ÷ rateToCny`，`USD 价格 = 服务价格 ÷ rateToUsd`，取整后写入 quotation.json。
+**服务币种**：API 返回的币种可能为 IDR、VND、CNY、MYR、SGD、THB、EGP，`rateToCny` 和 `rateToUsd` 对所有币种均有效。报价单目标币种仅支持**签约主体所在国家的本币**与**人民币/美元**外币，且须在对应实体 `allowed_currencies` 内（见『签约主体』表）：印尼主体（jakarta/deyin）本币 IDR，中国主体本币 RMB，新加坡主体本币 SGD，泰国主体本币 THB，越南主体本币 VND；RMB/USD 为通用外币。通过 `_meta.target_currency` 指定。换算公式通用：`RMB 价格 = 服务价格 ÷ rateToCny`，`USD 价格 = 服务价格 ÷ rateToUsd`，取整后写入 quotation.json。
 
-`convert_currency.py` 仅支持 IDR ↔ RMB ↔ USD 自动换算。其他服务币种（VND、MYR、SGD、THB、EGP）需 Agent 手动按公式换算后再走后续流程。若目标币种与服务币种相同（如 SGD→singapore 报价、THB→thailand 报价），无需换算，直接填入价格。`_meta` 留档源币种和汇率；报价单中不展示汇率说明。
+`convert_currency.py` 仅支持 IDR ↔ RMB ↔ USD 自动换算。其他服务币种（MYR、SGD、THB、EGP）需 Agent 手动按公式换算后再走后续流程。VND（越南盾）同理：用 API 的 `rateToCny`（即 1 CNY = N VND）手动换算 `VND 价格 ÷ rateToCny = RMB 价格`，取整后写入 quotation.json。若目标币种与服务币种相同（如 SGD→singapore 报价、THB→thailand 报价、VND→vietnam 报价），无需换算，直接填入价格。`_meta` 留档源币种和汇率；报价单中不展示汇率说明。
 
 ## 价格计算（API → quotation.json）
 
@@ -208,7 +210,7 @@ price:   13,333                            （直接写入 quotation.json）
 | API 内容 | 目标字段 | 规则 |
 |---------|----------|------|
 | 办理时间/工作日 | `services[].items[].days` | 提取数字 + 工作日；多个时间取最长 |
-| 基本信息/服务说明/服务概述 | `services[].items[].note` | 100-200 字摘要；不足 100 字完整呈现 |
+| 基本信息/服务说明/服务概述 | `services[].items[].note` | 100-200 字摘要；不足 100 字完整呈现；**若基本信息中包含金额相关描述（如罚款金额、收费标准、官方费用等），必须将金额信息总结写入备注** |
 | 费用包含/服务包含 | `fee_details[].include` | 每条一项，保留原文 |
 | 费用不含/不包含 | `fee_details[].exclude` + `notes` | 公共不含项进 `notes`；服务特有项留 `exclude` |
 | 办理流程/服务流程 | `process_data[].process` | 每步一条，保留序号 |

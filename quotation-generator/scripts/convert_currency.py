@@ -170,7 +170,7 @@ def batch_convert(query_result_path: str, to_currency: str) -> list:
         rateToUsd_raw = svc.get('美元兑换服务币种汇率')
 
         # Normalize currency codes
-        currency_map = {'RMB': 'RMB', 'CNY': 'RMB', 'IDR': 'IDR', 'USD': 'USD'}
+        currency_map = {'RMB': 'RMB', 'CNY': 'RMB', 'IDR': 'IDR', 'USD': 'USD', 'VND': 'VND'}
         from_norm = currency_map.get(from_currency, from_currency)
 
         if price is None or from_norm is None:
@@ -231,7 +231,7 @@ def format_output(result: dict) -> str:
     note = result.get('note', '')
 
     # Format with currency symbols
-    symbol_map = {'RMB': '￥', 'IDR': 'Rp', 'USD': '$'}
+    symbol_map = {'RMB': '￥', 'IDR': 'Rp', 'USD': '$', 'VND': '₫'}
     from_sym = symbol_map.get(from_c, '')
     to_sym = symbol_map.get(to_c, '')
 

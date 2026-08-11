@@ -17,6 +17,7 @@ CURRENCY_SYMBOLS = {
     'USD': '$',
     'SGD': 'S$',
     'THB': '฿',
+    'VND': '₫',
 }
 
 CURRENCY_NAMES = {

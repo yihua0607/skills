@@ -46,6 +46,30 @@ def normalize_company_name(name):
     return re.sub(r'\s+', ' ', name.replace('.', '')).strip()
 
 
+def _strip_diacritics(text):
+    """Remove diacritical marks for fuzzy comparison (e.g. 'Ệ' → 'E')."""
+    import unicodedata
+    return ''.join(c for c in unicodedata.normalize('NFD', text)
+                   if unicodedata.category(c) != 'Mn')
+
+
+def company_names_match(name1, name2):
+    """Check if two company names refer to the same entity.
+
+    Tries progressively looser comparisons:
+    1. Dot-normalized (existing behavior)
+    2. Case-insensitive
+    3. Diacritic-insensitive (for Vietnamese etc.)
+    """
+    n1 = normalize_company_name(name1)
+    n2 = normalize_company_name(name2)
+    if n1 == n2:
+        return True
+    if n1.casefold() == n2.casefold():
+        return True
+    return _strip_diacritics(n1).casefold() == _strip_diacritics(n2).casefold()
+
+
 def extract_paragraph_texts(root):
     """Extract text from all paragraphs in an XML element."""
     results = []
@@ -67,6 +91,8 @@ def detect_currency(paragraph_texts):
             return 'SGD'
         if '฿' in text:
             return 'THB'
+        if '₫' in text:
+            return 'VND'
         if re.search(r'\$\s?\d', text):
             return 'USD'
     return 'RMB'
@@ -99,6 +125,8 @@ def detect_currency_from_tables(tables):
                     return 'SGD'
                 if '฿' in amount_text:
                     return 'THB'
+                if '₫' in amount_text:
+                    return 'VND'
                 if re.search(r'\$\s*[\d,]', amount_text):
                     return 'USD'
     return None
@@ -116,7 +144,8 @@ def detect_entity(paragraph_texts, entity_config):
         for doc_line in bank_section:
             for cfg_line in bank_lines:
                 # Extract account number patterns (Chinese or English)
-                account_match = re.search(r'(账号|账户号码|银行账号|Account No)\s*[：:]*\s*(\S+)', cfg_line)
+                # Allow optional text between keyword and colon; capture digits/spaces (account number)
+                account_match = re.search(r'(账号|账户号码|银行账号|Account No)\b[^：:]*[：:]\s*([\d ]+)', cfg_line)
                 if account_match:
                     account_num = account_match.group(2).replace(' ', '')
                     if account_num in doc_line.replace(' ', ''):
@@ -142,6 +171,8 @@ def parse_formatted_amount(text, currency='RMB'):
         text = text.replace('฿', '')
     elif currency == 'SGD':
         text = text.replace('S$', '')
+    elif currency == 'VND':
+        text = text.replace('₫', '')
     else:
         text = re.sub(r'^Rp\s*', '', text, flags=re.I)
     text = text.replace(',', '').replace(' ', '')
@@ -171,8 +202,9 @@ def find_bank_info_section(paragraph_texts):
 def extract_company_from_bank(bank_lines):
     """Extract company name from bank info lines."""
     for line in bank_lines:
+        # Allow optional text (e.g. Vietnamese/Indonesian labels) between keyword and colon
         match = re.search(
-            r'(账户名称|账号名称|开户名|户名|Beneficiary Name|Atas Nama)\s*[：:]\s*(.+)', line)
+            r'(账户名称|账号名称|开户名|户名|Beneficiary Name|Atas Nama)\b[^：:]*[：:]\s*(.+)', line)
         if match:
             return match.group(2).strip()
     return None
@@ -190,7 +222,8 @@ def extract_address_from_bank(bank_lines):
             continue
         if re.match(r'\s*Beneficiary\s+Bank\s+Address\s*[：:]', line, flags=re.I):
             continue
-        match = re.search(r'(地址|Address)\s*[：:]\s*(.+)', line, flags=re.I)
+        # Allow optional text (e.g. Vietnamese/Indonesian labels) between keyword and colon
+        match = re.search(r'(地址|Address)\b[^：:]*[：:]\s*(.+)', line, flags=re.I)
         if match:
             return match.group(2).strip()
     return None
@@ -580,7 +613,7 @@ def main():
     parser.add_argument('--data', default=None,
                         help='Optional: input quotation data JSON for cross-checking')
     parser.add_argument('--entity', default=None,
-                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore', 'deyin', 'thailand'],
+                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore', 'deyin', 'thailand', 'vietnam'],
                         help='Expected signing entity (for config-based checks')
     args = parser.parse_args()
 
@@ -685,7 +718,7 @@ def main():
         # Bank account company is the authoritative signing-entity anchor.
         if detected_entity and bank_company:
             cfg_company = entity_config.get(detected_entity, {}).get('company')
-            if cfg_company and normalize_company_name(bank_company) != normalize_company_name(cfg_company):
+            if cfg_company and not company_names_match(bank_company, cfg_company):
                 print(f"❌ 银行公司名 '{bank_company}' 与配置 '{cfg_company}' 不一致")
                 all_issues.append(f"银行公司名 '{bank_company}' ≠ 配置 '{cfg_company}' (entity={detected_entity})")
             elif cfg_company:
@@ -693,8 +726,7 @@ def main():
 
         # Check company name
         if header_company and bank_company:
-            if (header_company == bank_company
-                    or normalize_company_name(header_company) == normalize_company_name(bank_company)):
+            if company_names_match(header_company, bank_company):
                 print("✅ 页眉公司名与银行信息一致")
             elif header_company in bank_company or bank_company in header_company:
                 print(f"⚠️  页眉公司名 '{header_company}' 与银行 '{bank_company}' 相似但非完全一致")
@@ -719,8 +751,7 @@ def main():
         if sig_company:
             print(f"签名公司名: {sig_company}")
             if bank_company:
-                if (sig_company == bank_company
-                        or normalize_company_name(sig_company) == normalize_company_name(bank_company)):
+                if company_names_match(sig_company, bank_company):
                     print("✅ 签名公司名与银行公司名一致")
                 else:
                     print(f"❌ 签名公司名 '{sig_company}' 与银行 '{bank_company}' 不一致")

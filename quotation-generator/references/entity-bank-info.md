@@ -13,6 +13,7 @@
 | singapore (SHAN HAI MAP CONSULTANCY PTE.LTD) | OCBCSGSG | ✅ 已配置 |
 | deyin (PT DEIN TALENT SOLUTIONS) | CENAIDJAXXX / BNINIDJAXXX | ✅ 已配置 |
 | thailand (SHAN HAI MAP (THAILAND) CO., LTD.) | KASITHBK | ✅ 已配置 |
+| vietnam (CÔNG TY TNHH SHANHAIMAP VIỆT NAM) | BFTVVNVX | ✅ 已配置 |
 
 ## 完整银行信息
 
@@ -102,3 +103,19 @@
 - Beneficiary Bank Swift Code: KASITHBK
 - Account Number: 1931179981
 - 公司地址: Thanapoom Tower, 25th floor Unit A2, 1550 New Petchaburi Rd, Khwaeng Makkasan, Khet Ratchathewi, Bangkok 10400
+
+### vietnam
+- 公司名称: CÔNG TY TNHH SHANHAIMAP VIỆT NAM
+- 中文名: 山海图越南有限公司
+- **VND 账户**：
+  - 银行名称 Tên Ngân hàng：Ngân hàng TMCP Ngoại thương Việt Nam - Chi nhánh Thăng Long
+  - 账号名称 Chủ tài khoản：Cong ty TNHH Shanhaimap Viet Nam
+  - 银行账号 Tài khoản：104 799 1200 (VND)
+  - 国际银行代码 Mã ngân hàng quốc tế (SWIFT)：BFTVVNVX
+  - 分行地址 Địa chỉ：Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội
+- **USD / RMB 账户**（共用同一账号）：
+  - 银行名称 Tên Ngân hàng：Ngân hàng TMCP Ngoại thương Việt Nam - Chi nhánh Thăng Long
+  - 账号名称 Chủ tài khoản：Cong ty TNHH Shanhaimap Viet Nam
+  - 银行账号 Tài khoản：104 799 1540 (USD)
+  - 国际银行代码 Mã ngân hàng quốc tế (SWIFT)：BFTVVNVX
+  - 分行地址 Địa chỉ：Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội

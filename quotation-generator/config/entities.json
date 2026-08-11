@@ -243,5 +243,46 @@
       "Beneficiary Bank Swift Code: KASITHBK",
       "Account Number: 1931179981"
     ]
+  },
+  "vietnam": {
+    "template": "vietnam",
+    "company": "CÔNG TY TNHH SHANHAIMAP VIỆT NAM",
+    "header_lines": [],
+    "vat_rate": 0.08,
+    "currency": "VND",
+    "allowed_currencies": ["VND", "RMB", "USD"],
+    "payment_terms": [
+      "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
+    ],
+    "bank_lines": [
+      "银行名称 Tên Ngân hàng：Ngân hàng TMCP Ngoại thương Việt Nam - Chi nhánh Thăng Long",
+      "账号名称 Chủ tài khoản：Cong ty TNHH Shanhaimap Viet Nam",
+      "银行账号 Tài khoản：104 799 1200 (VND)",
+      "国际银行代码 Mã ngân hàng quốc tế (SWIFT)：BFTVVNVX",
+      "分行地址 Địa chỉ：Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội"
+    ],
+    "bank_lines_by_currency": {
+      "VND": [
+        "银行名称 Tên Ngân hàng：Ngân hàng TMCP Ngoại thương Việt Nam - Chi nhánh Thăng Long",
+        "账号名称 Chủ tài khoản：Cong ty TNHH Shanhaimap Viet Nam",
+        "银行账号 Tài khoản：104 799 1200 (VND)",
+        "国际银行代码 Mã ngân hàng quốc tế (SWIFT)：BFTVVNVX",
+        "分行地址 Địa chỉ：Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội"
+      ],
+      "USD": [
+        "银行名称 Tên Ngân hàng：Ngân hàng TMCP Ngoại thương Việt Nam - Chi nhánh Thăng Long",
+        "账号名称 Chủ tài khoản：Cong ty TNHH Shanhaimap Viet Nam",
+        "银行账号 Tài khoản：104 799 1540 (USD)",
+        "国际银行代码 Mã ngân hàng quốc tế (SWIFT)：BFTVVNVX",
+        "分行地址 Địa chỉ：Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội"
+      ],
+      "RMB": [
+        "银行名称 Tên Ngân hàng：Ngân hàng TMCP Ngoại thương Việt Nam - Chi nhánh Thăng Long",
+        "账号名称 Chủ tài khoản：Cong ty TNHH Shanhaimap Viet Nam",
+        "银行账号 Tài khoản：104 799 1540 (USD)",
+        "国际银行代码 Mã ngân hàng quốc tế (SWIFT)：BFTVVNVX",
+        "分行地址 Địa chỉ：Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội"
+      ]
+    }
   }
 }
