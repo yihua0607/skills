@@ -1,11 +1,11 @@
 ---
 name: quotation-generator
-version: 1.10.0
+version: 1.10.1
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
   支持 10 签约主体、IDR/RMB/USD/SGD/THB/VND 六种报价币种。
-last_updated: "2026-08-10"
+last_updated: "2026-08-12"
 ---
 
 # 山海图报价单生成器
@@ -239,7 +239,7 @@ cp examples/sample_quotation.json "$WORKDIR/quotation.json"
 | 字段 | 说明 |
 |------|------|
 | `_meta` | 内部留档：实体、源币种、目标币种、查询文件、使用汇率等 |
-| `quote_meta` | 标题、日期、客户、合同号、付款条件；付款条件不填则用 entity 默认值 |
+| `quote_meta` | 标题、日期、客户、合同号、付款条件；**付款条件必须填非空数组**——留空 `[]` 会触发 validate error，不是静默回退实体默认值；不指定付款条件时从 `config/entities.json` 复制该实体 `payment_terms` 填入 |
 | `services` | 分组列表；每项含 `id/name/quantity/days/price/note`；`name` 不带数量 |
 | `discount_amount` | 整数；无优惠填 0；优惠 ≤ 小计 |
 | `withholding_tax` | 布尔（**顶层**字段，与 `discount_amount`/`notes` 同级，不要放进 `_meta`）；泰国主体扣预扣税时填 `true`，否则不填或填 `false`。缺失或误放 `_meta` 时 build 会静默按不扣税处理 |
@@ -279,6 +279,7 @@ validate error → 必须修复，warning → 判断后处理。`--entity` 必�
 | 服务币种不支持（如 MYR） | `convert_currency.py` 不支持 MYR → HKD 等非 IDR/RMB/USD 币种。手动换算：`MYR 价格 ÷ rateToCny = RMB 价格`，取整后写入 quotation.json；马币原价写入各服务 `note` 字段；`_meta` 中注明源币种和汇率公式（报价单中不展示汇率说明） |
 | 新加坡元（SGD）报价 | `convert_currency.py` 目前仅支持 IDR/RMB/USD 互转，不支持 SGD。若服务币种为 SGD，直接填入价格无需换算；若需从 IDR/RMB 换算至 SGD，需用户提供汇率后手动换算：`源币种价格 ÷ 汇率 = SGD 价格`，取整后写入 quotation.json。`_meta` 中注明源币种和汇率 |
 | `fee_details[].include` 不能为空 | validate 报 `include is required and must be a non-empty list` → API 未列费用包含项的服务，至少填 `"山海图服务费"` |
+| `quote_meta.payment_terms` 留空数组 | validate 报 `payment_terms must be a non-empty list when provided`（不会静默回退实体默认值）→ 从 `config/entities.json` 复制该实体 `payment_terms` 填入，或写用户明确指定的付款条件 |
 | 用户提供分享链接而非 aiCode | 山海图分享链接（`#/products/productDetailInner?sharingRecordId=xxx`）中的 `sharingRecordId` 不是 aiCode，无法用于 `aiCode/resolve` API（返回"AI Code 无效"）。除 `aiCode/resolve` 外的所有产品接口均需登录认证。**不要反复尝试不同 aiCode 组合**——直接告知用户分享链接不可用，要求提供完整的 `服务名-19位数字编码` 格式 aiCode。若是规格化产品（如 ODI 按投资额/股东数定价），同时向用户确认所选规格和价格 |
 | API 返回 "AI Code 无效" | aiCode 中服务名部分的空格必须与数据库完全一致（如 `JSHK 账户维护` 不能写成 `JSHK账户维护`）。若用户坚持 aiCode 正确，检查空格是否遗漏后再重试 |
 | 修改付款比例后 docx 仍显示旧比例 | build 默认从旧 `.docx` 保留付款方式。`quotation.json` 改了付款条件但 rebuild 后未生效 → 必须加 `--overwrite-payment-terms` 强制覆盖 |
