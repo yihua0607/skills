@@ -54,7 +54,7 @@ def is_next_section_heading(text):
     if is_payment_heading(compact):
         return False
     section_markers = (
-        '服务流程及交付材料清单',
+        '服务流程',
         '所需资料',
         '银行账户',
         '保密义务',

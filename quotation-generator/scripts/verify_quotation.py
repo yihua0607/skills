@@ -364,7 +364,7 @@ def extract_names_from_table_column(tables, table_index, column_index):
         name_text = ''.join((t.text or '') for t in cell.findall('.//' + w('t'))).strip()
         # Strip quantity suffix for comparison: "公司注册×2" → "公司注册"
         base_name = re.sub(r'\s*[x×]\d+$', '', name_text)
-        if base_name and base_name != '项目':
+        if base_name and base_name not in ('项目', '服务内容'):
             names.append(base_name)
     return names
 

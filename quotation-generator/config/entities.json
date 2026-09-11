@@ -34,10 +34,11 @@
       "甲方应在收到发票后 5 个工作日内支付合同金额的 100%。"
     ],
     "bank_lines": [
-      "银行：BCA (KCP CENTRAL PARK)",
-      "户名：PT. SHAN HAI MAP",
-      "账号：5485225789",
-      "SWIFT：CENAIDJA"
+      "银行名称：BCA (KCP CENTRAL PARK)",
+      "账号名称：PT. SHAN HAI MAP",
+      "银行账号：5485225789",
+      "国际银行代码 Swift Code：CENAIDJA",
+      "分行名称：KCP CENTRAL PARK, Jl. Letjen S. Parman Komp. Podomoro, RT. 9/RW 5, Tj. Duren Selatan, Grogol Petamburan, Kota Jakarta Barat, DKI Jakarta, 11470."
     ]
   },
   "beijing": {

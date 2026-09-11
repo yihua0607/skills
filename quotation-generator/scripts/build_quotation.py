@@ -824,7 +824,8 @@ def main():
 
     # 7. Process & Deliverables Table
     body_children.append(make_para('', spacing_before=0, spacing_after=0))
-    body_children.append(make_section_header('3.服务流程及交付材料清单'))
+    process_title = '3.服务流程、时间及交付文件清单' if template_key in ('jakarta', 'china', 'deyin') else '3.服务流程及交付材料清单'
+    body_children.append(make_section_header(process_title))
     body_children.append(make_para('', spacing_before=0, spacing_after=120))
 
     # Build name→days lookup from services for the process table's "时间工作日" column
@@ -843,7 +844,8 @@ def main():
     phdr_trPr = ET.SubElement(phdr_row, w('trPr'))
     ET.SubElement(phdr_trPr, w('trHeight')).set(w('val'), '564')
     ET.SubElement(phdr_trPr, w('trHeight')).set(w('hRule'), 'atLeast')
-    for i, ht in enumerate(['序号', '项目', '时间\n工作日', '流程', '服务完成后交付文件']):
+    process_headers = ['序号', '服务内容', '办理时间', '流程', '服务完成后交付文件'] if template_key in ('jakarta', 'china', 'deyin') else ['序号', '项目', '时间\n工作日', '流程', '服务完成后交付文件']
+    for i, ht in enumerate(process_headers):
         if '\n' in ht:
             paras = []
             for line in ht.split('\n'):
@@ -880,7 +882,8 @@ def main():
 
     # 8. Required Documents Table
     body_children.append(make_para('', spacing_before=0, spacing_after=0))
-    body_children.append(make_section_header('4.所需材料清单'))
+    doc_title = '4.所需资料及信息清单' if template_key in ('jakarta', 'china', 'deyin') else '4.所需材料清单'
+    body_children.append(make_section_header(doc_title))
     body_children.append(make_para('', spacing_before=0, spacing_after=120))
 
     DCOLS = [654, 2219, 7229]  # 序号, 项目, 所需材料（与中国模板 gridCol 一致）
@@ -893,7 +896,8 @@ def main():
     dhdr_trPr = ET.SubElement(dhdr_row, w('trPr'))
     ET.SubElement(dhdr_trPr, w('trHeight')).set(w('val'), '564')
     ET.SubElement(dhdr_trPr, w('trHeight')).set(w('hRule'), 'atLeast')
-    for i, ht in enumerate(['序号', '项目', '所需材料']):
+    doc_headers = ['序号', '服务内容', '所需资料及信息'] if template_key in ('jakarta', 'china', 'deyin') else ['序号', '项目', '所需材料']
+    for i, ht in enumerate(doc_headers):
         dhdr_row.append(make_hdr_cell(ht, DCOLS[i]))
     dtbl.append(dhdr_row)
 
@@ -907,10 +911,16 @@ def main():
 
     body_children.append(dtbl)
 
+    if doc_notes_text and template_key in ('jakarta', 'china', 'deyin'):
+        body_children.append(make_para(
+            [make_run('备注：', sz=SZ_BODY, bold=True)],
+            spacing_before=80, spacing_after=0, line='280'
+        ))
     for i, note_text in enumerate(doc_notes_text):
         body_children.append(make_para(
             [make_run(note_text, sz=SZ_SMALL)],
-            spacing_before=80 if i == 0 else 0, spacing_after=0, line='280'
+            spacing_before=(80 if i == 0 and template_key not in ('jakarta', 'china', 'deyin') else 0),
+            spacing_after=0, line='280'
         ))
 
     # 9. Footer - Bank Info — loaded from entity config
@@ -924,7 +934,7 @@ def main():
     ))
     for line in selected_bank_lines:
         body_children.append(make_para(
-            [make_run(line, sz=SZ_BANK)],
+            [make_run(line, sz=SZ_BANK, bold=True)],
             spacing_after=0, line='280'
         ))
 
