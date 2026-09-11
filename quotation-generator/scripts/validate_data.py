@@ -29,6 +29,7 @@ from scripts.quotation_common import (
     format_price_total,
     vat_percent_label,
     load_entity_config,
+    price_magnitude_warnings,
 )
 from scripts.sync_payment_terms import check_payment_terms_reasonableness
 from scripts.quotation_schema import validate_and_normalize_data as schema_validate_and_normalize_data
@@ -109,17 +110,7 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
         all_prices = [item['price_int'] for group in validated['services'] for item in group['items']]
 
         # Price magnitude check (business-level guard against currency mix-ups)
-        if all_prices:
-            if currency == 'IDR' and any(p < 1_000_000 for p in all_prices if p > 0):
-                warnings.append('Some prices appear too small for IDR (min: Rp 1,000,000). Did you forget to update from a previous RMB quote?')
-            elif currency == 'VND' and any(p < 1_000_000 for p in all_prices if p > 0):
-                warnings.append('Some prices appear too small for VND (min: ₫ 1,000,000). Did you forget to update from a previous RMB/USD quote?')
-            elif currency == 'RMB' and any(p >= 1_000_000 for p in all_prices):
-                warnings.append('Some prices appear too large for RMB (>= 1,000,000). Did you forget to convert from IDR?')
-            elif currency == 'USD' and any(p < 50 for p in all_prices if p > 0):
-                warnings.append('Some prices appear too small for USD (min: $50). Did you forget to convert from IDR?')
-            elif currency == 'USD' and any(p >= 500_000 for p in all_prices):
-                warnings.append('Some prices appear too large for USD (>= 500,000). Did you forget to convert from IDR?')
+        warnings.extend(price_magnitude_warnings(all_prices, currency))
 
         # Universal excludes — check per-service exclude lists for items that
         # should instead appear in notes (shared across all services)
@@ -161,15 +152,15 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
 
 
 def main():
+    entity_config, universal_excludes = load_entity_config()
+
     parser = argparse.ArgumentParser(
         description='Validate quotation data before building .docx — catch errors early.')
     parser.add_argument('--data', required=True, help='Quotation data file (.json)')
     parser.add_argument('--entity', required=True,
-                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore', 'deyin', 'thailand', 'vietnam'],
-                        help='Signing entity (required')
+                        choices=list(entity_config.keys()),
+                        help='Signing entity (required)')
     args = parser.parse_args()
-
-    entity_config, universal_excludes = load_entity_config()
 
     data_path = os.path.abspath(args.data)
     if not os.path.exists(data_path):

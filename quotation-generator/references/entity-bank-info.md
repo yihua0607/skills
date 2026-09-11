@@ -1,5 +1,7 @@
 # 实体银行信息对照
 
+> 本表仅供人读参考；SWIFT CODE 与银行信息以 `config/entities.json` 为准（两者不一致时以 entities.json 为准）。
+
 ## SWIFT CODE 状态
 
 | 实体 | SWIFT CODE | 状态 |
@@ -84,12 +86,6 @@
   - 账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS
   - 分行名称 Nama Cabang：BCA KCU BINTARO
 - **USD 账户**：
-  - 银行名称 Nama Bank：BNI (BANK NEGARA INDONESIA)
-  - 银行账号 No. Rek：2051075234
-  - 国际银行代码 Swift Code：BNINIDJAXXX
-  - 账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS
-  - 分行名称 Nama Cabang：BNI APL TOWER Grogol petamburan Jakarta Barat
-- **RMB 账户**：
   - 银行名称 Nama Bank：BNI (BANK NEGARA INDONESIA)
   - 银行账号 No. Rek：2051075234
   - 国际银行代码 Swift Code：BNINIDJAXXX

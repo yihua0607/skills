@@ -9,7 +9,7 @@ Usage:
 The script reads quotation data from JSON, edits the bundled template XML, and outputs a .docx.
 Entity configuration is loaded from config/entities.json — no business data is hardcoded in this script.
 """
-import zipfile, os, sys, argparse, tempfile, shutil, json
+import zipfile, os, sys, argparse, tempfile, shutil, json, re
 from datetime import date
 from xml.etree import ElementTree as ET
 
@@ -26,6 +26,7 @@ from scripts.quotation_common import (
     format_price_display,
     vat_percent_label,
     load_entity_config,
+    price_magnitude_warnings,
     CURRENCY_NAMES,
 )
 from scripts.sync_payment_terms import extract_payment_terms, check_payment_terms_reasonableness
@@ -200,8 +201,10 @@ def main():
         tree.write(header_path, xml_declaration=True, encoding='UTF-8')
         print(f"✅ Updated template header for {cfg['company']}")
 
-    def make_rpr(font='FangSong', sz='24', bold=False, color=None, hint='eastAsia'):
+    def make_rpr(font=None, sz='24', bold=False, color=None, hint='eastAsia'):
         """Create a w:rPr element matching template pattern."""
+        if font is None:
+            font = FONT_NAME
         rpr = ET.Element(w('rPr'))
         rf = ET.SubElement(rpr, w('rFonts'))
         rf.set(w('hint'), hint)
@@ -229,8 +232,10 @@ def main():
 
         return rpr
 
-    def make_run(text, font='FangSong', sz='24', bold=False, color=None, hint='eastAsia'):
+    def make_run(text, font=None, sz='24', bold=False, color=None, hint='eastAsia'):
         """Create a w:r element. XML special characters are escaped automatically by ElementTree."""
+        if font is None:
+            font = FONT_NAME
         r = ET.Element(w('r'))
         r.append(make_rpr(font, sz, bold, color, hint))
         t = ET.SubElement(r, w('t'))
@@ -292,11 +297,11 @@ def main():
     def make_info_line(label, value):
         """Make a header info line matching template — unified pattern with space-padded label + colon + value."""
         r1 = ET.Element(w('r'))
-        r1.append(make_rpr('FangSong', '24'))
+        r1.append(make_rpr(FONT_NAME, SZ_BODY))
         t1 = ET.SubElement(r1, w('t'))
         t1.text = label
         r2 = ET.Element(w('r'))
-        r2.append(make_rpr('FangSong', '24'))
+        r2.append(make_rpr(FONT_NAME, SZ_BODY))
         t2 = ET.SubElement(r2, w('t'))
         t2.text = value
         return make_para([r1, r2], spacing_after=0, line='280')
@@ -304,7 +309,7 @@ def main():
     def make_section_header(text):
         """Make a section header like '1.服务内容' - bold, 14pt, black."""
         return make_para(
-            [make_run(text, sz='28', bold=True, color='000000')],
+            [make_run(text, sz=SZ_SECTION, bold=True, color='000000')],
             spacing_after=0, line='280'
         )
 
@@ -313,8 +318,8 @@ def main():
         Run-level styles are set on the runs; paragraph-level only sets spacing/alignment/border."""
         return make_para(
             [
-                make_run(text_part1, sz='38', bold=True, color='4472C4'),
-                make_run(text_part2, sz='36', bold=True, color='4472C4'),
+                make_run(text_part1, sz=SZ_TITLE_L, bold=True, color='4472C4'),
+                make_run(text_part2, sz=SZ_TITLE_S, bold=True, color='4472C4'),
             ],
             spacing_before=200, spacing_after=280, line='280',
             jc='center', indent_left=936, indent_right=936,
@@ -323,15 +328,16 @@ def main():
 
     # ====== TABLE BUILDING ======
     # Template table style
-    def make_tbl_pr():
-        """Create table properties matching template."""
+    def make_tbl_pr(total_width=None):
+        """Create table properties matching template.
+        total_width: overrides default 9790; set to sum of gridCol for consistent layout."""
         tblPr = ET.Element(w('tblPr'))
 
         style = ET.SubElement(tblPr, w('tblStyle'))
         style.set(w('val'), '11')
 
         tblW = ET.SubElement(tblPr, w('tblW'))
-        tblW.set(w('w'), '9790')
+        tblW.set(w('w'), str(total_width or 9790))
         tblW.set(w('type'), 'dxa')
 
         tblInd = ET.SubElement(tblPr, w('tblInd'))
@@ -412,7 +418,7 @@ def main():
         """Create a header cell with light blue background."""
         return make_tc(
             [make_para(
-                [make_run(text, sz='24', bold=True)],
+                [make_run(text, sz=SZ_BODY, bold=True)],
                 spacing_after=0, line='280', jc='center'
             )],
             width, fill='BDD6EE', valign='center'
@@ -420,13 +426,13 @@ def main():
 
     def make_data_cell(text, width, bold=False, jc=None, small=False, price=False):
         """Create a data cell. text can be a string or list of strings (each becomes a paragraph).
-        small=True: 10.5pt for notes/documents. price=True: 10pt for price column (compact to avoid wrapping)."""
+        small=True: 11pt for notes/documents (10.5pt for non-China). price=True: 10pt for price column."""
         if small:
-            sz = '21'  # 10.5pt
+            sz = SZ_SMALL
         elif price:
-            sz = '20'  # 10pt — compact to prevent wrapping in price column
+            sz = SZ_PRICE
         else:
-            sz = '24'  # 12pt body
+            sz = SZ_BODY
         if isinstance(text, list):
             paras = []
             for line in text:
@@ -451,10 +457,10 @@ def main():
 
         tc = make_tc(
             [make_para(
-                [make_run(text, sz='24', bold=True)],
+                [make_run(text, sz=SZ_BODY, bold=True)],
                 spacing_after=0, line='280', jc='center'
             )],
-            9790, span=5, valign='center'
+            sum(COLS), span=len(COLS), valign='center'
         )
         tr.append(tc)
         return tr
@@ -479,7 +485,14 @@ def main():
         )
 
     # ====== DATA ======
-    COLS = [555, 2514, 1050, 2000, 3671]  # Price col wider for currency symbol; notes narrower
+    # Template-specific column widths for service content table
+    COLS_MAP = {
+        'china': [431, 2714, 765, 1835, 4289],      # 序号, 服务内容, 数量, 价格, 备注
+        'jakarta': [431, 2714, 765, 1873, 4251],    # 序号, 服务内容, 数量, 价格, 备注
+        'deyin': [431, 2714, 695, 1847, 4347],      # 序号, 服务内容, 数量, 价格, 备注
+        'default': [431, 2714, 765, 1503, 4621],    # 其他模板使用默认值
+    }
+    COLS = COLS_MAP.get(template_key, COLS_MAP['default'])
     services_data = quotation_data['services']
     fee_details = quotation_data['fee_details']
     process_data = quotation_data['process_data']
@@ -537,24 +550,17 @@ def main():
 
     vat_label_pct = vat_percent_label(VAT_RATE)
     VAT_LABEL = f"增值税 {vat_label_pct}"
+    VAT_NOTE = None
     if template_key == 'thailand':
-        # 与泰国模板一致：注明税率以开票时泰国现行税率为准
-        VAT_LABEL = f"增值税 {vat_label_pct}（以开发票时泰国现行税率为准）"
+        # 与泰国模板一致：注明税率以开票时泰国现行税率为准；注释字号小于主体
+        VAT_NOTE = "（以开发票时泰国现行税率为准）"
 
     SUBTOTAL_D = sum(item['price_int'] for svc in services_data for item in svc['items'])
 
-    # Price magnitude guard — catch RMB/IDR data mix-up
+    # Price magnitude guard — catch RMB/IDR data mix-up (shared with validate_data.py)
     all_prices = [item['price_int'] for svc in services_data for item in svc['items']]
-    if CURRENCY == 'IDR' and any(p < 1_000_000 for p in all_prices):
-        print("⚠️  WARNING: Some prices appear too small for IDR (min: Rp 1,000,000). Did you forget to update services_data from a previous RMB quote?")
-    elif CURRENCY == 'VND' and any(p < 1_000_000 for p in all_prices if p > 0):
-        print("⚠️  WARNING: Some prices appear too small for VND (min: ₫ 1,000,000). Did you forget to update from a previous RMB/USD quote?")
-    elif CURRENCY == 'RMB' and any(p >= 1_000_000 for p in all_prices):
-        print("⚠️  WARNING: Some prices appear too large for RMB (>= 1,000,000). Did you forget to convert from IDR?")
-    elif CURRENCY == 'USD' and any(p < 50 for p in all_prices if p > 0):
-        print("⚠️  WARNING: Some prices appear too small for USD (min: $50). Did you forget to convert from IDR?")
-    elif CURRENCY == 'USD' and any(p >= 500_000 for p in all_prices):
-        print("⚠️  WARNING: Some prices appear too large for USD (>= 500,000). Did you forget to convert from IDR?")
+    for warning in price_magnitude_warnings(all_prices, CURRENCY):
+        print(f"⚠️  WARNING: {warning}")
 
     # Withholding tax: enabled via quotation.json `withholding_tax: true`
     # Only applied if entity config defines a withholding_tax_rate
@@ -593,13 +599,41 @@ def main():
     wht_info = f" | WHT: {fmt_price_int(WHT_D)}" if WITHHOLDING_ENABLED and WHT_D is not None else ""
     print(f"VAT: {fmt_price_vat(VAT_D)}{wht_info} | Total: {fmt_price_total(GRAND_TOTAL_D)}")
 
+    # Font sizes and name by template — China/Jakarta templates use 仿宋 10pt body; others use FangSong 12pt
+    if template_key in ('china', 'jakarta'):
+        FONT_NAME = '仿宋'   # Chinese font name (same as FangSong, but matches template XML)
+        SZ_BODY = '20'       # 10pt — info lines, service names, table headers, data cells
+        SZ_SMALL = '22'      # 11pt — notes, process, documents
+        SZ_PRICE = '20'      # 10pt — price column
+        SZ_SECTION = '28'    # 14pt bold — section headers (same for all)
+        SZ_TITLE_L = '40'    # 20pt bold — title part 1
+        SZ_TITLE_S = '40'    # 20pt bold — title part 2
+    else:
+        FONT_NAME = 'FangSong'
+        SZ_BODY = '24'       # 12pt
+        SZ_SMALL = '21'      # 10.5pt
+        SZ_PRICE = '20'      # 10pt
+        SZ_SECTION = '28'    # 14pt bold
+        SZ_TITLE_L = '38'    # 19pt bold
+        SZ_TITLE_S = '36'    # 18pt bold
+
+    SZ_BANK = '22'        # 11pt — 银行信息（所有模版统一）
+    SZ_VAT_MAIN = '20'    # 10pt — 增值税主体标签（所有模版统一）
+    SZ_VAT_NOTE = '16'    # 8pt — 增值税税率注释（如泰国「以开发票时泰国现行税率为准」）
+
     # ====== BUILD BODY CONTENT ======
     body_children = []
 
-    # 1. Header Info Lines
-    body_children.append(make_info_line('公司名称     ：', quote_meta.get('customer_name', '')))
-    body_children.append(make_info_line('联系人      ：', quote_meta.get('contact_name', '')))
-    body_children.append(make_info_line('联系方式     ：', quote_meta.get('contact_info', '')))
+    # 1. Header Info Lines — pad labels so colons align vertically.
+    # CJK chars are 2 display-width each; target 8 display-width before the colon.
+    def pad_label(text, target_dw=8):
+        """Pad text with ASCII spaces so its display width equals target_dw."""
+        current_dw = sum(2 if ord(c) > 127 else 1 for c in text)
+        return text + ' ' * max(0, target_dw - current_dw)
+
+    body_children.append(make_info_line(pad_label('公司名称') + '：', quote_meta.get('customer_name', '')))
+    body_children.append(make_info_line(pad_label('联系人') + '：', quote_meta.get('contact_name', '')))
+    body_children.append(make_info_line(pad_label('联系方式') + '：', quote_meta.get('contact_info', '')))
     # Quote date: CLI override → quote_meta → today
     quote_date_raw = args.quote_date or quote_meta.get('quote_date')
     if quote_date_raw:
@@ -614,8 +648,8 @@ def main():
             sys.exit(2)
     else:
         QUOTE_DATE = f"{date.today().year}年{date.today().month}月{date.today().day}日"
-    body_children.append(make_info_line('报价日期     ：', QUOTE_DATE))
-    body_children.append(make_info_line('合同号       ：', quote_meta.get('contract_no', '')))
+    body_children.append(make_info_line(pad_label('报价日期') + '：', QUOTE_DATE))
+    body_children.append(make_info_line(pad_label('合同号') + '：', quote_meta.get('contract_no', '')))
 
     # 2. Title: CLI override → quote_meta → defaults
     title_line1 = args.title_line1 or quote_meta.get('title_line1') or '印尼投资'
@@ -627,7 +661,7 @@ def main():
 
     # 4. Service Content Table
     tbl = ET.Element(w('tbl'))
-    tbl.append(make_tbl_pr())
+    tbl.append(make_tbl_pr(sum(COLS)))
     tbl.append(make_tbl_grid(COLS))
 
     # Header row
@@ -637,14 +671,14 @@ def main():
     ET.SubElement(hdr_trPr, w('trHeight')).set(w('hRule'), 'atLeast')
 
     price_label = f'价格\n({CURRENCY_NAMES.get(CURRENCY, CURRENCY)})'
-    hdr_texts = ['序号', '服务内容', '时间\n工作日', price_label, '备注']
+    hdr_texts = ['序号', '服务内容', '数量', price_label, '备注']
     for i, ht in enumerate(hdr_texts):
         lines = ht.split('\n')
         if len(lines) > 1:
             paras = []
             for line in lines:
                 paras.append(make_para(
-                    [make_run(line, sz='24', bold=True)],
+                    [make_run(line, sz=SZ_BODY, bold=True)],
                     spacing_after=0, line='280', jc='center'
                 ))
             hdr_row.append(make_tc(paras, COLS[i], fill='BDD6EE', valign='center'))
@@ -662,8 +696,8 @@ def main():
             price_display = format_price_display(item["price"], CURRENCY)
             cells = [
                 make_data_cell(str(seq), COLS[0], jc='center'),
-                make_data_cell(item['display_name'], COLS[1], bold=True),
-                make_data_cell(item['days'], COLS[2], jc='center'),
+                make_data_cell(item['name'], COLS[1]),
+                make_data_cell(str(item['quantity']), COLS[2], jc='center'),
                 make_data_cell(price_display, COLS[3], jc='right', price=True),
                 make_data_cell(item['note'].split('\n') if '\n' in item['note'] else item['note'], COLS[4], small=True),
             ]
@@ -680,7 +714,7 @@ def main():
         'thailand': ((1, 2, 2, 'left'), (0, 3, 2, 'left')),   # (小计行, 其他行)
     }
 
-    def summary_row(label, value_d, fmt='int', highlight=False):
+    def summary_row(label, value_d, fmt='int', highlight=False, note=None, label_sz=SZ_BODY):
         if fmt == 'vat':
             formatted = fmt_price_vat(value_d)
         elif fmt == 'total':
@@ -697,16 +731,19 @@ def main():
         cells = []
         if leading:
             cells.append(make_empty_cell(COLS[0]))
+        label_runs = [make_run(label, sz=label_sz)]
+        if note:
+            label_runs.append(make_run(note, sz=SZ_VAT_NOTE))
         cells.append(make_tc(
             [make_para(
-                [make_run(label, sz='24', bold=True)],
+                label_runs,
                 spacing_after=0, line='280', jc='right'
             )],
             label_w, span=label_span, valign='center'
         ))
         cells.append(make_tc(
             [make_para(
-                [make_run(formatted, sz='20', bold=True)],
+                [make_run(formatted, sz=SZ_PRICE)],
                 spacing_after=0, line='280', jc=amount_align
             )],
             amount_w, span=amount_span, valign='center',
@@ -717,7 +754,7 @@ def main():
     tbl.append(summary_row('小计', SUBTOTAL_D, fmt='int'))
     if DISCOUNT_D > 0:
         tbl.append(summary_row('优惠金额', DISCOUNT_D, fmt='int'))
-    tbl.append(summary_row(VAT_LABEL, VAT_D, fmt='vat'))
+    tbl.append(summary_row(VAT_LABEL, VAT_D, fmt='vat', note=VAT_NOTE, label_sz=SZ_VAT_MAIN))
     if WITHHOLDING_ENABLED and WHT_D is not None:
         wht_label = f"预扣税 {int(WITHHOLDING_TAX_RATE * 100)}%"
         tbl.append(summary_row(wht_label, -WHT_D, fmt='tax'))
@@ -728,48 +765,48 @@ def main():
     # 5. Notes section
     body_children.append(make_para('', spacing_after=0, line='280'))
     body_children.append(make_para(
-        [make_run('*备注：', sz='24', bold=True)],
+        [make_run('*备注：', sz=SZ_BODY, bold=True)],
         spacing_after=0, line='280'
     ))
 
     for note_text, indent in notes:
         body_children.append(make_para(
-            [make_run(note_text, sz='21')],
+            [make_run(note_text, sz=SZ_SMALL)],
             spacing_after=0, line='280', indent_left=indent
         ))
 
     for i, fd in enumerate(fee_details):
         body_children.append(make_para(
-            [make_run(f'{i+1}. {fd["name"]}', sz='21', bold=True)],
+            [make_run(f'{i+1}. {fd["name"]}', sz=SZ_SMALL, bold=True)],
             spacing_before=40, spacing_after=0, line='280', indent_left=360
         ))
         body_children.append(make_para(
-            [make_run('费用包含：', sz='21', bold=True)],
+            [make_run('费用包含：', sz=SZ_SMALL, bold=True)],
             spacing_after=0, line='280', indent_left=360
         ))
         for item in fd['include']:
             body_children.append(make_para(
-                [make_run(item, sz='21')],
+                [make_run(item, sz=SZ_SMALL)],
                 spacing_after=0, line='280', indent_left=540
             ))
         if fd['exclude']:
             body_children.append(make_para(
-                [make_run('费用不含：', sz='21', bold=True)],
+                [make_run('费用不含：', sz=SZ_SMALL, bold=True)],
                 spacing_after=0, line='280', indent_left=360
             ))
             for item in fd['exclude']:
                 body_children.append(make_para(
-                    [make_run(item, sz='21')],
+                    [make_run(item, sz=SZ_SMALL)],
                     spacing_after=0, line='280', indent_left=540
                 ))
         if fd['note']:
             body_children.append(make_para(
-                [make_run('备注：', sz='21', bold=True)],
+                [make_run('备注：', sz=SZ_SMALL, bold=True)],
                 spacing_after=0, line='280', indent_left=360
             ))
             for n_line in fd['note'].split('\n'):
                 body_children.append(make_para(
-                    [make_run(n_line, sz='21')],
+                    [make_run(n_line, sz=SZ_SMALL)],
                     spacing_after=0, line='280', indent_left=540
                 ))
 
@@ -781,7 +818,7 @@ def main():
         print(f'⚠️  WARNING: {warning}', file=sys.stderr)
     for term in payment_terms:
         body_children.append(make_para(
-            [make_run(term, sz='21')],
+            [make_run(term, sz=SZ_SMALL)],
             spacing_after=0, line='280', indent_left=360
         ))
 
@@ -790,32 +827,52 @@ def main():
     body_children.append(make_section_header('3.服务流程及交付材料清单'))
     body_children.append(make_para('', spacing_before=0, spacing_after=120))
 
-    PCOLS = [555, 2100, 3635, 3500]
+    # Build name→days lookup from services for the process table's "时间工作日" column
+    service_days_map = {}
+    for svc in services_data:
+        for item in svc['items']:
+            service_days_map[item['name']] = item['days']
+
+    PCOLS = [596, 2249, 872, 3679, 2671]  # 序号, 项目, 时间工作日, 流程, 服务完成后交付文件（与中国模板 gridCol 一致）
 
     ptbl = ET.Element(w('tbl'))
-    ptbl.append(make_tbl_pr())
+    ptbl.append(make_tbl_pr(sum(PCOLS)))
     ptbl.append(make_tbl_grid(PCOLS))
 
     phdr_row = ET.Element(w('tr'))
     phdr_trPr = ET.SubElement(phdr_row, w('trPr'))
     ET.SubElement(phdr_trPr, w('trHeight')).set(w('val'), '564')
     ET.SubElement(phdr_trPr, w('trHeight')).set(w('hRule'), 'atLeast')
-    for i, ht in enumerate(['序号', '项目', '流程', '服务完成后交付文件']):
-        phdr_row.append(make_hdr_cell(ht, PCOLS[i]))
+    for i, ht in enumerate(['序号', '项目', '时间\n工作日', '流程', '服务完成后交付文件']):
+        if '\n' in ht:
+            paras = []
+            for line in ht.split('\n'):
+                paras.append(make_para(
+                    [make_run(line, sz=SZ_BODY, bold=True)],
+                    spacing_after=0, line='280', jc='center'
+                ))
+            phdr_row.append(make_tc(paras, PCOLS[i], fill='BDD6EE', valign='center'))
+        else:
+            phdr_row.append(make_hdr_cell(ht, PCOLS[i]))
     ptbl.append(phdr_row)
 
     for i, pd in enumerate(process_data):
         deliverables = pd['deliverables']
         if isinstance(deliverables, list) and len(deliverables) > 1:
-            deliverables = [
-                item if item.startswith('•') else f"• {item}"
+            # Only add numbers if not already numbered
+            already_numbered = any(
+                isinstance(item, str) and re.match(r'^\d+[.、）)]\s*', item)
                 for item in deliverables
-            ]
+            )
+            if not already_numbered:
+                deliverables = [f"{j}. {item}" for j, item in enumerate(deliverables, 1)]
+        days_val = service_days_map.get(pd['name'], '-')
         cells = [
             make_data_cell(str(i+1), PCOLS[0], jc='center'),
-            make_data_cell(pd['name'], PCOLS[1], bold=True),
-            make_data_cell(pd['process'], PCOLS[2], small=True),
-            make_data_cell(deliverables, PCOLS[3], small=True),
+            make_data_cell(pd['name'], PCOLS[1]),
+            make_data_cell(days_val, PCOLS[2], jc='center'),
+            make_data_cell(pd['process'], PCOLS[3], small=True),
+            make_data_cell(deliverables, PCOLS[4], small=True),
         ]
         ptbl.append(make_table_row(cells))
 
@@ -826,10 +883,10 @@ def main():
     body_children.append(make_section_header('4.所需材料清单'))
     body_children.append(make_para('', spacing_before=0, spacing_after=120))
 
-    DCOLS = [555, 2400, 6835]
+    DCOLS = [654, 2219, 7229]  # 序号, 项目, 所需材料（与中国模板 gridCol 一致）
 
     dtbl = ET.Element(w('tbl'))
-    dtbl.append(make_tbl_pr())
+    dtbl.append(make_tbl_pr(sum(DCOLS)))
     dtbl.append(make_tbl_grid(DCOLS))
 
     dhdr_row = ET.Element(w('tr'))
@@ -843,7 +900,7 @@ def main():
     for i, dd in enumerate(doc_data):
         cells = [
             make_data_cell(str(i+1), DCOLS[0], jc='center'),
-            make_data_cell(dd['name'], DCOLS[1], bold=True),
+            make_data_cell(dd['name'], DCOLS[1]),
             make_data_cell(dd['docs'], DCOLS[2], small=True),
         ]
         dtbl.append(make_table_row(cells))
@@ -852,7 +909,7 @@ def main():
 
     for i, note_text in enumerate(doc_notes_text):
         body_children.append(make_para(
-            [make_run(note_text, sz='21')],
+            [make_run(note_text, sz=SZ_SMALL)],
             spacing_before=80 if i == 0 else 0, spacing_after=0, line='280'
         ))
 
@@ -862,22 +919,22 @@ def main():
 
     body_children.append(make_para('', spacing_before=120, spacing_after=0))
     body_children.append(make_para(
-        [make_run('所有款项汇到指定的银行账户，银行账户信息如下：', sz='24', bold=True)],
+        [make_run('所有款项汇到指定的银行账户，银行账户信息如下：', sz=SZ_BANK, bold=True)],
         spacing_after=0, line='280'
     ))
     for line in selected_bank_lines:
         body_children.append(make_para(
-            [make_run(line, sz='21')],
+            [make_run(line, sz=SZ_BANK)],
             spacing_after=0, line='280'
         ))
 
     body_children.append(make_para('', spacing_before=40, spacing_after=0))
     body_children.append(make_para(
-        [make_run('对于客户提供的纸质或电子版的证件、资料，应负有妥善保管和保密义务，不得将上述秘密泄露给任何第三方或用于其他用途。', sz='21')],
+        [make_run('对于客户提供的纸质或电子版的证件、资料，应负有妥善保管和保密义务，不得将上述秘密泄露给任何第三方或用于其他用途。', sz=SZ_SMALL)],
         spacing_after=0, line='280'
     ))
     body_children.append(make_para(
-        [make_run('此报价从报价日起生效30天。', sz='21')],
+        [make_run('此报价从报价日起生效30天。', sz=SZ_SMALL)],
         spacing_after=0, line='280'
     ))
 
@@ -917,7 +974,7 @@ def main():
             cm.set(w('w'), '80')
             cm.set(w('type'), 'dxa')
         tc.append(make_para(
-            [make_run(text, sz='24', bold=True)],
+            [make_run(text, sz=SZ_BODY, bold=True)],
             spacing_after=0, line='280'
         ))
         sig_row1.append(tc)
@@ -941,7 +998,7 @@ def main():
             cm.set(w('w'), '80')
             cm.set(w('type'), 'dxa')
         tc.append(make_para(
-            [make_run(text, sz='21')],
+            [make_run(text, sz=SZ_SMALL)],
             spacing_after=0, line='280'
         ))
         sig_row2.append(tc)

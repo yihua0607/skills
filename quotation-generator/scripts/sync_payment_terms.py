@@ -95,11 +95,11 @@ def _parse_money_amounts(text):
         return any(start < used_end and end > used_start for used_start, used_end in occupied)
 
     currency_before = re.compile(
-        r'(?:￥|¥|\$|Rp|RMB|CNY|USD|IDR)\s*([0-9][0-9,]*(?:\.\d+)?)',
+        r'(?:S\$|￥|¥|\$|Rp|฿|₫|RMB|CNY|USD|IDR|SGD|THB|VND)\s*([0-9][0-9,]*(?:\.\d+)?)',
         flags=re.I,
     )
     currency_after = re.compile(
-        r'([0-9][0-9,]*(?:\.\d+)?)\s*(?:元|人民币|美元|美金|印尼盾)',
+        r'([0-9][0-9,]*(?:\.\d+)?)\s*(?:元|人民币|美元|美金|印尼盾|泰铢|越南盾|新币)',
         flags=re.I,
     )
 

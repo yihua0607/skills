@@ -55,24 +55,24 @@ class TestQuotationCommon(unittest.TestCase):
         self.assertEqual(amounts['vat'], Decimal('60.00'))
 
     def test_format_price_int(self):
-        self.assertEqual(format_price_int(1000000, 'IDR'), 'Rp 1,000,000')
-        self.assertEqual(format_price_int(1000000, 'RMB'), '￥1,000,000')
-        self.assertEqual(format_price_int(1000000, 'USD'), '$ 1,000,000')
+        self.assertEqual(format_price_int(1000000, 'IDR'), '1,000,000')
+        self.assertEqual(format_price_int(1000000, 'RMB'), '1,000,000')
+        self.assertEqual(format_price_int(1000000, 'USD'), '1,000,000')
 
     def test_format_price_vat_rmb(self):
-        self.assertEqual(format_price_vat(Decimal('540.00'), 'RMB'), '￥540.00')
+        self.assertEqual(format_price_vat(Decimal('540.00'), 'RMB'), '540')
 
     def test_format_price_vat_usd(self):
-        self.assertEqual(format_price_vat(Decimal('60.00'), 'USD'), '$ 60.00')
+        self.assertEqual(format_price_vat(Decimal('60.00'), 'USD'), '60')
 
     def test_format_price_vat_idr(self):
-        self.assertEqual(format_price_vat(1100000, 'IDR'), 'Rp 1,100,000')
+        self.assertEqual(format_price_vat(1100000, 'IDR'), '1,100,000')
 
     def test_format_price_total_rmb(self):
-        self.assertEqual(format_price_total(Decimal('9540.00'), 'RMB'), '￥9,540.00')
+        self.assertEqual(format_price_total(Decimal('9540.00'), 'RMB'), '9,540')
 
     def test_format_price_total_usd(self):
-        self.assertEqual(format_price_total(Decimal('1060.00'), 'USD'), '$ 1,060.00')
+        self.assertEqual(format_price_total(Decimal('1060.00'), 'USD'), '1,060')
 
     def test_vat_percent_label(self):
         self.assertEqual(vat_percent_label(Decimal('0.06')), '6%')

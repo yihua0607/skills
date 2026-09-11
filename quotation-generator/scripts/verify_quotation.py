@@ -132,6 +132,23 @@ def detect_currency_from_tables(tables):
     return None
 
 
+def detect_currency_from_header(tables):
+    """从价格列头「价格 (币种名)」识别文档币种（价格已不带货币符号）。"""
+    name_to_code = {
+        '人民币': 'RMB', '印尼盾': 'IDR', '美元': 'USD',
+        '新币': 'SGD', '越南盾': 'VND', '泰铢': 'THB',
+    }
+    for tbl in tables:
+        for row in tbl.findall(w('tr')):
+            for cell in row.findall(w('tc')):
+                txt = ''.join((t.text or '') for t in cell.findall('.//' + w('t')))
+                if '价格' in txt:
+                    for name, code in name_to_code.items():
+                        if name in txt:
+                            return code
+    return None
+
+
 def detect_entity(paragraph_texts, entity_config):
     """Detect signing entity from document text by matching bank lines."""
     bank_section = find_bank_info_section(paragraph_texts)
@@ -409,7 +426,7 @@ def check_fonts(document_root):
         if rfonts is not None:
             for attr_key in ['ascii', 'hAnsi', 'eastAsia', 'cs']:
                 val = rfonts.get(w(attr_key))
-                if val and val not in ('FangSong', 'Times New Roman'):
+                if val and val not in ('FangSong', '仿宋', 'Times New Roman'):
                     non_fangsong.add(val)
     return sorted(non_fangsong)
 
@@ -607,17 +624,17 @@ def cross_check_with_data(document_amounts, data_path, currency):
 
 
 def main():
+    entity_config, _ = load_entity_config()
+
     parser = argparse.ArgumentParser(description='Verify a generated quotation .docx')
     parser.add_argument('--input', required=True,
                         help='Path to the generated .docx file')
     parser.add_argument('--data', default=None,
                         help='Optional: input quotation data JSON for cross-checking')
     parser.add_argument('--entity', default=None,
-                        choices=['jakarta', 'beijing', 'xian', 'shenzhen', 'shanghai', 'shanghai_new', 'singapore', 'deyin', 'thailand', 'vietnam'],
-                        help='Expected signing entity (for config-based checks')
+                        choices=list(entity_config.keys()),
+                        help='Expected signing entity (for config-based checks)')
     args = parser.parse_args()
-
-    entity_config, _ = load_entity_config()
 
     input_path = os.path.abspath(args.input)
     if not os.path.exists(input_path):
@@ -656,9 +673,6 @@ def main():
         doc_body = doc_root.find(w('body'))
         para_texts = extract_paragraph_texts(doc_root)
         tables = doc_body.findall('.//' + w('tbl')) if doc_body is not None else []
-        currency = detect_currency_from_tables(tables) or detect_currency(para_texts)
-        print(f"货币: {currency}")
-
         actual_entity = detect_entity(para_texts, entity_config)
         cli_entity = args.entity
         meta_entity = None
@@ -668,6 +682,18 @@ def main():
             if isinstance(meta, dict):
                 meta_entity = meta.get('applicable_entity')
                 expected_currency = meta.get('target_currency')
+
+        # 文档币种从价格列头「价格 (币种名)」识别（价格已不带货币符号），旧版带符号文档回退符号检测。
+        doc_currency = detect_currency_from_header(tables) or detect_currency_from_tables(tables) or detect_currency(para_texts)
+
+        # 金额解析所用币种以权威来源为准：_meta.target_currency（--data）> --entity 默认币种 > 文档识别。
+        if expected_currency:
+            currency = expected_currency
+        elif args.entity and args.entity in entity_config:
+            currency = entity_config[args.entity].get('currency', 'RMB')
+        else:
+            currency = doc_currency or 'RMB'
+        print(f"货币: {currency}")
 
         detected_entity = cli_entity or actual_entity or meta_entity
         if detected_entity:
@@ -690,9 +716,9 @@ def main():
                 if left_value != right_value:
                     print(f"❌ {left_label} '{left_value}' 与 {right_label} '{right_value}' 不一致")
                     all_issues.append(f"{left_label} '{left_value}' ≠ {right_label} '{right_value}'")
-        if expected_currency and expected_currency != currency:
-            print(f"❌ 文档币种 '{currency}' 与数据目标币种 '{expected_currency}' 不一致")
-            all_issues.append(f"文档币种 '{currency}' ≠ 数据目标币种 '{expected_currency}'")
+        if expected_currency and doc_currency and doc_currency != expected_currency:
+            print(f"❌ 文档币种 '{doc_currency}' 与数据目标币种 '{expected_currency}' 不一致")
+            all_issues.append(f"文档币种 '{doc_currency}' ≠ 数据目标币种 '{expected_currency}'")
 
         # ── 1. Header vs bank info consistency ──
         header_xml_path = os.path.join(unpack_dir, 'word', 'header1.xml')

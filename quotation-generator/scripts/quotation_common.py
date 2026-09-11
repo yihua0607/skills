@@ -11,15 +11,6 @@ import sys
 from decimal import Decimal, ROUND_HALF_UP
 
 
-CURRENCY_SYMBOLS = {
-    'RMB': '￥',
-    'IDR': 'Rp',
-    'USD': '$',
-    'SGD': 'S$',
-    'THB': '฿',
-    'VND': '₫',
-}
-
 CURRENCY_NAMES = {
     'RMB': '人民币',
     'IDR': '印尼盾',
@@ -46,7 +37,7 @@ ENTITY_CONFIG_PATH = os.path.join(_SKILL_DIR, 'config', 'entities.json')
 
 REQUIRED_ENTITY_FIELDS = (
     'template', 'company', 'header_lines', 'vat_rate', 'currency',
-    'allowed_currencies', 'payment_terms', 'bank_lines',
+    'allowed_currencies', 'bank_lines',
 )
 
 
@@ -86,6 +77,13 @@ def load_entity_config():
     if isinstance(meta, dict):
         universal_excludes = meta.get('universal_excludes', [])
 
+    # 付款条件：仅 jakarta/deyin 显式声明「收到发票后 100%」，其余主体
+    # 共用 _meta.payment_terms_default，未显式声明时在此注入。
+    default_terms = meta.get('payment_terms_default') if isinstance(meta, dict) else None
+    if default_terms:
+        for cfg in entities.values():
+            cfg.setdefault('payment_terms', default_terms)
+
     return entities, universal_excludes
 
 
@@ -107,11 +105,6 @@ def _to_decimal(value):
     if isinstance(value, Decimal):
         return value
     return Decimal(str(value))
-
-
-def _currency_symbol(currency):
-    """Return currency symbol for display."""
-    return CURRENCY_SYMBOLS.get(currency, currency)
 
 
 def calculate_amounts(subtotal, discount, vat_rate, currency, withholding_tax_rate=None):
@@ -178,15 +171,12 @@ def calculate_amounts(subtotal, discount, vat_rate, currency, withholding_tax_ra
 
 
 def format_price_display(price_str, currency):
-    """Add currency symbol to an already-formatted price string.
+    """Return price string without currency symbol.
 
-    price_str: comma-formatted integer string, e.g. '115,000'.
-    currency: 'RMB' (no space after symbol), 'IDR' or 'USD' (space after symbol).
+    报价单价格一律不带货币符号（￥/Rp/$/S$/฿/₫）：币种由价格列头「价格 (币种名)」
+    标注，不在每个金额上重复附加符号。currency 参数保留以兼容调用方签名。
     """
-    symbol = _currency_symbol(currency)
-    if currency == 'RMB':
-        return f'{symbol}{price_str}'
-    return f'{symbol} {price_str}'
+    return price_str
 
 
 def format_price_int(val, currency):
@@ -223,3 +213,27 @@ def format_price_total(val, currency):
 def vat_percent_label(vat_rate):
     """Return human-readable VAT percentage like '6%' or '1%'."""
     return f"{float(vat_rate) * 100:g}%"
+
+
+def price_magnitude_warnings(prices, currency):
+    """Return warnings when prices look like the wrong magnitude for the currency.
+
+    Shared by validate_data.py (preflight) and build_quotation.py (build time)
+    to catch RMB/IDR/USD mix-ups. Only positive prices are considered — a 0
+    price marks BPO/percentage pricing and must not trip the "too small" checks.
+    """
+    warnings = []
+    positive = [p for p in prices if p > 0]
+    if not positive:
+        return warnings
+    if currency == 'IDR' and any(p < 1_000_000 for p in positive):
+        warnings.append('Some prices appear too small for IDR (min: Rp 1,000,000). Did you forget to update from a previous RMB quote?')
+    if currency == 'VND' and any(p < 1_000_000 for p in positive):
+        warnings.append('Some prices appear too small for VND (min: ₫ 1,000,000). Did you forget to update from a previous RMB/USD quote?')
+    if currency == 'RMB' and any(p >= 1_000_000 for p in positive):
+        warnings.append('Some prices appear too large for RMB (>= 1,000,000). Did you forget to convert from IDR?')
+    if currency == 'USD' and any(p < 50 for p in positive):
+        warnings.append('Some prices appear too small for USD (min: $50). Did you forget to convert from IDR?')
+    if currency == 'USD' and any(p >= 500_000 for p in positive):
+        warnings.append('Some prices appear too large for USD (>= 500,000). Did you forget to convert from IDR?')
+    return warnings

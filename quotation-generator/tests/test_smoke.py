@@ -241,7 +241,7 @@ class TestQuotationSmoke(unittest.TestCase):
                 all_text = ''.join(t.text or '' for t in root.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t'))
                 self.assertIn(edited_term, all_text)
                 self.assertNotIn(old_term, all_text)
-                self.assertIn('￥1,000', all_text)
+                self.assertIn('1,000', all_text)
 
     def test_rebuild_stops_without_overwriting_when_payment_terms_cannot_be_extracted(self):
         """A rebuild must fail closed when visible payment terms cannot be preserved."""
