@@ -1,6 +1,6 @@
 ---
 name: quotation-generator
-version: 1.16.0
+version: 1.16.1
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
@@ -66,7 +66,7 @@ last_updated: "2026-09-13"
 
 页眉公司名称对齐方式：由可选字段 `header_company_align`（`right`/`center`，缺省 `center`）控制。公司名过长时居中会把左端推进左侧 logo（logo 浮动锚定在同一段落带内），这些主体一律右对齐——右对齐把公司名右端钉在右页边距上，从而让出 logo 的空间：`thailand`、`vietnam`、`egypt`、`singapore` 已设 `right`，其余主体居中。新增主体若公司名超过约 25 字符，先渲染确认不压 logo 再决定。页眉 Web 行下方不留空行、蓝线分隔线位置不变，均由 build 脚本自动处理，无需配置。
 
-⚠️ **SWIFT CODE 注意**：生成美元（USD）报价前，检查 `config/entities.json` 中该实体**所选币种对应**的银行信息（有 `bank_lines_by_currency` 时取对应币种，否则取 `bank_lines`）是否含 SWIFT CODE（beijing、xian、shenzhen 目前缺少，用户可能提出疑问）。若用户要求补全，向用户确认具体 SWIFT CODE 后更新 `config/entities.json`，不要凭记忆假设。
+⚠️ **SWIFT CODE 注意**：生成美元（USD）报价前，检查 `config/entities.json` 中该实体**所选币种对应**的银行信息（有 `bank_lines_by_currency` 时取对应币种，否则取 `bank_lines`）是否含 SWIFT CODE（现状：仅 beijing 没有，按刘旭 2026-09-13 确认北京不需要 SWIFT CODE，别再提示用户补全；xian/shenzhen/shanghai/shanghai_new 等均已配置，见 `references/entity-bank-info.md`）。若用户要求补全，向用户确认具体 SWIFT CODE 后更新 `config/entities.json`，不要凭记忆假设。
 
 标题、日期、客户、合同号、付款条件写入 `quote_meta`。
 
@@ -298,7 +298,7 @@ validate error → 必须修复，warning → 判断后处理。`--entity` 必�
 | `build` 报 `Invalid quotation data` | 先跑 `validate_data.py` 定位字段并修正 |
 | `verify` 失败 | 除付款方式等客户最终处理内容外，优先修改 `quotation.json` 后重新 build；不要手改其他 `.docx` 内容 |
 | 用户质疑价格/计算公式 | 展示完整计算链路：API 总价 → 汇率 → 换算后总价 → 增值税 → 含税总计，每步附带来源值 |
-| 美元报价缺少 SWIFT CODE | beijing/xian/shenzhen 未配置 SWIFT CODE → 提醒用户并提供参考 `references/entity-bank-info.md`；用户确认后可补入 `config/entities.json` |
+| 美元报价缺少 SWIFT CODE | 仅 beijing 无 SWIFT CODE，且系有意不配（2026-09-13 用户确认），客户问起就说明该主体不使用 SWIFT；其他主体若确有缺口 → 向用户确认具体 SWIFT 后补入 `config/entities.json`，参考 `references/entity-bank-info.md` |
 | 服务币种不支持（如 MYR、HKD） | 手动按『汇率与换算』公式换算，原币种原价写入 `note`；见 `references/edge-cases.md`「服务币种不支持」 |
 | 新加坡元（SGD）报价 | 服务币种即 SGD 时直接填价；从 IDR/RMB 换算至 SGD 需用户提供汇率后手动换算（`源币种价格 ÷ 汇率`），`_meta` 注明 |
 | `fee_details[].include` 不能为空 | validate 报 `include is required and must be a non-empty list` → API 未列费用包含项的服务，至少填 `"山海图服务费"` |
