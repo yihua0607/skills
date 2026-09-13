@@ -21,8 +21,16 @@ All calculations use Decimal for financial precision.
 """
 import argparse
 import json
+import os
 import sys
 from decimal import Decimal, ROUND_HALF_UP
+
+# 确保直接 `python3 scripts/convert_currency.py` 运行时能 import scripts.quotation_common。
+_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _SKILL_DIR not in sys.path:
+    sys.path.insert(0, _SKILL_DIR)
+
+from scripts.quotation_common import normalize_currency_code, currency_symbol
 
 
 def convert_single(amount: Decimal, from_currency: str, to_currency: str,
@@ -169,9 +177,8 @@ def batch_convert(query_result_path: str, to_currency: str) -> list:
         rateToCny_raw = svc.get('人民币兑换服务币种汇率')
         rateToUsd_raw = svc.get('美元兑换服务币种汇率')
 
-        # Normalize currency codes
-        currency_map = {'RMB': 'RMB', 'CNY': 'RMB', 'IDR': 'IDR', 'USD': 'USD', 'VND': 'VND'}
-        from_norm = currency_map.get(from_currency, from_currency)
+        # Normalize currency codes (e.g. CNY -> RMB)
+        from_norm = normalize_currency_code(from_currency)
 
         if price is None or from_norm is None:
             results.append({
@@ -231,9 +238,8 @@ def format_output(result: dict) -> str:
     note = result.get('note', '')
 
     # Format with currency symbols
-    symbol_map = {'RMB': '￥', 'IDR': 'Rp', 'USD': '$', 'VND': '₫'}
-    from_sym = symbol_map.get(from_c, '')
-    to_sym = symbol_map.get(to_c, '')
+    from_sym = currency_symbol(from_c)
+    to_sym = currency_symbol(to_c)
 
     if from_c == to_c:
         return f"{prefix}{note}"

@@ -28,6 +28,11 @@ from scripts.quotation_common import (
     load_entity_config,
     price_magnitude_warnings,
     CURRENCY_NAMES,
+    is_target_currency,
+    A4_PAGE_W,
+    A4_PAGE_H,
+    A4_MARGINS,
+    is_process_time_disclaimer,
 )
 from scripts.sync_payment_terms import extract_payment_terms, check_payment_terms_reasonableness
 
@@ -42,6 +47,8 @@ TEMPLATES = {
     'deyin': os.path.join(SKILL_DIR, 'assets', '报价单模版-德音人力.docx'),
     'thailand': os.path.join(SKILL_DIR, 'assets', '报价单模板-泰国公司.docx'),
     'vietnam': os.path.join(SKILL_DIR, 'assets', '报价单模版-越南公司.docx'),
+    'egypt': os.path.join(SKILL_DIR, 'assets', '报价单模版-埃及公司.docx'),
+    'malaysia': os.path.join(SKILL_DIR, 'assets', '报价单模版-马来西亚公司.docx'),
 }
 
 ENTITY_CONFIG, _ = load_entity_config()
@@ -74,9 +81,8 @@ def main():
                         help='Signing entity (required): jakarta/beijing/xian/shenzhen/shanghai/shanghai_new/singapore/deyin/thailand/vietnam')
     parser.add_argument('--output', default=None, help='Output .docx path (default: CWD)')
     parser.add_argument('--data', required=True, help='Quotation data file (.json)')
-    parser.add_argument('--vat-rate', type=float, default=None, help='VAT rate override (e.g. 0.06, 0.01, 0.11)')
-    parser.add_argument('--title-line1', default=None, help='Title first line (default: quote_meta.title_line1 or 印尼投资)')
-    parser.add_argument('--title-line2', default=None, help='Title second line (default: quote_meta.title_line2 or 综合服务方案)')
+    parser.add_argument('--title-line1', default=None, help='Title first line (default: quote_meta.title_line1 or 报价单)')
+    parser.add_argument('--title-line2', default=None, help='Title second line (default: quote_meta.title_line2 or 服务方案)')
     parser.add_argument('--quote-date', default=None, help='Quote date override (default: today, format: YYYY-MM-DD)')
     parser.add_argument('--preserve-payment-from', default=None,
                         help='Existing .docx whose visible payment terms should be preserved for this rebuild')
@@ -109,6 +115,26 @@ def main():
         'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
         'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
         'mc': 'http://schemas.openxmlformats.org/markup-compatibility/2006',
+        # DrawingML / VML / OOXML extension namespaces used in template headers
+        # (anchored logo, decorative shapes). Registering them keeps stdlib
+        # ElementTree from renaming prefixes to ns0/ns1 on round-trip, which
+        # would break mc:Ignorable and mc:Choice@Requires references.
+        'wp': 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing',
+        'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+        'pic': 'http://schemas.openxmlformats.org/drawingml/2006/picture',
+        'wps': 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape',
+        'w14': 'http://schemas.microsoft.com/office/word/2010/wordml',
+        'w15': 'http://schemas.microsoft.com/office/word/2012/wordml',
+        'wp14': 'http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing',
+        'wpc': 'http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas',
+        'wpg': 'http://schemas.microsoft.com/office/word/2010/wordprocessingGroup',
+        'wpi': 'http://schemas.microsoft.com/office/word/2010/wordprocessingInk',
+        'wne': 'http://schemas.microsoft.com/office/word/2006/wordml',
+        'w10': 'urn:schemas-microsoft-com:office:word',
+        'wpsCustomData': 'http://www.wps.cn/officeDocument/2013/wpsCustomData',
+        'v': 'urn:schemas-microsoft-com:vml',
+        'o': 'urn:schemas-microsoft-com:office:office',
+        'm': 'http://schemas.openxmlformats.org/officeDocument/2006/math',
     }
 
     W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -124,10 +150,74 @@ def main():
     def paragraph_text(paragraph):
         return ''.join((t.text or '') for t in paragraph.findall('.//' + w('t')))
 
-    def replace_paragraph_text(paragraph, value):
+    def _set_run_size(rpr, sz):
+        """Set (or add) w:sz / w:szCs on an rPr element. ``sz`` is half-points."""
+        for tag in (w('sz'), w('szCs')):
+            el = rpr.find(tag)
+            if el is None:
+                el = ET.SubElement(rpr, tag)
+            el.set(w('val'), sz)
+
+    # Schema order of w:sectPr children (ECMA-376). Used to insert a missing
+    # pgSz/pgMar at a position Word accepts, rather than appending it at the end.
+    _SECTPR_ORDER = (
+        'headerReference', 'footerReference', 'footnotePr', 'endnotePr', 'type',
+        'pgSz', 'pgMar', 'paperSrc', 'pgBorders', 'lnNumType', 'pgNumType', 'cols',
+        'formProt', 'vAlign', 'noEndnote', 'titlePg', 'textDirection', 'bidi',
+        'rtlGutter', 'docGrid', 'printerSettings', 'sectPrChange',
+    )
+
+    def _ensure_sectpr_child(sectPr, tag):
+        """Return sectPr's `tag` child, creating it at its schema-correct position."""
+        existing = sectPr.find(w(tag))
+        if existing is not None:
+            return existing
+        el = ET.Element(w(tag))
+        rank = _SECTPR_ORDER.index(tag)
+        for i, child in enumerate(sectPr):
+            name = child.tag.split('}')[-1]
+            if name in _SECTPR_ORDER and _SECTPR_ORDER.index(name) > rank:
+                sectPr.insert(i, el)
+                return el
+        sectPr.append(el)
+        return el
+
+    def normalize_page_setup(sectPr):
+        """Force A4 portrait + canonical margins on a template's sectPr.
+
+        The template's sectPr is otherwise copied verbatim, so a drifted or
+        non-A4 template would silently produce a quotation that doesn't print
+        on A4. Returns the page size the template actually had, so the caller
+        can log the truth instead of asserting A4 unconditionally.
+        """
+        pgSz = _ensure_sectpr_child(sectPr, 'pgSz')
+        original = (pgSz.get(w('w')), pgSz.get(w('h')))
+        pgSz.set(w('w'), str(A4_PAGE_W))
+        pgSz.set(w('h'), str(A4_PAGE_H))
+        # Absent means portrait; a stale landscape flag would contradict A4 w/h.
+        pgSz.attrib.pop(w('orient'), None)
+
+        pgMar = _ensure_sectpr_child(sectPr, 'pgMar')
+        for name, value in A4_MARGINS.items():
+            pgMar.set(w(name), str(value))
+        return original
+
+    def _set_paragraph_jc(paragraph, jc):
+        """Set (or add) w:jc on a paragraph's pPr, e.g. 'center' or 'right'."""
+        pPr = paragraph.find(w('pPr'))
+        if pPr is None:
+            pPr = ET.SubElement(paragraph, w('pPr'))
+        jc_el = pPr.find(w('jc'))
+        if jc_el is None:
+            jc_el = ET.SubElement(pPr, w('jc'))
+        jc_el.set(w('val'), jc)
+
+    def replace_paragraph_text(paragraph, value, sz=None):
         """Replace text runs in a paragraph while preserving drawing/image runs.
         Finds the first text run's rPr and uses it for the new text content.
-        Falls back to make_run(value, sz='24') if no text run rPr found."""
+        Falls back to make_run(value, sz='24') if no text run rPr found.
+        When ``sz`` (half-point string, e.g. '16') is given, the run's font size
+        is overridden to that value — used to shrink over-long header addresses."""
         pPr = paragraph.find(w('pPr'))
         # Find the first TEXT run's rPr (w:r with w:t but no w:drawing)
         orig_rpr = None
@@ -147,23 +237,30 @@ def main():
             new_children.append(child)  # Preserve drawing runs and other elements
         # Add a single text run with the new value
         if orig_rpr is not None:
+            rpr_copy = ET.fromstring(ET.tostring(orig_rpr))
+            if sz is not None:
+                _set_run_size(rpr_copy, sz)
             new_run = ET.Element(w('r'))
-            new_run.append(ET.fromstring(ET.tostring(orig_rpr)))
+            new_run.append(rpr_copy)
             t = ET.SubElement(new_run, w('t'))
             t.text = str(value)
             new_children.append(new_run)
         else:
-            new_children.append(make_run(value, sz='24'))
+            new_children.append(make_run(value, sz=sz if sz is not None else '24'))
         # Rebuild paragraph
         paragraph.clear()
         for child in new_children:
             paragraph.append(child)
         return True
 
-    def apply_china_header(unpack_dir, entity_key):
-        """Update the China template header for entities with defined header lines.
-        Replaces entire text content of existing paragraphs rather than just
-        the last w:t element, so it works correctly even with multi-run text."""
+    def apply_header(unpack_dir, entity_key):
+        """Update the template header from entity-config ``header_lines``.
+
+        Replaces the entire text content of existing text paragraphs — preserving
+        logo/drawing runs, hyperlink fields, and decorative shapes — rather than
+        just the last w:t element, so it works correctly even with multi-run text.
+        Applied to every entity so the header text is driven solely by
+        config/entities.json ``header_lines``."""
         cfg = ENTITY_CONFIG.get(entity_key, {})
         header_lines = cfg.get('header_lines')
         if not header_lines:
@@ -172,7 +269,7 @@ def main():
 
         header_path = os.path.join(unpack_dir, 'word', 'header1.xml')
         if not os.path.exists(header_path):
-            print("⚠️  WARNING: word/header1.xml not found; cannot update China template header.")
+            print("⚠️  WARNING: word/header1.xml not found; cannot update template header.")
             return
 
         tree = ET.parse(header_path)
@@ -180,23 +277,42 @@ def main():
         paragraphs = [p for p in list(root) if p.tag == w('p')]
         text_paragraphs = [p for p in paragraphs if paragraph_text(p).strip()]
 
+        header_addr_size = cfg.get('header_address_size_pt')
+        addr_sz = str(int(round(header_addr_size * 2))) if header_addr_size else None
+
         lines_to_write = [l for l in header_lines if l]
         for i, line in enumerate(lines_to_write):
+            # Company name is line 0, Web line is last — the address lines sit in
+            # between. Shrink an over-long header address to the configured size.
+            is_address = 0 < i < len(lines_to_write) - 1
+            sz_override = addr_sz if (is_address and addr_sz) else None
             if i < len(text_paragraphs):
-                replace_paragraph_text(text_paragraphs[i], line)
+                replace_paragraph_text(text_paragraphs[i], line, sz=sz_override)
             else:
-                new_p = make_para([make_run(line, sz='24')], spacing_after=0, line='280')
+                new_p = make_para([make_run(line, sz=sz_override or '24')], spacing_after=0, line='280')
                 root.append(new_p)
                 text_paragraphs.append(new_p)
 
         surplus_start = len(lines_to_write)
-        # Don't remove surplus paragraphs — clear their text to preserve
-        # the header's overall spacing, so the decorative blue line stays
-        # at the same position as the original template.
+        # Clear text from surplus text paragraphs (only reachable if a template
+        # has more text paragraphs than header_lines), turning them empty.
         for p in text_paragraphs[surplus_start:]:
             for run in p.findall(w('r')):
                 if run.find(w('t')) is not None and run.find(w('drawing')) is None:
                     p.remove(run)
+
+        # Company name alignment: Singapore & Egypt right-aligned, all others
+        # centered (the user's template layout rule).
+        company_align = cfg.get('header_company_align', 'center')
+        if company_align and text_paragraphs:
+            _set_paragraph_jc(text_paragraphs[0], company_align)
+
+        # Every template uses one compact layout: the text paragraphs are followed
+        # by exactly one paragraph carrying the floating blue separator line. That
+        # paragraph's own height is what keeps the body's first line clear of the
+        # line, and the line's anchor is paragraph-relative — so resizing, removing
+        # or adding paragraphs here moves the line onto the body. Only the header
+        # text above is ever rewritten.
 
         tree.write(header_path, xml_declaration=True, encoding='UTF-8')
         print(f"✅ Updated template header for {cfg['company']}")
@@ -485,20 +601,34 @@ def main():
         )
 
     # ====== DATA ======
-    # Template-specific column widths for service content table
-    COLS_MAP = {
-        'china': [431, 2714, 765, 1835, 4289],      # 序号, 服务内容, 数量, 价格, 备注
-        'jakarta': [431, 2714, 765, 1873, 4251],    # 序号, 服务内容, 数量, 价格, 备注
-        'deyin': [431, 2714, 695, 1847, 4347],      # 序号, 服务内容, 数量, 价格, 备注
-        'default': [431, 2714, 765, 1503, 4621],    # 其他模板使用默认值
-    }
-    COLS = COLS_MAP.get(template_key, COLS_MAP['default'])
+    # Service content table column widths — unified across all templates
+    # (序号, 服务内容, 数量, 价格, 备注)
+    COLS = [431, 2714, 765, 1835, 4289]
     services_data = quotation_data['services']
     fee_details = quotation_data['fee_details']
     process_data = quotation_data['process_data']
     doc_data = quotation_data['doc_data']
-    notes = quotation_data['notes']
-    doc_notes_text = quotation_data['doc_notes_text']
+
+    # 服务名展示：带上产品编码（code-name），无编码则原样；fee/process/doc 按 name 反查。
+    code_by_name = {}
+    for svc in services_data:
+        for item in svc['items']:
+            code_by_name[item['name']] = item.get('code', '')
+
+    def with_code(name):
+        code = code_by_name.get(name, '')
+        return f'{code}-{name}' if code else name
+
+    # 服务内容表没有办理时间列，其下 *备注： 区块不得出现办理时间免责声明。validate 会拦截，
+    # 这里再兜底剔除一次，保证任何来源（沿用旧 quotation.json / 手工编辑）的数据都不会把它印进去。
+    notes = []
+    for note_text, note_indent in quotation_data['notes']:
+        if is_process_time_disclaimer(note_text):
+            print(f"⚠️  WARNING: 已剔除备注中的办理时间免责声明（服务内容表无办理时间列）: {note_text}",
+                  file=sys.stderr)
+            continue
+        notes.append((note_text, note_indent))
+
     quote_meta = quotation_data.get('quote_meta', {})
     DISCOUNT_AMOUNT_INT = quotation_data['discount_amount']
 
@@ -532,7 +662,7 @@ def main():
         )
         sys.exit(2)
     CURRENCY = meta.get('target_currency') or entity_cfg['currency']
-    if CURRENCY not in ('IDR', 'RMB', 'USD', 'SGD', 'THB', 'VND'):
+    if not is_target_currency(CURRENCY):
         print(f"❌ Unsupported target currency: {CURRENCY}", file=sys.stderr)
         sys.exit(2)
     allowed_currencies = entity_cfg.get('allowed_currencies', [entity_cfg['currency']])
@@ -543,13 +673,11 @@ def main():
             file=sys.stderr,
         )
         sys.exit(2)
-    if args.vat_rate is not None:
-        VAT_RATE = float(args.vat_rate)
-    else:
-        VAT_RATE = float(entity_cfg['vat_rate'])
+    VAT_RATE = float(entity_cfg['vat_rate'])
 
     vat_label_pct = vat_percent_label(VAT_RATE)
-    VAT_LABEL = f"增值税 {vat_label_pct}"
+    TAX_LABEL = entity_cfg.get('tax_label', '增值税')
+    VAT_LABEL = f"{TAX_LABEL} {vat_label_pct}"
     VAT_NOTE = None
     if template_key == 'thailand':
         # 与泰国模板一致：注明税率以开票时泰国现行税率为准；注释字号小于主体
@@ -594,28 +722,19 @@ def main():
     def fmt_price_total(val_d):
         return format_price_total(val_d, CURRENCY)
 
-    print(f"Entity: {entity} | Currency: {CURRENCY} | VAT: {vat_label_pct}")
+    print(f"Entity: {entity} | Currency: {CURRENCY} | {TAX_LABEL}: {vat_label_pct}")
     print(f"Subtotal: {fmt_price_int(SUBTOTAL_D)} | Discount: {fmt_price_int(DISCOUNT_D)} | Discounted: {fmt_price_int(DISCOUNTED_D)}")
     wht_info = f" | WHT: {fmt_price_int(WHT_D)}" if WITHHOLDING_ENABLED and WHT_D is not None else ""
-    print(f"VAT: {fmt_price_vat(VAT_D)}{wht_info} | Total: {fmt_price_total(GRAND_TOTAL_D)}")
+    print(f"{TAX_LABEL}: {fmt_price_vat(VAT_D)}{wht_info} | Total: {fmt_price_total(GRAND_TOTAL_D)}")
 
-    # Font sizes and name by template — China/Jakarta templates use 仿宋 10pt body; others use FangSong 12pt
-    if template_key in ('china', 'jakarta'):
-        FONT_NAME = '仿宋'   # Chinese font name (same as FangSong, but matches template XML)
-        SZ_BODY = '20'       # 10pt — info lines, service names, table headers, data cells
-        SZ_SMALL = '22'      # 11pt — notes, process, documents
-        SZ_PRICE = '20'      # 10pt — price column
-        SZ_SECTION = '28'    # 14pt bold — section headers (same for all)
-        SZ_TITLE_L = '40'    # 20pt bold — title part 1
-        SZ_TITLE_S = '40'    # 20pt bold — title part 2
-    else:
-        FONT_NAME = 'FangSong'
-        SZ_BODY = '24'       # 12pt
-        SZ_SMALL = '21'      # 10.5pt
-        SZ_PRICE = '20'      # 10pt
-        SZ_SECTION = '28'    # 14pt bold
-        SZ_TITLE_L = '38'    # 19pt bold
-        SZ_TITLE_S = '36'    # 18pt bold
+    # Font sizes and name — unified across all templates: 仿宋 10pt body
+    FONT_NAME = '仿宋'   # Chinese font name (same as FangSong, but matches template XML)
+    SZ_BODY = '20'       # 10pt — info lines, service names, table headers, data cells
+    SZ_SMALL = '22'      # 11pt — notes, process, documents
+    SZ_PRICE = '20'      # 10pt — price column
+    SZ_SECTION = '28'    # 14pt bold — section headers
+    SZ_TITLE_L = '40'    # 20pt bold — title part 1
+    SZ_TITLE_S = '40'    # 20pt bold — title part 2
 
     SZ_BANK = '22'        # 11pt — 银行信息（所有模版统一）
     SZ_VAT_MAIN = '20'    # 10pt — 增值税主体标签（所有模版统一）
@@ -652,8 +771,8 @@ def main():
     body_children.append(make_info_line(pad_label('合同号') + '：', quote_meta.get('contract_no', '')))
 
     # 2. Title: CLI override → quote_meta → defaults
-    title_line1 = args.title_line1 or quote_meta.get('title_line1') or '印尼投资'
-    title_line2 = args.title_line2 or quote_meta.get('title_line2') or '综合服务方案'
+    title_line1 = args.title_line1 or quote_meta.get('title_line1') or '报价单'
+    title_line2 = args.title_line2 or quote_meta.get('title_line2') or '服务方案'
     body_children.append(make_title(title_line1, title_line2))
 
     # 3. Section Header
@@ -696,7 +815,7 @@ def main():
             price_display = format_price_display(item["price"], CURRENCY)
             cells = [
                 make_data_cell(str(seq), COLS[0], jc='center'),
-                make_data_cell(item['name'], COLS[1]),
+                make_data_cell(with_code(item['name']), COLS[1]),
                 make_data_cell(str(item['quantity']), COLS[2], jc='center'),
                 make_data_cell(price_display, COLS[3], jc='right', price=True),
                 make_data_cell(item['note'].split('\n') if '\n' in item['note'] else item['note'], COLS[4], small=True),
@@ -777,7 +896,7 @@ def main():
 
     for i, fd in enumerate(fee_details):
         body_children.append(make_para(
-            [make_run(f'{i+1}. {fd["name"]}', sz=SZ_SMALL, bold=True)],
+            [make_run(f'{i+1}. {with_code(fd["name"])}', sz=SZ_SMALL, bold=True)],
             spacing_before=40, spacing_after=0, line='280', indent_left=360
         ))
         body_children.append(make_para(
@@ -824,7 +943,7 @@ def main():
 
     # 7. Process & Deliverables Table
     body_children.append(make_para('', spacing_before=0, spacing_after=0))
-    process_title = '3.服务流程、时间及交付文件清单' if template_key in ('jakarta', 'china', 'deyin') else '3.服务流程及交付材料清单'
+    process_title = '3.服务流程、时间及交付文件清单'
     body_children.append(make_section_header(process_title))
     body_children.append(make_para('', spacing_before=0, spacing_after=120))
 
@@ -844,7 +963,7 @@ def main():
     phdr_trPr = ET.SubElement(phdr_row, w('trPr'))
     ET.SubElement(phdr_trPr, w('trHeight')).set(w('val'), '564')
     ET.SubElement(phdr_trPr, w('trHeight')).set(w('hRule'), 'atLeast')
-    process_headers = ['序号', '服务内容', '办理时间', '流程', '服务完成后交付文件'] if template_key in ('jakarta', 'china', 'deyin') else ['序号', '项目', '时间\n工作日', '流程', '服务完成后交付文件']
+    process_headers = ['序号', '服务内容', '办理时间', '流程', '服务完成后交付文件']
     for i, ht in enumerate(process_headers):
         if '\n' in ht:
             paras = []
@@ -871,7 +990,7 @@ def main():
         days_val = service_days_map.get(pd['name'], '-')
         cells = [
             make_data_cell(str(i+1), PCOLS[0], jc='center'),
-            make_data_cell(pd['name'], PCOLS[1]),
+            make_data_cell(with_code(pd['name']), PCOLS[1]),
             make_data_cell(days_val, PCOLS[2], jc='center'),
             make_data_cell(pd['process'], PCOLS[3], small=True),
             make_data_cell(deliverables, PCOLS[4], small=True),
@@ -882,7 +1001,7 @@ def main():
 
     # 8. Required Documents Table
     body_children.append(make_para('', spacing_before=0, spacing_after=0))
-    doc_title = '4.所需资料及信息清单' if template_key in ('jakarta', 'china', 'deyin') else '4.所需材料清单'
+    doc_title = '4.所需资料及信息清单'
     body_children.append(make_section_header(doc_title))
     body_children.append(make_para('', spacing_before=0, spacing_after=120))
 
@@ -896,7 +1015,7 @@ def main():
     dhdr_trPr = ET.SubElement(dhdr_row, w('trPr'))
     ET.SubElement(dhdr_trPr, w('trHeight')).set(w('val'), '564')
     ET.SubElement(dhdr_trPr, w('trHeight')).set(w('hRule'), 'atLeast')
-    doc_headers = ['序号', '服务内容', '所需资料及信息'] if template_key in ('jakarta', 'china', 'deyin') else ['序号', '项目', '所需材料']
+    doc_headers = ['序号', '服务内容', '所需资料及信息']
     for i, ht in enumerate(doc_headers):
         dhdr_row.append(make_hdr_cell(ht, DCOLS[i]))
     dtbl.append(dhdr_row)
@@ -904,47 +1023,54 @@ def main():
     for i, dd in enumerate(doc_data):
         cells = [
             make_data_cell(str(i+1), DCOLS[0], jc='center'),
-            make_data_cell(dd['name'], DCOLS[1]),
+            make_data_cell(with_code(dd['name']), DCOLS[1]),
             make_data_cell(dd['docs'], DCOLS[2], small=True),
         ]
         dtbl.append(make_table_row(cells))
 
     body_children.append(dtbl)
 
-    if doc_notes_text and template_key in ('jakarta', 'china', 'deyin'):
+    # 9. Footer — 标准备注（固定 9 条，全部签约主体一致），带数字序号
+    footer_notes = [
+        '以上办理时间为收集齐所需资料及信息开始的官方办理时间，法定节假日及办证政府机构休息日不算入办理时间。',
+        '甲方必须提供办理服务所需资料及信息，如因资料及信息不足或提供不及时耽误了办理进度，则所产生的额外费用由甲方承担。',
+        '以上服务价格和办理时间按照甲方提供的信息及资料进行评估，如发生变化，则根据最新信息及资料进行价格和时间调整。',
+        '未列入本报价单或不属于本报价单服务范围内的服务，将另行报价。',
+        '本报价单中所列“（如需）”服务，须在办理过程中根据甲方实际需求及情况重新评估，最终服务价格、数量及办理时间以评估结果为准。',
+        '如果当地法规发生变化，乙方有权调整价格及办理时间。',
+    ]
+
+    body_children.append(make_para('', spacing_before=0, spacing_after=0))
+    body_children.append(make_para(
+        [make_run('备注：', sz=SZ_BODY, bold=True)],
+        spacing_before=80, spacing_after=0, line='280'
+    ))
+    for idx, note_text in enumerate(footer_notes, 1):
         body_children.append(make_para(
-            [make_run('备注：', sz=SZ_BODY, bold=True)],
-            spacing_before=80, spacing_after=0, line='280'
-        ))
-    for i, note_text in enumerate(doc_notes_text):
-        body_children.append(make_para(
-            [make_run(note_text, sz=SZ_SMALL)],
-            spacing_before=(80 if i == 0 and template_key not in ('jakarta', 'china', 'deyin') else 0),
+            [make_run(f'{idx}.{note_text}', sz=SZ_SMALL)],
             spacing_after=0, line='280'
         ))
 
-    # 9. Footer - Bank Info — loaded from entity config
+    # 第 7 条 — 银行账户信息（loaded from entity config）
     bank_lines_by_currency = entity_cfg.get('bank_lines_by_currency', {})
     selected_bank_lines = bank_lines_by_currency.get(CURRENCY, entity_cfg['bank_lines'])
 
-    body_children.append(make_para('', spacing_before=120, spacing_after=0))
     body_children.append(make_para(
-        [make_run('所有款项汇到指定的银行账户，银行账户信息如下：', sz=SZ_BANK, bold=True)],
+        [make_run('7.所有款项汇到指定的银行账户，银行账户信息如下：', sz=SZ_BANK, bold=True)],
         spacing_after=0, line='280'
     ))
     for line in selected_bank_lines:
         body_children.append(make_para(
             [make_run(line, sz=SZ_BANK, bold=True)],
-            spacing_after=0, line='280'
+            spacing_after=0, line='280', indent_left=420
         ))
 
-    body_children.append(make_para('', spacing_before=40, spacing_after=0))
     body_children.append(make_para(
-        [make_run('对于客户提供的纸质或电子版的证件、资料，应负有妥善保管和保密义务，不得将上述秘密泄露给任何第三方或用于其他用途。', sz=SZ_SMALL)],
+        [make_run('8.本公司对客户提供的纸质或电子版的证件、资料负有妥善保管和保密义务，不得将上述秘密泄露给任何第三方或用于其他用途。', sz=SZ_SMALL)],
         spacing_after=0, line='280'
     ))
     body_children.append(make_para(
-        [make_run('此报价从报价日起生效30天。', sz=SZ_SMALL)],
+        [make_run('9.此报价从报价日起生效30天。', sz=SZ_SMALL)],
         spacing_after=0, line='280'
     ))
 
@@ -1024,9 +1150,8 @@ def main():
             zf.extractall(UNPACK)
         print(f"  Unpacked to {UNPACK}")
 
-        # Apply header override for China/Singapore template entities
-        if template_key in ('china', 'singapore', 'thailand'):
-            apply_china_header(UNPACK, entity)
+        # Apply header override from entity config for every template
+        apply_header(UNPACK, entity)
 
         # Extract sectPr from the original template before editing
         orig_doc_path = os.path.join(UNPACK, 'word', 'document.xml')
@@ -1036,13 +1161,18 @@ def main():
         orig_sectPr = orig_body.find(f'{{{W}}}sectPr')
 
         if orig_sectPr is not None:
-            pgSz = orig_sectPr.find(f'{{{W}}}pgSz')
-            if pgSz is not None:
-                print(f"  Original page: {pgSz.get(f'{{{W}}}w')} x {pgSz.get(f'{{{W}}}h')} DXA (A4)")
+            original_size = normalize_page_setup(orig_sectPr)
+            if original_size == (str(A4_PAGE_W), str(A4_PAGE_H)):
+                print(f"✅ Page setup: A4 portrait ({A4_PAGE_W}x{A4_PAGE_H} DXA), "
+                      f"标准页边距 — 可直接 A4 打印")
+            else:
+                print(f"  ⚠️  模板页面为 {original_size[0]} x {original_size[1]} DXA，"
+                      f"非 A4；已强制归一为 A4 {A4_PAGE_W}x{A4_PAGE_H} + 标准页边距")
             sectPr_xml = ET.tostring(orig_sectPr, encoding='unicode')
         else:
             sectPr_xml = None
             print("  ⚠️  WARNING: No sectPr found in template!")
+            print("  ⚠️  无法确认页面尺寸；生成的报价单可能不适合 A4 打印，请检查模板")
 
         # Remove existing body children
         orig_body.clear()
@@ -1054,7 +1184,6 @@ def main():
         # Restore sectPr (must be last child of body for valid OOXML)
         if sectPr_xml:
             orig_body.append(ET.fromstring(sectPr_xml))
-            print("✅ Restored sectPr → A4 paper, printable")
 
         # Write back document.xml
         orig_tree.write(orig_doc_path, xml_declaration=True, encoding='UTF-8')
@@ -1073,7 +1202,7 @@ def main():
         shutil.rmtree(UNPACK, ignore_errors=True)
 
     print(f"✅ Done: {OUTPUT}")
-    print(f"费用: 小计={fmt_price_int(SUBTOTAL_D)} | 优惠={fmt_price_int(DISCOUNT_D)} | VAT={fmt_price_vat(VAT_D)} | 总计={fmt_price_total(GRAND_TOTAL_D)}")
+    print(f"费用: 小计={fmt_price_int(SUBTOTAL_D)} | 优惠={fmt_price_int(DISCOUNT_D)} | {TAX_LABEL}={fmt_price_vat(VAT_D)} | 总计={fmt_price_total(GRAND_TOTAL_D)}")
 
 if __name__ == '__main__':
     main()

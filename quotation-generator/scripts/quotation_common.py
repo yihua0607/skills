@@ -7,29 +7,56 @@ verify_quotation.py to ensure consistent behaviour across the pipeline.
 """
 import json
 import os
+import re
 import sys
 from decimal import Decimal, ROUND_HALF_UP
 
 
-CURRENCY_NAMES = {
-    'RMB': '人民币',
-    'IDR': '印尼盾',
-    'USD': '美元',
-    'SGD': '新币',
-    'VND': '越南盾',
-    'MYR': '马币',
-    'THB': '泰铢',
-    'EGP': '埃及镑',
+# 币种元数据（唯一权威来源）：code -> (中文名, 符号, 是否目标币种, 是否整数币种)。
+# 目标币种 = 报价单可直接用于签约/收款的币种（签约主体本币 + RMB/USD）。
+CURRENCIES = {
+    'RMB': ('人民币', '￥', True, False),
+    'IDR': ('印尼盾', 'Rp', True, True),
+    'USD': ('美元',   '$',  True, False),
+    'SGD': ('新币',   'S$', True, False),
+    'THB': ('泰铢',   '฿',  True, False),
+    'VND': ('越南盾', '₫',  True, True),
+    'EGP': ('埃及镑', 'E£', True, False),
+    'MYR': ('马币',   'RM', True, False),
 }
 
-# 无小数的币种（整数报价）：印尼盾、越南盾。
-# 其余币种（RMB/USD/THB/SGD 等）税金与总计保留 2 位小数。
-INTEGER_ONLY_CURRENCIES = ('IDR', 'VND')
+# 源币种别名：统一归一化到已知 code（如 API 返回 CNY 时视作 RMB）。
+CURRENCY_ALIASES = {
+    'CNY': 'RMB',
+}
+
+CURRENCY_NAMES = {code: info[0] for code, info in CURRENCIES.items()}
+CURRENCY_NAME_TO_CODE = {info[0]: code for code, info in CURRENCIES.items()}
+INTEGER_ONLY_CURRENCIES = tuple(code for code, info in CURRENCIES.items() if info[3])
+TARGET_CURRENCIES = tuple(code for code, info in CURRENCIES.items() if info[2])
 
 
 def currency_has_decimals(currency):
     """币种的金额是否保留 2 位小数。仅 IDR/VND 省略小数，其余一律保留。"""
     return currency not in INTEGER_ONLY_CURRENCIES
+
+
+def currency_symbol(code):
+    """返回币种符号（如 '￥'/'Rp'/'S$'）；未知 code 返回空串。"""
+    info = CURRENCIES.get(code)
+    return info[1] if info else ''
+
+
+def normalize_currency_code(code):
+    """按别名归一化源币种 code（如 CNY -> RMB）；未知 code 原样返回。"""
+    if code is None:
+        return None
+    return CURRENCY_ALIASES.get(code, code)
+
+
+def is_target_currency(code):
+    """code 是否为报价单支持的签约/收款币种（本币 + RMB/USD）。"""
+    return code in TARGET_CURRENCIES
 
 # Path to entity configuration, resolved relative to this module's location.
 _SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,6 +66,39 @@ REQUIRED_ENTITY_FIELDS = (
     'template', 'company', 'header_lines', 'vat_rate', 'currency',
     'allowed_currencies', 'bank_lines',
 )
+
+# Canonical A4 page geometry, in DXA (twips; 20 DXA = 1pt). Every entity template
+# carries exactly this setup, and build normalizes to it so a drifted or non-A4
+# template can never produce a quotation that won't print on A4. build enforces it;
+# verify re-checks it independently.
+A4_PAGE_W = 11906
+A4_PAGE_H = 16838
+A4_MARGINS = {
+    'top': 679,      # 33.95pt
+    'right': 1133,   # 56.65pt
+    'bottom': 1155,  # 57.75pt
+    'left': 1440,    # 72pt
+    'header': 567,   # 28.35pt from the paper edge
+    'footer': 340,   # 17pt from the paper edge
+    'gutter': 0,
+}
+# Width of the text column the body flows into: 11906 - 1440 - 1133 = 9333 DXA.
+A4_TEXT_WIDTH = A4_PAGE_W - A4_MARGINS['left'] - A4_MARGINS['right']
+
+# 「服务内容」表只有 序号/服务内容/数量/价格/备注 五列，没有办理时间列；紧跟在它下面的
+# *备注： 区块因此不能出现「上述办理时间不包括……」这类免责声明——办理时间在更靠后的
+# 流程表里，「上述」指不到任何内容，页脚备注第 1 条也已覆盖该说明。
+# API 的服务「备注」段普遍带这句样板文，Agent 汇总基本信息时容易顺手带进 notes：
+# validate 报错拦下、build 兜底剔除并告警、verify 复核成稿，三处共用这一判定。
+#
+# 「办理时间」与「不包括」之间允许少量修饰（如「并不包括」），但不允许隔得很远——
+# 那种句子是恰好在同一段里既提到时间又提到不含项，不是免责声明，不该被误杀。
+PROCESS_TIME_DISCLAIMER_RE = re.compile(r'办理时间[^。；;\n]{0,10}不包括')
+
+
+def is_process_time_disclaimer(text):
+    """text 是否为「办理时间不包括……」类免责声明（notes 中不允许出现）。"""
+    return bool(PROCESS_TIME_DISCLAIMER_RE.search(text or ''))
 
 
 def load_entity_config():

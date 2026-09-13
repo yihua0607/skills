@@ -16,6 +16,8 @@
 | deyin (PT DEIN TALENT SOLUTIONS) | CENAIDJAXXX / BNINIDJAXXX | ✅ 已配置 |
 | thailand (SHAN HAI MAP (THAILAND) CO., LTD.) | KASITHBK | ✅ 已配置 |
 | vietnam (CÔNG TY TNHH SHANHAIMAP VIỆT NAM) | BFTVVNVX | ✅ 已配置 |
+| egypt (SHAN HAI MAP FOR CONSULTING CO) | QNBAEGCXXXX | ✅ 已配置 |
+| malaysia (SHANHAIMAP SDN. BHD.) | OCBCMYKL | ✅ 已配置 |
 
 ## 完整银行信息
 
@@ -115,3 +117,33 @@
   - 银行账号 Tài khoản：104 799 1540 (USD)
   - 国际银行代码 Mã ngân hàng quốc tế (SWIFT)：BFTVVNVX
   - 分行地址 Địa chỉ：Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội
+
+### egypt
+- 公司名称: SHAN HAI MAP FOR CONSULTING CO
+- 公司地址: 埃及新开罗90号大街TOP90 1层134室
+- **EGP 账户**：
+  - Bank Name: Qatar National Bank (QNB) - 00037
+  - Bank Branch: 00177
+  - SWIFT CODE: QNBAEGCXXXX
+  - Beneficiary Name: SHAN HAI MAP FOR CONSULTING CO
+  - Account Number: 20317533309
+  - IBAN: EG470037017708182031753330905
+  - Bank Address: Top 90 Mall, unit 133&134, S Teseen, New Cairo 1, Cairo Governorate, EGYPT
+- **USD / RMB 账户**（共用同一账号）：
+  - Bank Name: Qatar National Bank (QNB) - 00037
+  - Bank Branch: 00177
+  - SWIFT CODE: QNBAEGCXXXX
+  - Beneficiary Name: SHAN HAI MAP FOR CONSULTING CO
+  - Account Number: 20317533321
+  - IBAN: EG690037017708402031753332119
+  - Bank Address: Top 90 Mall, unit 133&134, S Teseen, New Cairo 1, Cairo Governorate, EGYPT
+
+### malaysia
+- 公司名称: SHANHAIMAP SDN. BHD.
+- 公司地址: Suite 16-03A & 05, Level 16, Wisma UOA II No. 21, Jalan Pinang, 50450 Kuala Lumpur, Malaysia
+- Account Name: SHANHAIMAP SDN. BHD.
+- Account Number: 7011647369
+- Beneficiary Bank: OCBC Bank (Malaysia) Bhd
+- Branch: KL MAIN
+- Swift code: OCBCMYKL
+- Bank Address: INFINITY TOWER, JALAN SS 6/3, KELANA JAYA, 47301 PETALING JAYA SELANGOR MALAYSIA

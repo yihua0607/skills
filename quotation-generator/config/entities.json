@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "_comment": "签约主体配置文件。新增实体只需添加新 key 并确保包含所有 required_entity_fields。payment_terms 缺省时回退 payment_terms_default（jakarta/deyin 用「收到发票后 100%」变体，其余主体共用默认）。universal_excludes 是常见公共费用不含项的种子示例，用于提示去重，不是完整白名单；实际应按多个服务共同项和业务语义抽取公共不含项到 notes。",
+    "_comment": "签约主体配置文件。新增实体只需添加新 key 并确保包含所有 required_entity_fields。payment_terms 缺省时回退 payment_terms_default（jakarta/deyin 用「收到发票后 100%」变体，其余主体共用默认）。universal_excludes 是常见公共费用不含项的种子示例，用于提示去重，不是完整白名单；实际应按多个服务共同项和业务语义抽取公共不含项到 notes。header_address_size_pt 可选：页眉公司地址过长、会换行时设地址字号（单位 pt，如 8），缺省沿用模板原字号。header_company_align 可选：页眉公司名称对齐方式（center/right），缺省 center；公司名过长、居中会压住左侧 logo 的主体（泰国/越南/埃及/新加坡）设 right。tax_label 可选：汇总表税金行标签（缺省「增值税」），马来西亚设「销售与服务税」（SST），税率仍走 vat_rate。",
     "required_entity_fields": [
       "template",
       "company",
@@ -24,9 +24,11 @@
     "company": "PT. SHAN HAI MAP",
     "header_lines": [
       "PT. SHAN HAI MAP",
-      "Jakarta, Indonesia",
-      ""
+      "OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5",
+      "JL. LINGKAR LUAR BARAT BLOK A NO.1 JAKARTA BARAT 11740",
+      "Web: www.shanhaimap.com"
     ],
+    "header_address_size_pt": 8,
     "vat_rate": 0.11,
     "currency": "IDR",
     "allowed_currencies": ["IDR", "RMB", "USD"],
@@ -147,9 +149,11 @@
     "company": "SHAN HAI MAP CONSULTANCY PTE.LTD",
     "header_lines": [
       "SHAN HAI MAP CONSULTANCY PTE.LTD",
-      "1 North Bridge Road, #06-14 High Street Centre, SINGAPORE 179094",
+      "1 North Bridge Road, #06-14 High Street Centre,",
+      "SINGAPORE 179094",
       "Web: www.shanhaimap.com"
     ],
+    "header_company_align": "right",
     "vat_rate": 0.0,
     "currency": "SGD",
     "allowed_currencies": ["SGD", "RMB", "USD"],
@@ -167,7 +171,13 @@
   "deyin": {
     "template": "deyin",
     "company": "PT DEIN TALENT SOLUTIONS",
-    "header_lines": [],
+    "header_lines": [
+      "PT DEIN TALENT SOLUTIONS",
+      "OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5",
+      "JL. LINGKAR LUAR BARAT BLOK A NO.1 JAKARTA BARAT 11740",
+      "Web: www.shanhaimap.com"
+    ],
+    "header_address_size_pt": 8,
     "vat_rate": 0.11,
     "currency": "IDR",
     "allowed_currencies": ["IDR", "USD"],
@@ -175,11 +185,11 @@
       "甲方应在收到发票后 5 个工作日内支付合同金额的 100%。"
     ],
     "bank_lines": [
-      "银行名称 Nama Bank：BNI (BANK NEGARA INDONESIA)",
-      "银行账号 No. Rek：2051075234",
-      "国际银行代码 Swift Code：BNINIDJAXXX",
+      "银行名称 Nama Bank：BCA (BANK CENTRAL ASIA)",
+      "银行账号 No. Rek：6802 044 409",
+      "国际银行代码 Swift Code：CENAIDJAXXX",
       "账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS",
-      "分行名称 Nama Cabang：BNI APL TOWER Grogol petamburan Jakarta Barat"
+      "分行名称 Nama Cabang：BCA KCU BINTARO"
     ],
     "bank_lines_by_currency": {
       "IDR": [
@@ -207,6 +217,7 @@
       "Khwaeng Makkasan, Khet Ratchathewi, Bangkok 10400",
       "Web: www.shanhaimap.com"
     ],
+    "header_company_align": "right",
     "vat_rate": 0.07,
     "withholding_tax_rate": 0.03,
     "currency": "THB",
@@ -222,39 +233,119 @@
   "vietnam": {
     "template": "vietnam",
     "company": "CÔNG TY TNHH SHANHAIMAP VIỆT NAM",
-    "header_lines": [],
+    "header_lines": [
+      "CÔNG TY TNHH SHANHAIMAP VIỆT NAM",
+      "Tầng 6, Số 89 Phan Đình Phùng, Phường Phú Nhuận,TPHCM.",
+      "越南胡志明市富润坊潘廷逢街 89 号 6 楼",
+      "Web: www.shanhaimap.com"
+    ],
+    "header_company_align": "right",
     "vat_rate": 0.08,
     "currency": "VND",
     "allowed_currencies": ["VND", "RMB", "USD"],
     "bank_lines": [
-      "银行名称 Tên Ngân hàng：Ngân hàng TMCP Ngoại thương Việt Nam - Chi nhánh Thăng Long",
-      "账号名称 Chủ tài khoản：Cong ty TNHH Shanhaimap Viet Nam",
-      "银行账号 Tài khoản：104 799 1200 (VND)",
-      "国际银行代码 Mã ngân hàng quốc tế (SWIFT)：BFTVVNVX",
-      "分行地址 Địa chỉ：Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội"
+      "银行名称：Joint Stock Commercial Bank for Foreign Trade of Vietnam - Thang Long Branch",
+      "账号名称：Cong ty TNHH Shanhaimap Viet Nam",
+      "银行账号：104 799 1200 (VND)",
+      "国际银行代码 Swift Code：BFTVVNVXXXX",
+      "分行地址：Pvoil Phu Tho Building, No. 148 Hoang Quoc Viet, Nghia Tan Ward, Cau Giay District, Hanoi City"
     ],
     "bank_lines_by_currency": {
       "VND": [
-        "银行名称 Tên Ngân hàng：Ngân hàng TMCP Ngoại thương Việt Nam - Chi nhánh Thăng Long",
-        "账号名称 Chủ tài khoản：Cong ty TNHH Shanhaimap Viet Nam",
-        "银行账号 Tài khoản：104 799 1200 (VND)",
-        "国际银行代码 Mã ngân hàng quốc tế (SWIFT)：BFTVVNVX",
-        "分行地址 Địa chỉ：Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội"
+        "银行名称：Joint Stock Commercial Bank for Foreign Trade of Vietnam - Thang Long Branch",
+        "账号名称：Cong ty TNHH Shanhaimap Viet Nam",
+        "银行账号：104 799 1200 (VND)",
+        "国际银行代码 Swift Code：BFTVVNVXXXX",
+        "分行地址：Pvoil Phu Tho Building, No. 148 Hoang Quoc Viet, Nghia Tan Ward, Cau Giay District, Hanoi City"
       ],
       "USD": [
-        "银行名称 Tên Ngân hàng：Ngân hàng TMCP Ngoại thương Việt Nam - Chi nhánh Thăng Long",
-        "账号名称 Chủ tài khoản：Cong ty TNHH Shanhaimap Viet Nam",
-        "银行账号 Tài khoản：104 799 1540 (USD)",
-        "国际银行代码 Mã ngân hàng quốc tế (SWIFT)：BFTVVNVX",
-        "分行地址 Địa chỉ：Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội"
+        "银行名称：Joint Stock Commercial Bank for Foreign Trade of Vietnam - Thang Long Branch",
+        "账号名称：Cong ty TNHH Shanhaimap Viet Nam",
+        "银行账号：104 799 1540 (USD)",
+        "国际银行代码 Swift Code：BFTVVNVXXXX",
+        "分行地址：Pvoil Phu Tho Building, No. 148 Hoang Quoc Viet, Nghia Tan Ward, Cau Giay District, Hanoi City"
       ],
       "RMB": [
-        "银行名称 Tên Ngân hàng：Ngân hàng TMCP Ngoại thương Việt Nam - Chi nhánh Thăng Long",
-        "账号名称 Chủ tài khoản：Cong ty TNHH Shanhaimap Viet Nam",
-        "银行账号 Tài khoản：104 799 1540 (USD)",
-        "国际银行代码 Mã ngân hàng quốc tế (SWIFT)：BFTVVNVX",
-        "分行地址 Địa chỉ：Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội"
+        "银行名称：Joint Stock Commercial Bank for Foreign Trade of Vietnam - Thang Long Branch",
+        "账号名称：Cong ty TNHH Shanhaimap Viet Nam",
+        "银行账号：104 799 1540 (USD)",
+        "国际银行代码 Swift Code：BFTVVNVXXXX",
+        "分行地址：Pvoil Phu Tho Building, No. 148 Hoang Quoc Viet, Nghia Tan Ward, Cau Giay District, Hanoi City"
       ]
     }
+  },
+  "egypt": {
+    "template": "egypt",
+    "company": "SHAN HAI MAP FOR CONSULTING CO",
+    "header_lines": [
+      "SHAN HAI MAP FOR CONSULTING CO",
+      "埃及新开罗90号大街TOP90 1层134室",
+      "Web: www.shanhaimap.com"
+    ],
+    "header_company_align": "right",
+    "vat_rate": 0.10,
+    "currency": "EGP",
+    "allowed_currencies": ["EGP", "RMB", "USD"],
+    "bank_lines": [
+      "Bank Name: Qatar National Bank (QNB) - 00037",
+      "Bank Branch: 00177",
+      "SWIFT CODE: QNBAEGCXXXX",
+      "Beneficiary Name: SHAN HAI MAP FOR CONSULTING CO",
+      "Account Number: 20317533321",
+      "IBAN: EG690037017708402031753332119",
+      "Bank Address: Top 90 Mall, unit 133&134, S Teseen, New Cairo 1, Cairo Governorate, EGYPT"
+    ],
+    "bank_lines_by_currency": {
+      "EGP": [
+        "Bank Name: Qatar National Bank (QNB) - 00037",
+        "Bank Branch: 00177",
+        "SWIFT CODE: QNBAEGCXXXX",
+        "Beneficiary Name: SHAN HAI MAP FOR CONSULTING CO",
+        "Account Number: 20317533309",
+        "IBAN: EG470037017708182031753330905",
+        "Bank Address: Top 90 Mall, unit 133&134, S Teseen, New Cairo 1, Cairo Governorate, EGYPT"
+      ],
+      "USD": [
+        "Bank Name: Qatar National Bank (QNB) - 00037",
+        "Bank Branch: 00177",
+        "SWIFT CODE: QNBAEGCXXXX",
+        "Beneficiary Name: SHAN HAI MAP FOR CONSULTING CO",
+        "Account Number: 20317533321",
+        "IBAN: EG690037017708402031753332119",
+        "Bank Address: Top 90 Mall, unit 133&134, S Teseen, New Cairo 1, Cairo Governorate, EGYPT"
+      ],
+      "RMB": [
+        "Bank Name: Qatar National Bank (QNB) - 00037",
+        "Bank Branch: 00177",
+        "SWIFT CODE: QNBAEGCXXXX",
+        "Beneficiary Name: SHAN HAI MAP FOR CONSULTING CO",
+        "Account Number: 20317533321",
+        "IBAN: EG690037017708402031753332119",
+        "Bank Address: Top 90 Mall, unit 133&134, S Teseen, New Cairo 1, Cairo Governorate, EGYPT"
+      ]
+    }
+  },
+  "malaysia": {
+    "template": "malaysia",
+    "company": "SHANHAIMAP SDN. BHD.",
+    "header_lines": [
+      "SHANHAIMAP SDN. BHD.",
+      "Suite 16-03A & 05, Level 16, Wisma UOA II No. 21,",
+      "Jalan Pinang, 50450 Kuala Lumpur, Malaysia",
+      "Web: www.shanhaimap.com"
+    ],
+    "header_address_size_pt": 8,
+    "tax_label": "销售与服务税",
+    "vat_rate": 0.08,
+    "currency": "MYR",
+    "allowed_currencies": ["MYR", "RMB", "USD"],
+    "bank_lines": [
+      "Account Name: SHANHAIMAP SDN. BHD.",
+      "Account Number: 7011647369",
+      "Beneficiary Bank: OCBC Bank (Malaysia) Bhd",
+      "Branch: KL MAIN",
+      "Swift code: OCBCMYKL",
+      "Bank Address: INFINITY TOWER, JALAN SS 6/3, KELANA JAYA, 47301 PETALING JAYA SELANGOR MALAYSIA"
+    ]
   }
 }

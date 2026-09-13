@@ -87,6 +87,14 @@ def validate_and_normalize_data(data):
                 errors.append(f'{item_path} must be an object')
                 continue
             name = require_text(item, 'name', item_path, errors)
+            code = item.get('code')
+            if code is None:
+                code = ''
+            elif not isinstance(code, str):
+                errors.append(f'{item_path}.code must be text when provided')
+                code = ''
+            else:
+                code = code.strip()
             service_id = require_text(item, 'id', item_path, errors)
             days = require_text(item, 'days', item_path, errors)
             note = require_text(item, 'note', item_path, errors)
@@ -111,6 +119,7 @@ def validate_and_normalize_data(data):
             normalized_items.append({
                 'id': service_id,
                 'name': name,
+                'code': code,
                 'display_name': display_name,
                 'quantity': quantity,
                 'days': days,
@@ -195,19 +204,6 @@ def validate_and_normalize_data(data):
             indent = 360
         normalized_notes.append((text.strip(), indent))
 
-    doc_notes_text = data.get('doc_notes_text', data.get('doc_notes', []))
-    if doc_notes_text is None:
-        doc_notes_text = []
-    if not isinstance(doc_notes_text, list):
-        errors.append('doc_notes_text must be a list when provided')
-        doc_notes_text = []
-    normalized_doc_notes = []
-    for i, item in enumerate(doc_notes_text):
-        if not isinstance(item, str) or not item.strip():
-            errors.append(f'doc_notes_text[{i}] must be non-empty text')
-        else:
-            normalized_doc_notes.append(item.strip())
-
     quote_meta_raw = data.get('quote_meta', {})
     if quote_meta_raw is None:
         quote_meta_raw = {}
@@ -267,7 +263,6 @@ def validate_and_normalize_data(data):
         'process_data': process_data,
         'doc_data': doc_data,
         'notes': normalized_notes,
-        'doc_notes_text': normalized_doc_notes,
         'quote_meta': quote_meta,
         'discount_amount': discount_amount,
         'withholding_tax': withholding_tax,

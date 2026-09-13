@@ -26,7 +26,15 @@ if SKILL_DIR not in sys.path:
     sys.path.insert(0, SKILL_DIR)
 
 from scripts.sync_payment_terms import extract_payment_terms, check_payment_terms_reasonableness
-from scripts.quotation_common import load_entity_config, currency_has_decimals
+from scripts.quotation_common import (
+    load_entity_config,
+    currency_has_decimals,
+    CURRENCY_NAME_TO_CODE,
+    A4_PAGE_W,
+    A4_PAGE_H,
+    A4_MARGINS,
+    is_process_time_disclaimer,
+)
 
 
 def w(tag):
@@ -134,10 +142,7 @@ def detect_currency_from_tables(tables):
 
 def detect_currency_from_header(tables):
     """从价格列头「价格 (币种名)」识别文档币种（价格已不带货币符号）。"""
-    name_to_code = {
-        '人民币': 'RMB', '印尼盾': 'IDR', '美元': 'USD',
-        '新币': 'SGD', '越南盾': 'VND', '泰铢': 'THB',
-    }
+    name_to_code = CURRENCY_NAME_TO_CODE
     for tbl in tables:
         for row in tbl.findall(w('tr')):
             for cell in row.findall(w('tc')):
@@ -162,7 +167,7 @@ def detect_entity(paragraph_texts, entity_config):
             for cfg_line in bank_lines:
                 # Extract account number patterns (Chinese or English)
                 # Allow optional text between keyword and colon; capture digits/spaces (account number)
-                account_match = re.search(r'(账号|账户号码|银行账号|Account No)\b[^：:]*[：:]\s*([\d ]+)', cfg_line)
+                account_match = re.search(r'(账号|账户号码|银行账号|Account Number|Account No)\b[^：:]*[：:]\s*([\d ]+)', cfg_line)
                 if account_match:
                     account_num = account_match.group(2).replace(' ', '')
                     if account_num in doc_line.replace(' ', ''):
@@ -221,7 +226,7 @@ def extract_company_from_bank(bank_lines):
     for line in bank_lines:
         # Allow optional text (e.g. Vietnamese/Indonesian labels) between keyword and colon
         match = re.search(
-            r'(账户名称|账号名称|开户名|户名|Beneficiary Name|Atas Nama)\b[^：:]*[：:]\s*(.+)', line)
+            r'(账户名称|账号名称|开户名|户名|Beneficiary Name|Account Name|Atas Nama)\b[^：:]*[：:]\s*(.+)', line)
         if match:
             return match.group(2).strip()
     return None
@@ -287,7 +292,7 @@ def extract_signature_company(tables, entity_config):
     return None
 
 
-def extract_service_names_from_table(tables):
+def extract_service_names_from_table(tables, tax_label='增值税'):
     """Extract service names from the service content table (first table)."""
     names = []
     if not tables:
@@ -312,7 +317,7 @@ def extract_service_names_from_table(tables):
             # Strip quantity suffix for comparison: "公司注册×2" → "公司注册"
             base_name = re.sub(r'\s*[x×]\d+$', '', name_text)
             # Skip summary rows like "小计", "优惠金额", "增值税 11%", "含税总计", "预扣税"
-            summary_prefixes = ('服务内容', '小计', '优惠金额', '增值税', '含税总计', '预扣税')
+            summary_prefixes = ('服务内容', '小计', '优惠金额', tax_label, '含税总计', '预扣税')
             if base_name and not any(base_name.startswith(p) for p in summary_prefixes):
                 names.append(base_name)
     return names
@@ -415,7 +420,18 @@ def check_address_similarity(addr1, addr2):
         return True, (
             f"Similar addresses (superset: "
             f"'{addr1}' vs '{addr2}')")
-    return False, f"Addresses differ: header='{addr1}' vs bank='{addr2}'"
+    return False, f"Addresses differ: '{addr1}' vs '{addr2}'"
+
+
+def configured_header_addresses(entity_cfg):
+    """The address lines an entity's header is expected to carry.
+
+    `header_lines` is ordered [company name, address line(s)..., 'Web: ...'];
+    the company name and the Web line are not addresses.
+    """
+    lines = [ln.strip() for ln in (entity_cfg or {}).get('header_lines') or []
+             if ln and ln.strip()]
+    return [ln for ln in lines[1:] if not ln.startswith('Web:')]
 
 
 def check_fonts(document_root):
@@ -432,7 +448,12 @@ def check_fonts(document_root):
 
 
 def check_page_size(document_root):
-    """Check A4 page size in sectPr."""
+    """Check A4 portrait page size and canonical margins in sectPr.
+
+    build normalizes both, so a mismatch here means the output did not come from
+    the normal build path (or was edited afterwards) and may not print correctly
+    on A4.
+    """
     body = document_root.find(w('body'))
     if body is None:
         return ["No <w:body> element found"]
@@ -442,14 +463,43 @@ def check_page_size(document_root):
     pgSz = sectPr.find(w('pgSz'))
     if pgSz is None:
         return ["No pgSz in sectPr"]
+
+    issues = []
     w_val = pgSz.get(w('w'))
     h_val = pgSz.get(w('h'))
-    if w_val != '11906' or h_val != '16838':
-        return [f"Page size is {w_val}x{h_val} DXA (expected 11906x16838 for A4)"]
-    return []
+    if w_val != str(A4_PAGE_W) or h_val != str(A4_PAGE_H):
+        issues.append(
+            f"Page size is {w_val}x{h_val} DXA "
+            f"(expected {A4_PAGE_W}x{A4_PAGE_H} for A4)")
+    if pgSz.get(w('orient')) == 'landscape':
+        issues.append("Page orientation is landscape (expected portrait for A4)")
+
+    pgMar = sectPr.find(w('pgMar'))
+    if pgMar is None:
+        issues.append("No pgMar in sectPr - margins undefined, not print-safe")
+    else:
+        for name, expected in A4_MARGINS.items():
+            got = pgMar.get(w(name))
+            if got is not None and got != str(expected):
+                issues.append(
+                    f"Page margin '{name}' is {got} DXA (expected {expected})")
+    return issues
 
 
-def extract_summary_amounts(tables, currency):
+def check_process_time_disclaimer(paragraph_texts):
+    """备注中不得出现办理时间免责声明。
+
+    「服务内容」表没有办理时间列，表下 *备注： 区块里的「上述办理时间……」指不到任何
+    上文；build 会剔除，所以这里命中说明成稿绕过了正常构建路径。
+    """
+    return [
+        f"备注中出现办理时间免责声明（服务内容表无办理时间列）: {text}"
+        for _, text in paragraph_texts
+        if is_process_time_disclaimer(text)
+    ]
+
+
+def extract_summary_amounts(tables, currency, tax_label='增值税'):
     """Extract subtotal, discount, VAT, and total from the service content table."""
     amounts = {}
     for tbl in tables:
@@ -474,7 +524,7 @@ def extract_summary_amounts(tables, currency):
                 amounts['subtotal'] = parsed
             elif '优惠金额' in label_lower and parsed is not None:
                 amounts['discount'] = parsed
-            elif '增值税' in label_lower and parsed is not None:
+            elif tax_label in label_lower and parsed is not None:
                 amounts['vat'] = parsed
                 rate_match = re.search(r'(\d+(?:\.\d+)?)%', label_lower)
                 if rate_match:
@@ -702,6 +752,11 @@ def main():
             print("⚠️  无法自动识别签约主体，部分交叉验证将跳过")
             all_warnings.append("无法识别签约主体，跳过主体配置交叉验证")
 
+        # 税金行标签（马来西亚用「销售与服务税」SST，其余「增值税」）
+        tax_label = '增值税'
+        if detected_entity and detected_entity in entity_config:
+            tax_label = entity_config[detected_entity].get('tax_label', '增值税')
+
         entity_checks = [
             ('命令行主体', cli_entity),
             ('数据_meta主体', meta_entity),
@@ -763,14 +818,32 @@ def main():
                 all_issues.append(
                     f"页眉公司名 '{header_company}' ≠ 银行 '{bank_company}'")
 
-        # Check address (only when bank info actually contains a company address)
-        if header_address and bank_address:
-            match, msg = check_address_similarity(header_address, bank_address)
-            if match:
-                print(f"✅ 页眉地址与银行地址一致: {msg}")
+        # The header carries the entity's registered office; the bank section carries
+        # the account-holding branch. Those legitimately differ - Vietnam is registered
+        # in Ho Chi Minh City but banks in Hanoi - so equality between the two is NOT
+        # required. What must hold is that the header address is the one configured for
+        # the entity we detected, which is what ties the header to the right entity.
+        if header_address:
+            configured = configured_header_addresses(entity_config.get(detected_entity or '', {}))
+            if not configured:
+                print("⚠️  配置中没有可核对的页眉地址，跳过页眉地址归属检查")
+                all_warnings.append(
+                    f"配置中无可核对的页眉地址，无法核对页眉地址归属 (entity={detected_entity})")
             else:
-                print(f"❌ 页眉地址与银行地址不一致: {msg}")
-                all_issues.append(msg)
+                match = next(
+                    (msg for ok, msg in
+                     (check_address_similarity(header_address, addr) for addr in configured)
+                     if ok), None)
+                if match:
+                    print(f"✅ 页眉地址与本主体配置一致 (entity={detected_entity}): {match}")
+                else:
+                    print(f"❌ 页眉地址 '{header_address}' 不属于本主体配置地址 {configured}")
+                    all_issues.append(
+                        f"页眉地址 '{header_address}' ∉ 配置地址 {configured} "
+                        f"(entity={detected_entity})")
+
+            if bank_address and bank_address != header_address:
+                print("ℹ️  页眉地址与开户行地址不同（注册地与开户行可不同城），不作为问题")
 
         # ── 2. Signature company vs bank company ──
         sig_company = extract_signature_company(tables, entity_config)
@@ -790,7 +863,7 @@ def main():
             all_issues.append("未在签名区域找到签名公司名")
 
         # ── 3. Service name coverage ──
-        doc_service_names = extract_service_names_from_table(tables)
+        doc_service_names = extract_service_names_from_table(tables, tax_label)
         if doc_service_names:
             print(f"文档中的服务名: {', '.join(doc_service_names)}")
             service_set = set(doc_service_names)
@@ -830,22 +903,32 @@ def main():
         else:
             print("✅ 字体检查: 全文仿宋")
 
-        # ── 5. Page size check ──
+        # ── 5. A4 print-safety check (page size + orientation + margins) ──
         page_issues = check_page_size(doc_root)
         if page_issues:
             for pi in page_issues:
                 print(f"❌ {pi}")
                 all_issues.append(pi)
         else:
-            print("✅ 页面尺寸: A4 (11906x16838 DXA)")
+            print(f"✅ 页面尺寸: A4 纵向 ({A4_PAGE_W}x{A4_PAGE_H} DXA)，"
+                  f"页边距符合标准，可直接 A4 打印")
 
-        # ── 6. Amount extraction & verification ──
-        amounts = extract_summary_amounts(tables, currency)
+        # ── 6. 备注不得出现办理时间免责声明（服务内容表没有办理时间列）──
+        disclaimer_issues = check_process_time_disclaimer(para_texts)
+        if disclaimer_issues:
+            for di in disclaimer_issues:
+                print(f"❌ {di}")
+                all_issues.append(di)
+        else:
+            print("✅ 备注检查: 无办理时间免责声明")
+
+        # ── 7. Amount extraction & verification ──
+        amounts = extract_summary_amounts(tables, currency, tax_label)
 
         if amounts:
             print(f"金额: 小计={amounts.get('subtotal')} "
                   f"优惠={amounts.get('discount', 0)} "
-                  f"增值税={amounts.get('vat')} "
+                  f"{tax_label}={amounts.get('vat')} "
                   f"含税总计={amounts.get('total')}")
             amount_issues = verify_amounts(amounts, currency)
             for ai in amount_issues:
@@ -869,7 +952,7 @@ def main():
                 print(f"⚠️  {warning}")
                 all_warnings.append(warning)
 
-            # ── 7. Cross-check with input data ──
+            # ── 8. Cross-check with input data ──
             if data_path:
                 data_issues = cross_check_with_data(amounts, data_path, currency)
                 for di in data_issues:
