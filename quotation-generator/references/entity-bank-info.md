@@ -41,7 +41,8 @@
   - 银行账号：0120020400000811366
   - SWIFT：ICBKIDJAXXX
   - 分行名称：ICBC (CENTRAL PARK BRANCH)
-- ⚠️ 户名三种写法不同（`PT. SHAN HAI MAP` / `PT SHAN HAI MAP` / `PT.SHAN HAI MAP`），是各行开户记录原样，报价单须照录，不要统一标点
+- ⚠️ 户名统一为 `PT. SHAN HAI MAP`（**带点**）：刘旭 2026-09-13 确认「雅加达公司无论什么币种，开户名称都是 PT. SHAN HAI MAP」。三个币种账户的**银行/账号/SWIFT 按币种不同**，只有户名写法一致。
+  注：`verify_quotation.py` 的 `normalize_company_name()` 对点号不敏感（三种写法都能过校验），所以户名写错不会被 verify 拦下——必须靠 `config/entities.json` 里的数据正确
 
 ### beijing
 - 账户名称：北京山海图科技有限公司
