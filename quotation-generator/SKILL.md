@@ -1,6 +1,6 @@
 ---
 name: quotation-generator
-version: 1.16.1
+version: 1.16.2
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
@@ -198,7 +198,17 @@ python3 scripts/convert_currency.py --amount 30000000 --from IDR --to USD --rate
 
 `rateToCny` 表示 `1 CNY = N 服务币种`，`rateToUsd` 表示 `1 USD = N 服务币种`。修改已有报价单时优先使用原始 `queried_services.json` 或 `quotation.json` 留档汇率；没有留档汇率，必须让用户提供或确认汇率。
 
-**服务币种与手动换算**：API 返回币种可能为 IDR、VND、CNY、MYR、SGD、THB、EGP。报价单目标币种见『币种限制』。`convert_currency.py` 仅支持 IDR ↔ RMB ↔ USD 自动换算；其余币种（MYR、SGD、THB、EGP、VND）手动按公式换算（`RMB 价格 = 服务价格 ÷ rateToCny`，`USD 价格 = 服务价格 ÷ rateToUsd`），取整后写入 quotation.json。若目标币种与服务币种相同（SGD→singapore、THB→thailand、VND→vietnam、EGP→egypt、MYR→malaysia），无需换算，直接填价。`_meta` 留档源币种和汇率。
+**币种与换算（一律用脚本，8 个币种全覆盖）**：API 返回币种可能为 IDR、CNY、MYR、SGD、THB、EGP、VND；报价单目标币种见『币种限制』。`convert_currency.py` 覆盖全部 8 个币种：
+
+| 场景 | 用哪个汇率 | 命令 |
+|------|-----------|------|
+| 外币 → 人民币 | 该外币的 `rateToCny`（÷） | `--from THB --to RMB --rateToCny 4.85` |
+| 外币 → 美元 | 该外币的 `rateToUsd`（÷） | `--from MYR --to USD --rateToUsd 4.75` |
+| 人民币/美元 → 外币 | 同一汇率反向（×） | `--from RMB --to SGD --rateToCny 5.45` |
+| 人民币 ↔ 美元 | 一条外币的两个汇率做桥 | `--from RMB --to USD --rateToCny 2250 --rateToUsd 17710` |
+| 外币 → 外币 | **API 无此汇率**：先向用户索取 | `--from THB --to VND --cross-rate 1.05`（1 THB = 1.05 VND） |
+
+取整为 **ROUND_HALF_UP**（四舍五入，与官网一致）。批量换算：`--query-result "$WORKDIR/queried_services.json" --to <币种> --json-only`，源币种自动识别；目标币种若整批服务里拿不到该币种汇率（例如全批都是人民币定价、要报泰铢），脚本会报错提示向用户索取，**不得自己估汇率**。目标币种与服务币种相同则无需换算（identity）。`_meta` 留档源币种与用到的汇率。
 
 ## 价格计算（API → quotation.json）
 
@@ -299,14 +309,14 @@ validate error → 必须修复，warning → 判断后处理。`--entity` 必�
 | `verify` 失败 | 除付款方式等客户最终处理内容外，优先修改 `quotation.json` 后重新 build；不要手改其他 `.docx` 内容 |
 | 用户质疑价格/计算公式 | 展示完整计算链路：API 总价 → 汇率 → 换算后总价 → 增值税 → 含税总计，每步附带来源值 |
 | 美元报价缺少 SWIFT CODE | 仅 beijing 无 SWIFT CODE，且系有意不配（2026-09-13 用户确认），客户问起就说明该主体不使用 SWIFT；其他主体若确有缺口 → 向用户确认具体 SWIFT 后补入 `config/entities.json`，参考 `references/entity-bank-info.md` |
-| 服务币种不支持（如 MYR、HKD） | 手动按『汇率与换算』公式换算，原币种原价写入 `note`；见 `references/edge-cases.md`「服务币种不支持」 |
-| 新加坡元（SGD）报价 | 服务币种即 SGD 时直接填价；从 IDR/RMB 换算至 SGD 需用户提供汇率后手动换算（`源币种价格 ÷ 汇率`），`_meta` 注明 |
+| 服务币种不在 8 币种内（如 HKD），或要把外币换成另一种外币 | 8 个币种（IDR/RMB/USD/SGD/THB/VND/EGP/MYR）脚本直接算；其他币种显式传汇率即可（`--rateToCny/--rateToUsd`）；**外币 → 外币（两侧都不是人民币/美元）API 没有汇率数据，必须先向用户索取**，再用 `--cross-rate N`（1 from = N to）；见 `references/edge-cases.md`「外币 → 外币」 |
+| 新加坡元（SGD）报价 | 服务币种即 SGD 时直接填价；RMB/USD → SGD 用 SGD 的汇率走脚本（`--from RMB --to SGD --rateToCny 5.45`）；IDR/THB 等 → SGD 属外币→外币，API 无汇率，须向用户索取后用 `--cross-rate N`；`_meta` 注明 |
 | `fee_details[].include` 不能为空 | validate 报 `include is required and must be a non-empty list` → API 未列费用包含项的服务，至少填 `"山海图服务费"` |
 | `quote_meta.payment_terms` 留空数组 | validate 报 `payment_terms must be a non-empty list when provided`（不会静默回退实体默认值）→ 从 `config/entities.json` 复制该实体 `payment_terms` 填入，或写用户明确指定的付款条件 |
 | 用户提供分享链接而非 aiCode | 分享链接的 `sharingRecordId` 不是 aiCode，无法 resolve；见 `references/edge-cases.md`「分享链接而非 aiCode」 |
 | API 返回 "AI Code 无效" | aiCode 中服务名部分的空格必须与数据库完全一致（如 `JSHK 账户维护` 不能写成 `JSHK账户维护`）。若用户坚持 aiCode 正确，检查空格是否遗漏后再重试 |
 | 修改付款比例后 docx 仍显示旧比例 | build 默认从旧 `.docx` 保留付款方式。`quotation.json` 改了付款条件但 rebuild 后未生效 → 必须加 `--overwrite-payment-terms` 强制覆盖 |
-| 换算后价格与官网差 1 元 | `convert_currency.py` 使用整数截断（floor），不是四舍五入。例如 18,400,000 ÷ 2,250 = 8,177.78，脚本得 8,177，官网四舍五入得 8,178。用户指出差异时，用 `round()` 修正后再写入 quotation.json 并重建 |
+| 换算后价格与官网差 1 元 | `convert_currency.py` 用 **ROUND_HALF_UP（四舍五入）**，不是截断：18,400,000 ÷ 2,250 = **8,178**（1.16.2 之前的文档误写「截断得 8,177」，已导致 5 张历史单各少算 1 元，如 VND 80,000,000 ÷ 3,893.98 成稿写成 20,544、应为 20,545）。遇到差异先与用户确认采用哪个口径，**不要**自行改写已交付价格 |
 | 调整服务顺序后报价单未变化 | 仅改 `services[].items[]` 顺序不够，须同步重排 `fee_details`/`process_data`/`doc_data`，见 `references/reorder-services.md` |
 | 追加服务时复用已有查询数据 | 同一批次多个报价单共享部分 aiCode 时，可从已有 `queried_services.json` 提取目标服务，避免重复 fetch；从已转换价格列表中对应取值 |
 | BPO/百分比定价服务 | BPO 业务流程外包等按比例收费的服务，`price` 设为 0，费率结构在 `note` 和 `notes` 中说明（如"8%月用工总成本"），押金等附加费同样在备注说明。validate 会报 price 过小 warning，可忽略 |

@@ -1,23 +1,35 @@
 #!/usr/bin/env python3
 """Currency conversion for quotation generation.
 
-Uses rates from the ShanhaiMap API response (rateToCny / rateToUsd)
-to convert service prices between IDR, RMB, and USD.
+Rates come from the ShanhaiMap API response:
+  * ``rateToCny`` = 1 CNY = N <服务币种>
+  * ``rateToUsd`` = 1 USD = N <服务币种>
 
-Usage:
-  # Convert IDR → RMB (rateToCny means 1 CNY = N service currency, e.g. 1 CNY = 2173.91 IDR)
+规则（2026-09-13 业务口径）：
+  * 外币 → 人民币：用该外币的 ``rateToCny``（÷）
+  * 外币 → 美元　：用该外币的 ``rateToUsd``（÷）
+  * 人民币 → 外币 / 美元 → 外币：同一汇率反向（×）
+  * 人民币 ↔ 美元：用一条外币的两个汇率做桥（两个数都在，不涉及缺数据）
+  * 外币 → 外币（两侧都不是人民币/美元）：**API 没有直接汇率**，脚本拒绝换算，
+    必须先向用户索取汇率，再用 ``--cross-rate N``（1 <from> = N <to>）换算
+
+用法:
+  # 外币 → 人民币（rateToCny 表示 1 CNY = N 服务币种，如 1 CNY = 2173.91 IDR）
   python3 scripts/convert_currency.py --amount 250000000 --from IDR --to RMB --rateToCny 2173.91
 
-  # Convert RMB → IDR (using rateToCny in the opposite direction)
+  # 人民币 → 外币（同一汇率反向）
   python3 scripts/convert_currency.py --amount 115000 --from RMB --to IDR --rateToCny 2173.91
 
-  # Convert IDR → USD (rateToUsd means 1 USD = N service currency, e.g. 1 USD = 16000 IDR)
+  # 外币 → 美元（rateToUsd 表示 1 USD = N 服务币种，如 1 USD = 16000 IDR）
   python3 scripts/convert_currency.py --amount 250000000 --from IDR --to USD --rateToUsd 16000
 
-  # Batch convert multiple amounts from API query result
+  # 外币 → 外币：先向用户要汇率，再 --cross-rate（1 THB = N VND）
+  python3 scripts/convert_currency.py --amount 100000 --from THB --to VND --cross-rate 1.05
+
+  # 批量换算整批服务价格
   python3 scripts/convert_currency.py --query-result queried_services.json --to RMB
 
-All calculations use Decimal for financial precision.
+All calculations use Decimal for financial precision (ROUND_HALF_UP).
 """
 import argparse
 import json
@@ -30,135 +42,221 @@ _SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _SKILL_DIR not in sys.path:
     sys.path.insert(0, _SKILL_DIR)
 
-from scripts.quotation_common import normalize_currency_code, currency_symbol
+from scripts.quotation_common import (
+    CURRENCIES,
+    currency_symbol,
+    normalize_currency_code,
+)
+
+# 汇率以这两个币种为基准（rateToCny / rateToUsd 的定义即基于它们）。
+BASE_CURRENCIES = ('RMB', 'USD')
+KNOWN_CURRENCIES = tuple(CURRENCIES)
+
+
+def _to_decimal(value):
+    """把 API 的字符串/数字汇率转成 Decimal；转不了返回 None。"""
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value).replace(',', '').strip())
+    except Exception:
+        return None
+
+
+def _fmt(amount):
+    """整数金额加千分位。"""
+    return f'{int(amount):,}'
+
+
+def _unknown_currency_error(code, role, rate_given):
+    known = ', '.join(KNOWN_CURRENCIES)
+    if rate_given:
+        # 汇率已给出时，任何币种都能算——只提示一次代码不在已知表内。
+        return None
+    return (f'Unknown {role} currency: {code}. Known: {known}. '
+            f'若该币种确有汇率，请显式传入 --rateToCny/--rateToUsd 后再换算')
 
 
 def convert_single(amount: Decimal, from_currency: str, to_currency: str,
-                   rateToCny: Decimal = None, rateToUsd: Decimal = None) -> dict:
-    """Convert a single amount between IDR, RMB, and USD.
+                   rateToCny: Decimal = None, rateToUsd: Decimal = None,
+                   cross_rate: Decimal = None) -> dict:
+    """Convert an amount between any of the supported currencies.
 
-    Conversion logic:
-      - IDR → RMB: round(totalPrice / rateToCny)
-      - RMB → IDR: round(totalPrice * rateToCny)
-      - IDR → USD: round(totalPrice / rateToUsd)
-      - USD → IDR: round(totalPrice * rateToUsd)
-      - RMB → USD: via IDR if only rateToCny available; via direct if rateToUsd provided
-      - Same currency: no conversion needed
-
-    Returns dict with: original, converted, from_currency, to_currency, rate_used, rate_type
+    规则见模块 docstring。返回 dict：original / converted / from_currency /
+    to_currency / rate_used / rate_type / note；失败返回 ``{'error': ...}``。
     """
-    if from_currency == to_currency:
+    from_c = normalize_currency_code(from_currency)
+    to_c = normalize_currency_code(to_currency)
+
+    # ── 币种合法性（未知币种仅在显式给了汇率时放行，避免拼错代码静默算出数）──
+    if from_c not in CURRENCIES:
+        err = _unknown_currency_error(from_c, 'source', rateToCny is not None or rateToUsd is not None or cross_rate is not None)
+        if err:
+            return {'error': err}
+    if to_c not in CURRENCIES:
+        err = _unknown_currency_error(to_c, 'target', rateToCny is not None or rateToUsd is not None or cross_rate is not None)
+        if err:
+            return {'error': err}
+
+    if from_c == to_c:
         return {
             'original': str(amount),
             'converted': str(amount),
-            'from_currency': from_currency,
-            'to_currency': to_currency,
+            'from_currency': from_c,
+            'to_currency': to_c,
             'rate_used': '1',
             'rate_type': 'identity',
             'note': 'No conversion needed — same currency',
         }
 
-    # Determine which rate to use
-    if from_currency == 'IDR' and to_currency == 'RMB':
+    from_is_base = from_c in BASE_CURRENCIES
+    to_is_base = to_c in BASE_CURRENCIES
+
+    # ── 外币 → 外币：API 无直接汇率，必须向用户索取 ──
+    if not from_is_base and not to_is_base:
+        if cross_rate is None:
+            return {'error': (
+                f'外币转外币（{from_c} → {to_c}）缺汇率数据：rateToCny/rateToUsd 只能换算'
+                f'「外币 ↔ 人民币/美元」。请向用户索取汇率（例如 1 {from_c} = N {to_c}），'
+                f'拿到后用 --cross-rate N 重新换算')}
+        result = (amount * cross_rate).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+        return {
+            'original': str(amount),
+            'converted': str(result),
+            'from_currency': from_c,
+            'to_currency': to_c,
+            'rate_used': str(cross_rate),
+            'rate_type': 'crossRate',
+            'note': (f'{from_c} {_fmt(amount)} × {cross_rate} = {to_c} {_fmt(result)}'
+                     f'（交叉汇率由用户提供）'),
+        }
+
+    # ── 外币 → 人民币（÷ rateToCny）──
+    if to_c == 'RMB' and not from_is_base:
         if rateToCny is None:
-            return {'error': 'rateToCny is required for IDR → RMB conversion'}
+            return {'error': f'rateToCny is required for {from_c} → RMB conversion（1 CNY = N {from_c}）'}
         result = (amount / rateToCny).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
         return {
             'original': str(amount),
             'converted': str(result),
-            'from_currency': from_currency,
-            'to_currency': to_currency,
+            'from_currency': from_c,
+            'to_currency': to_c,
             'rate_used': str(rateToCny),
             'rate_type': 'rateToCny',
-            'note': f'IDR {int(amount):,} ÷ {rateToCny} = RMB {int(result):,}',
+            'note': f'{from_c} {_fmt(amount)} ÷ {rateToCny} = RMB {_fmt(result)}',
         }
 
-    elif from_currency == 'RMB' and to_currency == 'IDR':
-        if rateToCny is None:
-            return {'error': 'rateToCny is required for RMB → IDR conversion'}
-        result = (amount * rateToCny).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
-        return {
-            'original': str(amount),
-            'converted': str(result),
-            'from_currency': from_currency,
-            'to_currency': to_currency,
-            'rate_used': str(rateToCny),
-            'rate_type': 'rateToCny',
-            'note': f'RMB {int(amount):,} × {rateToCny} = IDR {int(result):,}',
-        }
-
-    elif from_currency == 'IDR' and to_currency == 'USD':
+    # ── 外币 → 美元（÷ rateToUsd）──
+    if to_c == 'USD' and not from_is_base:
         if rateToUsd is None:
-            return {'error': 'rateToUsd is required for IDR → USD conversion'}
+            return {'error': f'rateToUsd is required for {from_c} → USD conversion（1 USD = N {from_c}）'}
         result = (amount / rateToUsd).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
         return {
             'original': str(amount),
             'converted': str(result),
-            'from_currency': from_currency,
-            'to_currency': to_currency,
+            'from_currency': from_c,
+            'to_currency': to_c,
             'rate_used': str(rateToUsd),
             'rate_type': 'rateToUsd',
-            'note': f'IDR {int(amount):,} ÷ {rateToUsd} = USD {int(result):,}',
+            'note': f'{from_c} {_fmt(amount)} ÷ {rateToUsd} = USD {_fmt(result)}',
         }
 
-    elif from_currency == 'USD' and to_currency == 'IDR':
+    # ── 人民币 → 外币（× rateToCny，汇率属于目标外币）──
+    if from_c == 'RMB' and not to_is_base:
+        if rateToCny is None:
+            return {'error': f'rateToCny is required for RMB → {to_c} conversion（1 CNY = N {to_c}）'}
+        result = (amount * rateToCny).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+        return {
+            'original': str(amount),
+            'converted': str(result),
+            'from_currency': from_c,
+            'to_currency': to_c,
+            'rate_used': str(rateToCny),
+            'rate_type': 'rateToCny',
+            'note': f'RMB {_fmt(amount)} × {rateToCny} = {to_c} {_fmt(result)}',
+        }
+
+    # ── 美元 → 外币（× rateToUsd，汇率属于目标外币）──
+    if from_c == 'USD' and not to_is_base:
         if rateToUsd is None:
-            return {'error': 'rateToUsd is required for USD → IDR conversion'}
+            return {'error': f'rateToUsd is required for USD → {to_c} conversion（1 USD = N {to_c}）'}
         result = (amount * rateToUsd).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
         return {
             'original': str(amount),
             'converted': str(result),
-            'from_currency': from_currency,
-            'to_currency': to_currency,
+            'from_currency': from_c,
+            'to_currency': to_c,
             'rate_used': str(rateToUsd),
             'rate_type': 'rateToUsd',
-            'note': f'USD {int(amount):,} × {rateToUsd} = IDR {int(result):,}',
+            'note': f'USD {_fmt(amount)} × {rateToUsd} = {to_c} {_fmt(result)}',
         }
 
-    elif from_currency == 'RMB' and to_currency == 'USD':
-        if rateToUsd is not None:
-            # Use IDR as bridge: RMB → IDR → USD
-            # IDR_per_RMB = rateToCny, USD_per_IDR = rateToUsd
-            # USD = RMB × rateToCny ÷ rateToUsd
-            # But we need rateToCny for this path
-            if rateToCny is None:
-                return {'error': 'Both rateToCny and rateToUsd needed for RMB → USD via IDR bridge'}
-            result = (amount * rateToCny / rateToUsd).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
-            return {
-                'original': str(amount),
-                'converted': str(result),
-                'from_currency': from_currency,
-                'to_currency': to_currency,
-                'rate_used': f'{rateToCny}/{rateToUsd}',
-                'rate_type': 'rateToCny+rateToUsd',
-                'note': f'RMB {int(amount):,} × {rateToCny} ÷ {rateToUsd} = USD {int(result):,}',
-            }
-        return {'error': 'rateToUsd is required for RMB → USD conversion'}
+    # ── 人民币 ↔ 美元：用外币的两个汇率做桥（两个数都在，不需要问用户）──
+    if from_c == 'RMB' and to_c == 'USD':
+        if rateToCny is None or rateToUsd is None:
+            return {'error': 'Both rateToCny and rateToUsd are required for RMB → USD conversion（取同一条外币的两个汇率做桥）'}
+        result = (amount * rateToCny / rateToUsd).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+        return {
+            'original': str(amount),
+            'converted': str(result),
+            'from_currency': from_c,
+            'to_currency': to_c,
+            'rate_used': f'{rateToCny}/{rateToUsd}',
+            'rate_type': 'rateToCny+rateToUsd',
+            'note': f'RMB {_fmt(amount)} × {rateToCny} ÷ {rateToUsd} = USD {_fmt(result)}',
+        }
 
-    elif from_currency == 'USD' and to_currency == 'RMB':
-        if rateToUsd is not None and rateToCny is not None:
-            # USD → IDR → RMB: USD × rateToUsd ÷ rateToCny
-            result = (amount * rateToUsd / rateToCny).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
-            return {
-                'original': str(amount),
-                'converted': str(result),
-                'from_currency': from_currency,
-                'to_currency': to_currency,
-                'rate_used': f'{rateToUsd}/{rateToCny}',
-                'rate_type': 'rateToUsd+rateToCny',
-                'note': f'USD {int(amount):,} × {rateToUsd} ÷ {rateToCny} = RMB {int(result):,}',
-            }
-        return {'error': 'Both rateToUsd and rateToCny needed for USD → RMB conversion'}
+    if from_c == 'USD' and to_c == 'RMB':
+        if rateToUsd is None or rateToCny is None:
+            return {'error': 'Both rateToUsd and rateToCny are required for USD → RMB conversion（取同一条外币的两个汇率做桥）'}
+        result = (amount * rateToUsd / rateToCny).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+        return {
+            'original': str(amount),
+            'converted': str(result),
+            'from_currency': from_c,
+            'to_currency': to_c,
+            'rate_used': f'{rateToUsd}/{rateToCny}',
+            'rate_type': 'rateToUsd+rateToCny',
+            'note': f'USD {_fmt(amount)} × {rateToUsd} ÷ {rateToCny} = RMB {_fmt(result)}',
+        }
 
-    else:
-        return {'error': f'Unsupported conversion: {from_currency} → {to_currency}'}
+    return {'error': f'Unsupported conversion: {from_c} → {to_c}'}
+
+
+def _rates_table(services):
+    """汇总整批服务里出现过的人民币/美元汇率：{币种: {'rateToCny': D, 'rateToUsd': D}}。
+
+    外币 → 外币被拒后，若整批里恰好有目标币种的服务，也能拿到它的汇率做桥。
+    """
+    table = {}
+    for svc in services:
+        code = normalize_currency_code(svc.get('服务币种'))
+        if not code:
+            continue
+        slot = table.setdefault(code, {})
+        for key, field in (('rateToCny', '人民币兑换服务币种汇率'),
+                           ('rateToUsd', '美元兑换服务币种汇率')):
+            value = _to_decimal(svc.get(field))
+            if value is not None and key not in slot:
+                slot[key] = value
+    return table
+
+
+def _pick_bridge(table, from_c, to_c):
+    """人民币 ↔ 美元时挑一条两个汇率都有的外币做桥；优先 IDR。"""
+    candidates = [c for c, r in table.items()
+                  if c not in BASE_CURRENCIES and 'rateToCny' in r and 'rateToUsd' in r]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: (c != 'IDR', c))
+    return candidates[0]
 
 
 def batch_convert(query_result_path: str, to_currency: str) -> list:
     """Batch convert all service prices from an API query result JSON.
 
-    Reads the query result, extracts each service's price, currency, and rates,
-    then converts to the target currency.
+    读查文件里每个服务的价格/币种/汇率，换算到目标币种。外币 → 外币（两侧都不是
+    人民币/美元）时返回错误，提示向用户索取汇率。
     """
     try:
         with open(query_result_path, 'r', encoding='utf-8') as f:
@@ -170,52 +268,58 @@ def batch_convert(query_result_path: str, to_currency: str) -> list:
     if not services:
         return [{'error': 'No services found in query result'}]
 
+    to_c = normalize_currency_code(to_currency)
+    table = _rates_table(services)
     results = []
-    for svc in services:
-        price = svc.get('服务价格')
-        from_currency = svc.get('服务币种')
-        rateToCny_raw = svc.get('人民币兑换服务币种汇率')
-        rateToUsd_raw = svc.get('美元兑换服务币种汇率')
 
-        # Normalize currency codes (e.g. CNY -> RMB)
-        from_norm = normalize_currency_code(from_currency)
+    for svc in services:
+        name = svc.get('服务名称', 'unknown')
+        price = svc.get('服务价格')
+        from_norm = normalize_currency_code(svc.get('服务币种'))
 
         if price is None or from_norm is None:
             results.append({
-                'service': svc.get('服务名称', 'unknown'),
-                'error': f'Missing price or currency: price={price}, currency={from_currency}',
+                'service': name,
+                'error': f'Missing price or currency: price={price}, currency={svc.get("服务币种")}',
             })
             continue
 
-        # Parse price
         try:
             if isinstance(price, str):
                 price_d = Decimal(price.replace(',', '').strip())
             else:
                 price_d = Decimal(str(price))
         except Exception:
-            results.append({
-                'service': svc.get('服务名称', 'unknown'),
-                'error': f'Cannot parse price: {price}',
-            })
+            results.append({'service': name, 'error': f'Cannot parse price: {price}'})
             continue
 
-        # Parse rates
         rateToCny_d = None
         rateToUsd_d = None
-        if rateToCny_raw is not None:
-            try:
-                rateToCny_d = Decimal(str(rateToCny_raw))
-            except Exception:
-                pass
-        if rateToUsd_raw is not None:
-            try:
-                rateToUsd_d = Decimal(str(rateToUsd_raw))
-            except Exception:
-                pass
 
-        conversion = convert_single(price_d, from_norm, to_currency, rateToCny_d, rateToUsd_d)
-        conversion['service'] = svc.get('服务名称', 'unknown')
+        if from_norm in BASE_CURRENCIES and to_c in BASE_CURRENCIES and from_norm != to_c:
+            # 人民币 ↔ 美元：取一条外币的两个汇率做桥
+            bridge = _pick_bridge(table, from_norm, to_c)
+            if bridge:
+                rateToCny_d = table[bridge].get('rateToCny')
+                rateToUsd_d = table[bridge].get('rateToUsd')
+        else:
+            # 汇率的「非基准侧」= 两侧里不是人民币/美元的那个币种
+            foreign = from_norm if from_norm not in BASE_CURRENCIES else to_c
+            slot = dict(table.get(foreign, {}))
+            own = {
+                'rateToCny': _to_decimal(svc.get('人民币兑换服务币种汇率')),
+                'rateToUsd': _to_decimal(svc.get('美元兑换服务币种汇率')),
+            }
+            if from_norm == foreign:
+                # 服务本身就是该外币：优先用服务自带的汇率
+                merged = {k: v for k, v in own.items() if v is not None}
+                merged.update({k: v for k, v in slot.items() if k not in merged})
+                slot = merged
+            rateToCny_d = slot.get('rateToCny')
+            rateToUsd_d = slot.get('rateToUsd')
+
+        conversion = convert_single(price_d, from_norm, to_c, rateToCny_d, rateToUsd_d)
+        conversion['service'] = name
         conversion['original_currency'] = from_norm
         results.append(conversion)
 
@@ -266,15 +370,15 @@ def main():
     parser.add_argument('--amount', type=str, default=None,
                         help='Amount to convert (integer or comma-formatted)')
     parser.add_argument('--from', dest='from_currency', default=None,
-                        choices=['IDR', 'RMB', 'USD'],
-                        help='Source currency')
+                        help=f'Source currency ({"|".join(KNOWN_CURRENCIES)})')
     parser.add_argument('--to', dest='to_currency', default=None,
-                        choices=['IDR', 'RMB', 'USD'],
-                        help='Target currency')
+                        help=f'Target currency ({"|".join(KNOWN_CURRENCIES)})')
     parser.add_argument('--rateToCny', type=str, default=None,
                         help='Exchange rate from API: 1 CNY = rateToCny service currency')
     parser.add_argument('--rateToUsd', type=str, default=None,
                         help='Exchange rate from API: 1 USD = rateToUsd service currency')
+    parser.add_argument('--cross-rate', dest='cross_rate', type=str, default=None,
+                        help='外币 → 外币专用：1 <from> = N <to>，N 由用户提供（API 无此汇率）')
 
     # Batch mode: convert all services from a query result
     parser.add_argument('--query-result', default=None,
@@ -318,22 +422,21 @@ def main():
         sys.exit(1)
 
     # Parse rates
-    rateToCny_d = None
-    rateToUsd_d = None
-    if args.rateToCny is not None:
-        try:
-            rateToCny_d = Decimal(args.rateToCny)
-        except Exception:
-            print(f"❌ Cannot parse rateToCny: {args.rateToCny}", file=sys.stderr)
-            sys.exit(1)
-    if args.rateToUsd is not None:
-        try:
-            rateToUsd_d = Decimal(args.rateToUsd)
-        except Exception:
-            print(f"❌ Cannot parse rateToUsd: {args.rateToUsd}", file=sys.stderr)
-            sys.exit(1)
+    rateToCny_d = _to_decimal(args.rateToCny)
+    if args.rateToCny is not None and rateToCny_d is None:
+        print(f"❌ Cannot parse rateToCny: {args.rateToCny}", file=sys.stderr)
+        sys.exit(1)
+    rateToUsd_d = _to_decimal(args.rateToUsd)
+    if args.rateToUsd is not None and rateToUsd_d is None:
+        print(f"❌ Cannot parse rateToUsd: {args.rateToUsd}", file=sys.stderr)
+        sys.exit(1)
+    cross_rate_d = _to_decimal(args.cross_rate)
+    if args.cross_rate is not None and cross_rate_d is None:
+        print(f"❌ Cannot parse cross-rate: {args.cross_rate}", file=sys.stderr)
+        sys.exit(1)
 
-    result = convert_single(amount_d, args.from_currency, args.to_currency, rateToCny_d, rateToUsd_d)
+    result = convert_single(amount_d, args.from_currency, args.to_currency,
+                            rateToCny_d, rateToUsd_d, cross_rate_d)
 
     if 'error' in result:
         print(f"❌ {result['error']}", file=sys.stderr)

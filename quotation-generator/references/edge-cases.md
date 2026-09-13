@@ -2,9 +2,20 @@
 
 以下异常的处理方案从 SKILL.md『修复与异常边界』表拆出，正文表格只保留触发条件 + 一句话要点，完整处理见本文档对应小节。
 
-## 服务币种不支持（MYR、HKD 等）
+## 外币 → 外币（API 没有直接汇率）
 
-`convert_currency.py` 不支持 MYR、HKD 等非 IDR/RMB/USD 币种。手动换算：`MYR 价格 ÷ rateToCny = RMB 价格`，取整后写入 quotation.json；马币原价写入各服务 `note` 字段；`_meta` 中注明源币种和汇率公式。
+`rateToCny` / `rateToUsd` 的定义是「外币 ↔ 人民币 / 美元」，因此：
+
+| 场景 | 处理 |
+|------|------|
+| 外币 → 人民币 | 该外币 `rateToCny`（÷） |
+| 外币 → 美元 | 该外币 `rateToUsd`（÷） |
+| 人民币 / 美元 → 外币 | 同一汇率反向（×） |
+| 人民币 ↔ 美元 | 一条外币的两个汇率做桥，不用问用户 |
+| **外币 → 外币**（两侧都不是人民币/美元，如 THB→VND、MYR→SGD） | **API 没有汇率数据**：脚本会拒绝并提示索取。必须**向用户索取**（如「1 THB = N VND」），拿到后 `--cross-rate N`（1 `<from>` = N `<to>`）；若用户给的是反向汇率（1 VND = M THB），取 `1/M` 再传。**不得自己估汇率** |
+| 币种不在 8 个币种内（如 HKD） | 只要显式传汇率脚本就放行（`--rateToCny` / `--rateToUsd`）；不传则报 `Unknown ... currency` |
+
+8 个币种（IDR / RMB / USD / SGD / THB / VND / EGP / MYR）的所有「外币 ↔ 人民币/美元」换算都由 `convert_currency.py` 完成，取整 ROUND_HALF_UP，**不允许心算**。
 
 ## 分享链接而非 aiCode
 
