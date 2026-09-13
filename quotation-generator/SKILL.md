@@ -1,6 +1,6 @@
 ---
 name: quotation-generator
-version: 1.13.0
+version: 1.16.0
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
@@ -34,7 +34,7 @@ last_updated: "2026-09-13"
 | 1 | aiCode 必先 fetch | 只接受 `服务名-19位数字编码`；脚本会将完整字符串作为 `aiCodes` 请求参数；不截取末尾 19 位数字编码 |
 | 2 | 手改 `.docx` 优先 | 用户手改过的报价单，先保留客户可见内容再重新 build；付款方式保留规则详见『手改 .docx 保留』 |
 | 3 | 输出位置 | 最终生成的 `.docx` 放在 `quotation/YYYY-MM/` 下（YYYY-MM 为报价单日期所在年月）；`quotation.json`、`queried_services.json` 等过程文件写入其子目录；不写 skill 根目录；修改已有报价单时输出新文件 |
-| 4 | Agent 不改脚本 | 执行报价任务不得修改 build/validate/verify/fetch 等脚本；业务/数据问题按业务处理，只有严重脚本缺陷才提示联系 SKILL 开发者。页眉版式同理：12 主体模板统一为「文本段落 → 唯一定位段（承载蓝色分隔线）」，不要手改 `header1.xml`、也不要增删页眉末段——该段的高度正是正文避开蓝线的余量，动它会让蓝线压住正文「公司名称：」。版式已由 `tests/test_smoke.py` 锁定，改动后跑测试即可发现 |
+| 4 | Agent 不改脚本 | 执行报价任务不得修改 build/validate/verify/fetch 等脚本；业务/数据问题按业务处理，只有严重脚本缺陷才提示联系 SKILL 开发者。页眉版式同理：12 主体模板统一为「文本段落 → 唯一定位段（承载 logo + 蓝色分隔线）」，不要手改 `header1.xml`、也不要增删页眉末段——该段的高度正是正文避开蓝线的余量，动它会让蓝线压住正文「公司名称：」。logo 与蓝线必须锚在**同一段**：两个锚点的偏移量都从所在段落的顶端起算，同段时两者间距（`蓝线偏移 − logo 偏移 − logo 可见高度`，可见高度按 PNG alpha 量，位图自带的透明留白不算）才是模板常量；分开锚定会让蓝线随中文行高漂移而 logo 不动，字体缺字回退时蓝线就会压住 logo。承载 logo 的 run 必须沿用蓝线 run 的 `rPr`（字号与字体都会参与该段行高计算，即使是只装浮图、无文字的 run），否则末段变高、正文整体下移。版式已由 `tests/test_smoke.py` 锁定，改动后跑测试即可发现 |
 | 5 | 重复 aiCode 不累加 | 用户重复输入同一 aiCode 时，数量和价格不翻倍，也不累加；大概率是用户误重复输入。若用户明确要求"多加一行"，则在报价单中新增同名服务行（用序号或 aiCode 末三位区分），每行各自独立 |
 
 ## 签约主体
@@ -228,7 +228,7 @@ price:   13,333                            （直接写入 quotation.json）
 
 | API 内容 | 目标字段 | 规则 |
 |---------|----------|------|
-| 服务编码（API `productCode`） | `services[].items[].code` | 填写 API 返回的产品编码（如 `VN0101`）；build 时服务名自动渲染为 `编码-服务名`（如 `VN0101-外资公司注册`），无编码则原样显示服务名；`code` 可选 |
+| 服务编码（API `服务编码`） | `services[].items[].code` | **必填，每一列服务都要有**。从 `queried_services.json` 的 `服务编码` 逐条抄入（如 `ID0117`），build 时服务名自动渲染为 `编码-服务名`（如 `ID0117-公司注册`），报价单所有表格的服务名都带这个编码。**禁止自行编造编码**；API 对每个查到的服务都返回 `服务编码`，取不到就重查，不要留空 |
 | 办理时间 | `services[].items[].days` | 提取数字 + 单位（**工作日**或**月**）；多个时间取最长；**填单次/每件办理时间，不乘数量**（如 3 个服务各 15 个工作日 → 填 `15个工作日`，不写 `15个工作日x3`） |
 | 基本信息/服务说明/服务概述 | `services[].items[].note` | 摘要 100-250 字；不足 100 字完整呈现（脚本仅在 <40 字时提示确认信息是否不足）；**若基本信息中包含金额相关描述（如罚款金额、收费标准、官方费用等），必须将金额信息总结写入备注**；**若基本信息中包含带 `*` 的说明项（如 `*备注：`、`*注：`、`*注意：` 等），要将 `*` 标记的内容尽可能完整总结到备注中** |
 | 费用包含/服务包含 | `fee_details[].include` | 每条一项，保留原文 |
@@ -262,7 +262,7 @@ cp examples/sample_quotation.json "$WORKDIR/quotation.json"
 |------|------|
 | `_meta` | 内部留档：实体、源币种、目标币种、查询文件、使用汇率等 |
 | `quote_meta` | 标题、日期、客户、合同号、付款条件；**付款条件必须填非空数组**——留空 `[]` 会触发 validate error，不是静默回退实体默认值；不指定付款条件时从 `config/entities.json` 复制该实体 `payment_terms` 填入 |
-| `services` | 分组列表；每项含 `id/name/quantity/days/price/note`，可选 `code`（产品编码，展示时自动拼到服务名前）；`name` 不带数量、不带编码 |
+| `services` | 分组列表；每项含 `id/name/code/quantity/days/price/note`——**`code` 必填**（产品编码，展示时自动拼到服务名前，取自 `queried_services.json` 的 `服务编码`，不得编造）；`name` 和 `code` 分开放，`name` 不带数量、不带编码 |
 | `discount_amount` | 整数；无优惠填 0；优惠 ≤ 小计 |
 | `withholding_tax` | 布尔（**顶层**字段，与 `discount_amount`/`notes` 同级，不要放进 `_meta`）；泰国主体扣预扣税时填 `true`，否则不填或填 `false`。缺失或误放 `_meta` 时 build 会静默按不扣税处理 |
 | `notes` | 通用备注；公共不含项在这里统一显示。**不得写办理时间免责声明**（「服务内容」表没有办理时间列，`validate_data.py` 报错拦下） |
@@ -289,6 +289,7 @@ validate error → 必须修复，warning → 判断后处理。`--entity` 必�
 | 服务内容表格「序号」列显示服务编码而非数字 | `build_quotation.py` 使用自增计数器（1, 2, 3...）生成序号，不依赖 `item['id']`；旧数据 `id` 填了服务编码也不影响显示 |
 | 页眉/银行/签名不一致 | 检查 `--entity` 和 `config/entities.json`；属于业务/数据问题，不提示联系 SKILL 开发者 |
 | 服务名覆盖缺失 | 补齐 `fee_details/process_data/doc_data` 中缺失的同名条目 |
+| validate 报 `services[i].items[j].code is required`，或成稿服务内容只有服务名没有编码 | 汇总时漏抄 `服务编码`。回到 `queried_services.json`，按 `服务名称` 找到对应 `服务编码` 填入 `services[].items[].code`（如 `ID0117`），**不要自己编号码**；填完重新预检。verify 会拿数据文件的原始服务名跟成稿逐字比对，成稿服务名 == 原始服务名即报「服务内容缺少服务编码」 |
 | 金额或币种异常 | 检查 `discount_amount`、服务整数总价、汇率和实体币种；重新运行预检 |
 | 公共不含项重复出现在 `exclude` | 从各服务 `exclude` 移除公共项，在 `notes` 中统一显示 |
 | validate 报 `notes[i] 是办理时间免责声明，必须删除` | API 服务「备注」段的样板文被带进了 `notes`。`notes` 渲染在「服务内容」表下，该表没有办理时间列，「上述办理时间」无所指；直接从 `notes` 删除该条（不是改写），办理时间说明由页脚备注第 1 条承担。build 也会兜底剔除并告警 |

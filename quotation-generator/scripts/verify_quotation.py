@@ -42,16 +42,21 @@ def w(tag):
 
 
 def normalize_company_name(name):
-    """Normalize company name for comparison: strip '.' and collapse whitespace.
+    """Normalize company name for comparison: treat '.' as a separator, collapse spaces.
 
-    Singapore entity (and others) may write the same legal name with or
-    without a trailing/embedded dot (e.g. 'Pte.Ltd' vs 'Pte.Ltd.' or
-    'PT. SHAN HAI MAP' vs 'PT SHAN HAI MAP'). A dot difference is a
-    formatting artifact, not a real mismatch.
+    Banks record the same legal name with the dot punctuated differently
+    ('PT. SHAN HAI MAP', 'PT.SHAN HAI MAP', 'PT SHAN HAI MAP'), and which one
+    appears in a given account's records is not ours to choose - the account
+    holder name printed on a quotation has to match the bank's own record or the
+    transfer gets rejected. So all three spellings must compare equal.
+
+    Deleting the dot is not enough: it glues the surrounding words together
+    ('PT.SHAN' -> 'PTSHAN') while a dot followed by a space leaves them apart
+    ('PT. SHAN' -> 'PT SHAN'). Replacing it with a space normalizes both.
     """
     if not name:
         return ''
-    return re.sub(r'\s+', ' ', name.replace('.', '')).strip()
+    return re.sub(r'\s+', ' ', name.replace('.', ' ')).strip()
 
 
 def _strip_diacritics(text):
@@ -159,24 +164,37 @@ def detect_entity(paragraph_texts, entity_config):
     bank_section = find_bank_info_section(paragraph_texts)
     if not bank_section:
         return None
-    # Match by looking for unique bank info patterns
+    # Match by looking for unique bank info patterns. An entity quotes in several
+    # currencies and may hold a different account for each (jakarta bills IDR from
+    # BCA, USD from BNI, RMB from ICBC), so every currency's variant is a candidate
+    # — matching only bank_lines would miss any document quoting a non-default one.
     for entity_key, cfg in entity_config.items():
-        bank_lines = cfg.get('bank_lines', [])
+        variants = [cfg.get('bank_lines', [])]
+        variants += list(cfg.get('bank_lines_by_currency', {}).values())
         # Try matching on account number — most unique identifier
         for doc_line in bank_section:
-            for cfg_line in bank_lines:
-                # Extract account number patterns (Chinese or English)
-                # Allow optional text between keyword and colon; capture digits/spaces (account number)
-                account_match = re.search(r'(账号|账户号码|银行账号|Account Number|Account No)\b[^：:]*[：:]\s*([\d ]+)', cfg_line)
-                if account_match:
-                    account_num = account_match.group(2).replace(' ', '')
-                    if account_num in doc_line.replace(' ', ''):
-                        return entity_key
-    # Fallback: match by company name in bank section
+            for bank_lines in variants:
+                for cfg_line in bank_lines:
+                    # Extract account number patterns (Chinese or English)
+                    # Allow optional text between keyword and colon; capture digits/spaces (account number)
+                    account_match = re.search(r'(账号|账户号码|银行账号|Account Number|Account No)\b[^：:]*[：:]\s*([\d ]+)', cfg_line)
+                    if account_match:
+                        account_num = account_match.group(2).replace(' ', '')
+                        if account_num in doc_line.replace(' ', ''):
+                            return entity_key
+    # Fallback: match the account holder name against each entity's registered name.
+    # Comparing the extracted holder (not the raw line) lets the dot-insensitive
+    # comparison absorb bank spellings like 'PT.SHAN HAI MAP'.
+    bank_company = extract_company_from_bank(bank_section)
+    if bank_company:
+        for entity_key, cfg in entity_config.items():
+            if company_names_match(bank_company, cfg.get('company', '')):
+                return entity_key
+    # Last resort: the registered name appearing verbatim anywhere in the section
     for entity_key, cfg in entity_config.items():
         company = cfg.get('company', '')
         for doc_line in bank_section:
-            if company in doc_line:
+            if company and company in doc_line:
                 return entity_key
     print("⚠️  WARNING: Could not auto-detect signing entity from bank info; entity-specific checks will be skipped.", file=sys.stderr)
     return None
@@ -600,6 +618,30 @@ def verify_amounts(amounts, currency):
     return issues
 
 
+def check_service_codes(doc_service_names, data_for_verify):
+    """服务内容列必须以「编码-服务名」渲染，缺编码即报错。
+
+    build 用 with_code() 统一拼码，数据里没有 code 时它会静默回退成纯服务名；
+    fee/流程/材料三处按 name 反查、走的是同一个回退，所以「所有服务都缺编码」
+    在成稿里彼此自洽，光看文档发现不了——只有拿数据文件里的原始服务名对照：
+    成稿服务名若与原始服务名逐字相同，就是这个服务没渲染出编码。
+    """
+    if not data_for_verify or not doc_service_names:
+        return []
+    bare_names = set()
+    for group in data_for_verify.get('services', []):
+        for item in group.get('items', []):
+            name = (item.get('name') or '').strip()
+            if name:
+                bare_names.add(name)
+    return [
+        f"服务内容缺少服务编码: {doc_name}"
+        f"（数据文件中该服务未填 code，成稿应渲染为「编码-{doc_name}」）"
+        for doc_name in doc_service_names
+        if doc_name in bare_names
+    ]
+
+
 def load_data_for_verify(data_path):
     if not data_path:
         return None, []
@@ -891,6 +933,14 @@ def main():
                     all_warnings.append(f"{section_name}有多余服务: {', '.join(extra)}")
                 if not missing and not extra:
                     print(f"✅ {section_name}服务覆盖完整")
+
+            code_issues = check_service_codes(doc_service_names, data_for_verify)
+            if code_issues:
+                for ci in code_issues:
+                    print(f"❌ {ci}")
+                    all_issues.append(ci)
+            elif data_for_verify:
+                print("✅ 服务编码检查: 服务内容均带服务编码")
         else:
             all_warnings.append("未从文档提取到服务名列表")
 

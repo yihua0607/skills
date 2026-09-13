@@ -11,9 +11,11 @@ import os
 import shutil
 import subprocess
 import sys
+import struct
 import tempfile
 import unittest
 import zipfile
+import zlib
 from xml.etree import ElementTree as ET
 
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -32,6 +34,63 @@ def _docx_texts(docx_path, part='word/document.xml'):
     with zipfile.ZipFile(docx_path) as zf:
         root = ET.fromstring(zf.read(part))
     return [t.text.strip() for t in root.iter(f'{{{W}}}t') if t.text and t.text.strip()]
+
+
+def _png_alpha_bottom_padding(data):
+    """Fraction of a PNG's height that is transparent below its last inked row.
+
+    Word scales the whole bitmap — transparent slack included — to the anchor's
+    wp:extent, so a logo whose PNG has empty rows under the mark still draws its
+    visible bottom edge above the bottom of that box. Anything reasoning about the
+    gap between the mark and the blue separator has to use the ink, not the box.
+
+    Stdlib only (the templates ship 8-bit RGBA, non-interlaced PNGs), so the test
+    suite needs no imaging dependency.
+    """
+    if data[:8] != b'\x89PNG\r\n\x1a\n':
+        raise ValueError('not a PNG')
+    pos, chunks, width = 8, [], None
+    while pos < len(data):
+        (length,) = struct.unpack('>I', data[pos:pos + 4])
+        ctype = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + length]
+        if ctype == b'IHDR':
+            width, height, depth, colour, _, _, interlace = struct.unpack('>IIBBBBB', body)
+            if (depth, colour, interlace) != (8, 6, 0):
+                raise ValueError(f'unsupported PNG: depth={depth} colour={colour}')
+        elif ctype == b'IDAT':
+            chunks.append(body)
+        elif ctype == b'IEND':
+            break
+        pos += 12 + length
+
+    raw = zlib.decompress(b''.join(chunks))
+    stride = width * 4
+    prev = bytearray(stride)
+    last_inked = -1
+    for y in range(height):
+        line = raw[y * (stride + 1):(y + 1) * (stride + 1)]
+        ftype, scan = line[0], bytearray(line[1:])
+        if ftype:  # undo the per-scanline PNG filter
+            for i in range(stride):
+                left = scan[i - 4] if i >= 4 else 0
+                up = prev[i]
+                upleft = prev[i - 4] if i >= 4 else 0
+                if ftype == 1:
+                    scan[i] = (scan[i] + left) & 0xFF
+                elif ftype == 2:
+                    scan[i] = (scan[i] + up) & 0xFF
+                elif ftype == 3:
+                    scan[i] = (scan[i] + (left + up) // 2) & 0xFF
+                elif ftype == 4:
+                    p = left + up - upleft
+                    pa, pb, pc = abs(p - left), abs(p - up), abs(p - upleft)
+                    pred = left if (pa <= pb and pa <= pc) else (up if pb <= pc else upleft)
+                    scan[i] = (scan[i] + pred) & 0xFF
+        if max(scan[3::4]) > 8:
+            last_inked = y
+        prev = scan
+    return 0.0 if last_inked < 0 else (height - 1 - last_inked) / height
 
 
 def _run_script(name, args, cwd=SKILL_ROOT):
@@ -58,11 +117,9 @@ def _copy_example(tmpdir, example_name):
 def _header_trailing_paragraph_count(docx_path):
     """Count empty paragraphs following the last text paragraph in header1.xml.
 
-    Two header layouts exist. In the china/egypt/deyin/singapore/malaysia
-    templates the blue separator line is anchored in its own trailing paragraph;
-    in the jakarta/vietnam/thailand templates it is anchored inside the "Web:"
-    paragraph and the trailing empties are deliberate spacers that reserve room
-    so the body's first line stays clear of the line."""
+    Every template ends with exactly one such paragraph, and it carries both the
+    blue separator line and the logo. Its height is what reserves room so the
+    body's first line stays clear of the line, so build must not change it."""
     W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
     with zipfile.ZipFile(docx_path) as zf:
         root = ET.fromstring(zf.read('word/header1.xml'))
@@ -349,6 +406,75 @@ class TestQuotationSmoke(unittest.TestCase):
             )
             self.assertNotEqual(rc, 0)
             self.assertIn('备注中出现办理时间免责声明', out)
+
+    def test_validate_rejects_service_without_code(self):
+        """服务编码必填——「服务内容」列要渲染成「编码-服务名」。
+
+        没有编码服务行就没有可对账的产品标识；API 一直返回 服务编码，缺编码是
+        Agent 汇总时漏抄，必须在 preflight 就拦下。
+        """
+        with tempfile.TemporaryDirectory(prefix='quotation-missing-code-') as tmpdir:
+            src = os.path.join(SKILL_ROOT, 'examples', 'minimal_quotation.json')
+            data_path = os.path.join(tmpdir, 'quotation.json')
+            with open(src, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            del data['services'][0]['items'][0]['code']
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            rc, out, err = _run_script('validate_data.py', ['--entity', 'xian', '--data', data_path])
+            self.assertNotEqual(rc, 0)
+            self.assertIn('services[0].items[0].code is required', out)
+
+    def test_build_renders_code_in_service_content(self):
+        """成稿「服务内容」列必须是「编码-服务名」，而不是裸服务名。"""
+        with tempfile.TemporaryDirectory(prefix='quotation-code-render-') as tmpdir:
+            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
+            output_path = os.path.join(tmpdir, '报价单-编码.docx')
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path, '--output', output_path]
+            )
+            self.assertEqual(rc, 0, f"build_quotation.py failed:\nstdout: {out}\nstderr: {err}")
+
+            texts = _docx_texts(output_path)
+            self.assertIn('ID1504-BPOM 化妆品延期注册', texts,
+                          "服务内容必须渲染为「编码-服务名」")
+
+    def test_verify_rejects_service_content_without_code(self):
+        """verify 独立复核：成稿服务内容掉了编码就要失败。
+
+        三处渲染共用同一份数据，「所有服务都没编码」时彼此自洽、覆盖检查照样通过，
+        只有跟数据文件的原始服务名逐字对照才能发现。
+        """
+        with tempfile.TemporaryDirectory(prefix='quotation-code-verify-') as tmpdir:
+            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
+            output_path = os.path.join(tmpdir, '报价单-编码.docx')
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path, '--output', output_path]
+            )
+            self.assertEqual(rc, 0, f"build_quotation.py failed:\nstdout: {out}\nstderr: {err}")
+
+            rc, out, err = _run_script(
+                'verify_quotation.py',
+                ['--input', output_path, '--data', data_path, '--entity', 'xian']
+            )
+            self.assertEqual(rc, 0, f"clean build must verify:\nstdout: {out}\nstderr: {err}")
+            self.assertIn('服务编码检查', out)
+
+            edited_path = os.path.join(tmpdir, 'edited.docx')
+            _replace_docx_visible_text(
+                output_path, edited_path,
+                'ID1504-BPOM 化妆品延期注册', 'BPOM 化妆品延期注册')
+            shutil.copy(edited_path, output_path)
+
+            rc, out, err = _run_script(
+                'verify_quotation.py',
+                ['--input', output_path, '--data', data_path, '--entity', 'xian']
+            )
+            self.assertNotEqual(rc, 0)
+            self.assertIn('服务内容缺少服务编码', out)
 
     def test_build_rejects_invalid_quote_date(self):
         """Build must fail rather than silently replacing an invalid visible date."""
@@ -915,10 +1041,9 @@ class TestQuotationSmoke(unittest.TestCase):
     def test_all_entity_templates_share_one_header_layout(self):
         """Every entity template must use the same compact header layout.
 
-        Canonical layout: logo/company-name paragraph, address line(s), the "Web:"
-        line, then exactly one trailing paragraph that carries the blue separator
-        line at ~3pt below its top. No spacer paragraphs, and no template missing
-        the separator.
+        Canonical layout: company-name paragraph, address line(s), the "Web:" line,
+        then exactly one trailing paragraph that carries the logo and the blue
+        separator line. No spacer paragraphs, and no template missing the separator.
         """
         sys.path.insert(0, os.path.join(SKILL_ROOT, 'scripts'))
         from build_quotation import TEMPLATES
@@ -950,6 +1075,102 @@ class TestQuotationSmoke(unittest.TestCase):
                 self.assertNotEqual(
                     spacing.get(f'{{{W}}}line') if spacing is not None else None, '0',
                     f"{key}: trailing paragraph must not be collapsed to zero height")
+
+    def test_logo_and_separator_share_one_anchor_paragraph(self):
+        """The logo and the blue separator must be anchored in the same paragraph.
+
+        Both anchors measure their offset from their own paragraph's top, so a shared
+        paragraph makes the clearance
+
+            line_y - logo_ink_bottom
+                = separator_offset - logo_offset - logo_ink_height
+
+        a constant of the template. While the logo hung off the header's first
+        paragraph and the line off its last, only the line's offset rode the header
+        text block — whose height is font-metric dependent — so on a machine without
+        微软雅黑 the two drifted together and the line ran into the logo.
+        """
+        sys.path.insert(0, os.path.join(SKILL_ROOT, 'scripts'))
+        from build_quotation import TEMPLATES
+
+        W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+        WP = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
+        A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+        R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+        EMU_PER_PT = 12700
+
+        for key, path in sorted(TEMPLATES.items()):
+            with self.subTest(template=key):
+                with zipfile.ZipFile(path) as zf:
+                    root = ET.fromstring(zf.read('word/header1.xml'))
+                    targets = {rel.get('Id'): rel.get('Target') for rel in ET.fromstring(
+                        zf.read('word/_rels/header1.xml.rels'))}
+                    logo_png = zf.read('word/' + targets[
+                        next(root.iter(f'{{{A}}}blip')).get(f'{{{R}}}embed')].lstrip('/'))
+                paras = [p for p in root if p.tag == f'{{{W}}}p']
+
+                logo = line = None
+                for anchor in root.iter(f'{{{WP}}}anchor'):
+                    if anchor.find(f'.//{{{A}}}blip') is not None:
+                        logo = anchor
+                    else:
+                        line = anchor
+                self.assertIsNotNone(logo, f"{key}: header has no logo anchor")
+                self.assertIsNotNone(line, f"{key}: header has no separator anchor")
+
+                def owning_paragraph(anchor):
+                    for index, para in enumerate(paras):
+                        if any(a is anchor for a in para.iter(f'{{{WP}}}anchor')):
+                            return index
+                    return None
+
+                self.assertEqual(
+                    owning_paragraph(logo), owning_paragraph(line),
+                    f"{key}: logo and separator are anchored in different paragraphs, "
+                    f"so their clearance rides the header text block's height and "
+                    f"changes with the CJK font")
+
+                def offset(anchor):
+                    return int(anchor.find(f'{{{WP}}}positionV/{{{WP}}}posOffset').text)
+
+                # Clearance to the mark's visible bottom edge, not to the bitmap box:
+                # the box is what the offsets position, the ink is what a reader sees.
+                box = int(logo.find(f'{{{WP}}}extent').get('cy'))
+                ink = box * (1 - _png_alpha_bottom_padding(logo_png))
+                clearance = offset(line) - offset(logo) - ink
+                self.assertGreater(
+                    clearance, 0,
+                    f"{key}: the separator sits {clearance / EMU_PER_PT:.2f}pt below the "
+                    f"logo's bottom edge — the blue line is overlapping the logo")
+
+    def test_trailing_header_paragraph_takes_its_height_from_its_mark(self):
+        """No run in the header's trailing paragraph may declare a font size.
+
+        That paragraph's height is the room the body gets below the blue line, and a
+        paragraph's line height follows the largest font among its runs — even for a
+        run holding nothing but a floating drawing. Carrying the logo into that
+        paragraph therefore also carried the size that run needed where it used to
+        live (w:sz 40/44 = 20/22pt, against a mark that declares none), which drops
+        the body by roughly 11pt on every page. Only the mark sets the height here;
+        the logo's size comes from wp:extent.
+        """
+        sys.path.insert(0, os.path.join(SKILL_ROOT, 'scripts'))
+        from build_quotation import TEMPLATES
+
+        W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+        for key, path in sorted(TEMPLATES.items()):
+            with self.subTest(template=key):
+                with zipfile.ZipFile(path) as zf:
+                    root = ET.fromstring(zf.read('word/header1.xml'))
+                last = [p for p in root if p.tag == f'{{{W}}}p'][-1]
+                for run in last.findall(f'{{{W}}}r'):
+                    size = run.find(f'{{{W}}}rPr/{{{W}}}sz')
+                    self.assertIsNone(
+                        size,
+                        f"{key}: a run in the trailing header paragraph declares "
+                        f"sz={size.get(f'{{{W}}}val') if size is not None else None}, so it "
+                        f"now sets that paragraph's line height and pushes the body "
+                        f"down the page")
 
     def test_build_normalizes_non_a4_template_to_a4(self):
         """A drifted (non-A4) template must still yield an A4-printable quotation.
@@ -1093,7 +1314,8 @@ class TestQuotationSmoke(unittest.TestCase):
 
         The separator's floating anchor sits a fixed offset below its paragraph, so
         editing the paragraph's height or dropping it moves the blue line off its
-        intended position — onto the body's first line ("公司名称：").
+        intended position — onto the body's first line ("公司名称：") or the logo
+        anchored in that same paragraph.
         """
         cases = [
             ('jakarta', 'sample_quotation.json', '报价单模板-雅加达公司.docx'),

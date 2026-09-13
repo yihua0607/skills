@@ -87,14 +87,9 @@ def validate_and_normalize_data(data):
                 errors.append(f'{item_path} must be an object')
                 continue
             name = require_text(item, 'name', item_path, errors)
-            code = item.get('code')
-            if code is None:
-                code = ''
-            elif not isinstance(code, str):
-                errors.append(f'{item_path}.code must be text when provided')
-                code = ''
-            else:
-                code = code.strip()
+            # 服务编码必填：报价单「服务内容」列必须渲染成「编码-服务名」。编码一律取自
+            # API 的 `服务编码`，不得自编；缺了它服务行在成稿里就没有可对账的产品标识。
+            code = require_text(item, 'code', item_path, errors)
             service_id = require_text(item, 'id', item_path, errors)
             days = require_text(item, 'days', item_path, errors)
             note = require_text(item, 'note', item_path, errors)

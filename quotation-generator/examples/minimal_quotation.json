@@ -1,14 +1,14 @@
 {
   "_meta": {
-    "description": "最小报价数据示例；price 为目标报价币种的整数总价。",
+    "description": "最小报价数据示例；price 为目标报价币种的整数总价。services[].items[].code 必填，须取自 API 的 `服务编码`，下例 ID1504 即 queried_services.json 中该服务的真实编码。",
     "applicable_entity": "xian",
     "query_result_file": "queried_services.json",
     "source_currency": "IDR",
     "target_currency": "RMB",
     "exchange_rates": [
       {
-        "service_name": "儿童玩具-SNI认证",
-        "ai_code": "儿童玩具-SNI认证-2072304344749555713",
+        "service_name": "BPOM 化妆品延期注册",
+        "ai_code": "BPOM 化妆品延期注册-2098636528563453953",
         "rateToCny": "2173.91",
         "rateToUsd": "16000",
         "rate_source": "ShanhaiMap aiCode API"
@@ -33,11 +33,12 @@
       "items": [
         {
           "id": "1",
-          "name": "儿童玩具-SNI认证",
+          "name": "BPOM 化妆品延期注册",
+          "code": "ID1504",
           "quantity": 1,
-          "days": "30个工作日",
+          "days": "19个工作日",
           "price": 115000,
-          "note": "本服务用于儿童玩具产品在印尼市场销售前的 SNI 认证申请，包含资料审核、申请提交及认证流程跟进。"
+          "note": "本服务为 BPOM 化妆品分销许可证（NIE）到期前的延期注册申请，无需更改产品配方即可提交。须在有效期到期前 100 天提交，且不得晚于到期前 30 天；许可证一旦过期只能重新申请。"
         }
       ]
     }
@@ -52,35 +53,43 @@
   ],
   "fee_details": [
     {
-      "name": "儿童玩具-SNI认证",
+      "name": "BPOM 化妆品延期注册",
       "include": [
-        "服务费",
-        "认证申请资料整理"
+        "山海图服务费"
       ],
-      "exclude": [],
+      "exclude": [
+        "SPB 官费（东盟以外生产的化妆品 Rp1,500,000/产品）",
+        "资料快递费（国际快递）",
+        "文件翻译费"
+      ],
       "note": ""
     }
   ],
   "process_data": [
     {
-      "name": "儿童玩具-SNI认证",
+      "name": "BPOM 化妆品延期注册",
       "process": [
         "第一步：收集资料",
-        "第二步：提交申请",
-        "第三步：跟进审核并取得结果"
+        "第二步：提交 BPOM 化妆品注册延期申请及 SPB 付款通知（1 个工作日）",
+        "第三步：客户支付 SPB 官费（3 个工作日）",
+        "第四步：BPOM 审核产品资料（14 个工作日）",
+        "第五步：颁发 BPOM NIE 产品分销许可证号期延长函（1 个工作日）"
       ],
       "deliverables": [
-        "1. SNI 认证结果文件"
+        "1. BPOM NIE 产品分销许可证号期延长函"
       ]
     }
   ],
   "doc_data": [
     {
-      "name": "儿童玩具-SNI认证",
+      "name": "BPOM 化妆品延期注册",
       "docs": [
-        "1. 产品资料",
-        "2. 公司资料",
-        "3. 测试报告（如有）"
+        "1. 商业登记证",
+        "2. 工厂与进口商的合作协议（印尼公证）/CFS 自由销售证书（海牙认证）",
+        "3. GMP / ISO 22716（海牙认证）",
+        "4. 印尼商标证书/商标注册证明",
+        "5. 化妆品成分表（含 INCI 名称、材料功能、百分比 100%）",
+        "6. 化妆品安全评估报告（山海图提供）"
       ]
     }
   ]

@@ -6,7 +6,7 @@
 
 | 实体 | SWIFT CODE | 状态 |
 |------|-----------|------|
-| jakarta (PT. SHAN HAI MAP) | CENAIDJA | ✅ 已配置 |
+| jakarta (PT. SHAN HAI MAP) | CENAIDJA (IDR) / BNINIDJAXXX (USD) / ICBKIDJAXXX (RMB) | ✅ 已配置 |
 | beijing (北京山海图科技有限公司) | — | ❌ 缺失 |
 | xian (北京山海图科技有限公司西安分公司) | — | ❌ 缺失 |
 | shenzhen (北京山海图科技有限公司深圳分公司) | — | ❌ 缺失 |
@@ -22,10 +22,26 @@
 ## 完整银行信息
 
 ### jakarta
-- 银行：BCA (KCP CENTRAL PARK)
-- 户名：PT. SHAN HAI MAP
-- 账号：5485225789
-- SWIFT：CENAIDJA
+按币种使用不同账户（`bank_lines_by_currency`）：
+- **IDR 账户**：
+  - 银行：BCA (KCP CENTRAL PARK)
+  - 户名：PT. SHAN HAI MAP
+  - 账号：5485225789
+  - SWIFT：CENAIDJA
+  - 分行：KCP CENTRAL PARK, Jl. Letjen S. Parman Komp. Podomoro, RT. 9/RW 5, Tj. Duren Selatan, Grogol Petamburan, Kota Jakarta Barat, DKI Jakarta, 11470.
+- **USD 账户**：
+  - 银行名称：BNI (BANK NEGARA INDONESIA)
+  - 账号名称：PT SHAN HAI MAP
+  - 银行账号：6060677669
+  - SWIFT：BNINIDJAXXX
+  - 分行名称：BNI APL TOWER Grogol petamburan Jakarta Barat
+- **RMB 账户**：
+  - 银行名称：ICBC (KCP CENTRAL PARK)
+  - 账号名称：PT.SHAN HAI MAP
+  - 银行账号：0120020400000811366
+  - SWIFT：ICBKIDJAXXX
+  - 分行名称：ICBC (CENTRAL PARK BRANCH)
+- ⚠️ 户名三种写法不同（`PT. SHAN HAI MAP` / `PT SHAN HAI MAP` / `PT.SHAN HAI MAP`），是各行开户记录原样，报价单须照录，不要统一标点
 
 ### beijing
 - 账户名称：北京山海图科技有限公司

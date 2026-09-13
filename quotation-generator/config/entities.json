@@ -41,7 +41,30 @@
       "银行账号：5485225789",
       "国际银行代码 Swift Code：CENAIDJA",
       "分行名称：KCP CENTRAL PARK, Jl. Letjen S. Parman Komp. Podomoro, RT. 9/RW 5, Tj. Duren Selatan, Grogol Petamburan, Kota Jakarta Barat, DKI Jakarta, 11470."
-    ]
+    ],
+    "bank_lines_by_currency": {
+      "IDR": [
+        "银行名称：BCA (KCP CENTRAL PARK)",
+        "账号名称：PT. SHAN HAI MAP",
+        "银行账号：5485225789",
+        "国际银行代码 Swift Code：CENAIDJA",
+        "分行名称：KCP CENTRAL PARK, Jl. Letjen S. Parman Komp. Podomoro, RT. 9/RW 5, Tj. Duren Selatan, Grogol Petamburan, Kota Jakarta Barat, DKI Jakarta, 11470."
+      ],
+      "USD": [
+        "银行名称：BNI (BANK NEGARA INDONESIA)",
+        "账号名称：PT SHAN HAI MAP",
+        "银行账号：6060677669",
+        "国际银行代码 Swift Code：BNINIDJAXXX",
+        "分行名称：BNI APL TOWER Grogol petamburan Jakarta Barat"
+      ],
+      "RMB": [
+        "银行名称：ICBC (KCP CENTRAL PARK)",
+        "账号名称：PT.SHAN HAI MAP",
+        "银行账号：0120020400000811366",
+        "国际银行代码 Swift Code：ICBKIDJAXXX",
+        "分行名称：ICBC (CENTRAL PARK BRANCH)"
+      ]
+    }
   },
   "beijing": {
     "template": "china",
