@@ -327,6 +327,12 @@ class TestQuotationSmoke(unittest.TestCase):
             '上述价格不包括政府规费，办理时间以官方审批为准。',
             '办理时间为 11 个工作日，费用不包含官费。',
             '以上办理时间为收集齐所需资料及信息开始的官方办理时间，法定节假日及办证政府机构休息日不算入办理时间。',
+            # 「办理时间不包括 X」这个壳子本身不是免责声明：正常业务说明也这么写，
+            # 误杀的代价是 validate 拦下 + build 删掉合法信息。
+            '办理时间不包括节假日',
+            '办理时间不包括周末及法定节假日，实际以官方受理为准。',
+            '该服务办理时间不包括客户准备材料的时间',
+            '备案办理时间不包括公示期',
             '',
         ):
             with self.subTest(text=text):
@@ -527,7 +533,7 @@ class TestQuotationSmoke(unittest.TestCase):
                 ['--entity', 'xian', '--data', data_path, '--output', output_path]
             )
             self.assertEqual(rc, 0, f"rebuild failed:\nstdout: {out}\nstderr: {err}")
-            self.assertIn('Preserved payment terms', out)
+            self.assertIn('付款方式来源：旧报价单', out)
 
             with zipfile.ZipFile(output_path, 'r') as zf:
                 xml_bytes = zf.read('word/document.xml')
@@ -623,7 +629,7 @@ class TestQuotationSmoke(unittest.TestCase):
                 cwd=tmpdir,
             )
             self.assertEqual(rc, 0, f"default rebuild failed:\nstdout: {out}\nstderr: {err}")
-            self.assertIn('Preserved payment terms', out)
+            self.assertIn('付款方式来源：旧报价单', out)
 
             with zipfile.ZipFile(output_path, 'r') as zf:
                 root = ET.fromstring(zf.read('word/document.xml'))
@@ -656,7 +662,7 @@ class TestQuotationSmoke(unittest.TestCase):
                 ['--entity', 'xian', '--data', data_path, '--output', output_path]
             )
             self.assertEqual(rc, 0, f"rebuild failed:\nstdout: {out}\nstderr: {err}")
-            self.assertIn('Preserved payment terms', out)
+            self.assertIn('付款方式来源：旧报价单', out)
             self.assertIn('付款方式比例合计', err)
             self.assertIn('付款方式金额合计', err)
 
@@ -833,6 +839,100 @@ class TestQuotationSmoke(unittest.TestCase):
             rc, out, err = _run_script('validate_data.py', ['--entity', 'xian', '--data', data_path])
             self.assertNotEqual(rc, 0)
             self.assertIn('_meta.target_currency', out)
+
+    def test_validate_rejects_withholding_tax_for_entity_without_rate(self):
+        """预扣税只有配了 withholding_tax_rate 的主体支持（当前仅 thailand）。
+
+        非泰国主体写 true 时 build 会静默按不扣税生成，verify 才报「expected in data but
+        not found in document」——预检必须提前拦下，否则问题拖到最后一步才暴露。
+        """
+        with tempfile.TemporaryDirectory(prefix='quotation-wht-') as tmpdir:
+            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
+            with open(data_path, encoding='utf-8') as f:
+                data = json.load(f)
+            data['withholding_tax'] = True
+
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            rc, out, err = _run_script('validate_data.py', ['--entity', 'xian', '--data', data_path])
+            self.assertNotEqual(rc, 0, f"validate 应拦下非泰国主体的 withholding_tax:\n{out}")
+            self.assertIn('withholding_tax 仅支持', out)
+
+    def test_validate_warns_when_thailand_omits_withholding_tax(self):
+        """泰国主体漏填 withholding_tax：预检要提醒（SKILL 要求必须先问用户），但不阻断。"""
+        with tempfile.TemporaryDirectory(prefix='quotation-wht-th-') as tmpdir:
+            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
+            with open(data_path, encoding='utf-8') as f:
+                data = json.load(f)
+            data['_meta']['applicable_entity'] = 'thailand'
+            data['_meta']['target_currency'] = 'THB'
+            data.pop('withholding_tax', None)
+
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            rc, out, err = _run_script('validate_data.py', ['--entity', 'thailand', '--data', data_path])
+            self.assertEqual(rc, 0, f"漏填只应提醒，不应阻断:\n{out}")
+            self.assertIn('缺少顶层 withholding_tax 字段', out)
+
+    def test_thailand_withholding_tax_is_rendered_and_verifies(self):
+        """泰国 + withholding_tax: true：报价单出现预扣税行，verify 的金额公式复核通过。"""
+        with tempfile.TemporaryDirectory(prefix='quotation-wht-render-') as tmpdir:
+            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
+            output_path = os.path.join(tmpdir, '报价单-泰国-预扣税.docx')
+            with open(data_path, encoding='utf-8') as f:
+                data = json.load(f)
+            data['_meta']['applicable_entity'] = 'thailand'
+            data['_meta']['target_currency'] = 'THB'
+            data['services'][0]['items'][0]['price'] = 52000
+            data['withholding_tax'] = True
+
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            rc, out, err = _run_script('validate_data.py', ['--entity', 'thailand', '--data', data_path])
+            self.assertEqual(rc, 0, f"validate failed:\n{out}\n{err}")
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'thailand', '--data', data_path, '--output', output_path]
+            )
+            self.assertEqual(rc, 0, f"build failed:\n{out}\n{err}")
+
+            rc, out, err = _run_script(
+                'verify_quotation.py',
+                ['--entity', 'thailand', '--input', output_path, '--data', data_path]
+            )
+            self.assertEqual(rc, 0, f"verify failed:\n{out}\n{err}")
+
+            with zipfile.ZipFile(output_path) as zf:
+                root = ET.fromstring(zf.read('word/document.xml'))
+            all_text = ''.join(t.text or '' for t in root.iter(
+                '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t'))
+            self.assertIn('预扣税 3%', all_text)
+
+    def test_build_reports_payment_terms_source_for_new_output(self):
+        """输出到新文件时，build 必须说清付款方式取自哪里，并提示旧单子上的手改不会被沿用。"""
+        with tempfile.TemporaryDirectory(prefix='quotation-payment-source-') as tmpdir:
+            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
+            edited_path = os.path.join(tmpdir, '报价单-旧版.docx')
+            new_path = os.path.join(tmpdir, '报价单-新版.docx')
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path, '--output', edited_path]
+            )
+            self.assertEqual(rc, 0, f"首次 build failed:\n{out}\n{err}")
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path, '--output', new_path]
+            )
+            self.assertEqual(rc, 0, f"第二次 build failed:\n{out}\n{err}")
+            self.assertIn('付款方式来源：quotation.json', out)
+            self.assertIn('--preserve-payment-from', out,
+                          f"输出新文件且有同目录旧单子时必须提示保留入口:\n{out}")
 
     def test_convert_currency_json_only_stdout_is_parseable_json(self):
         """--json-only keeps stdout machine-readable for agents."""

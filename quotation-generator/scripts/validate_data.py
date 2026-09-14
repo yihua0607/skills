@@ -94,6 +94,23 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
                 f'_meta.target_currency ({currency}) is not allowed for --entity ({entity_key}); '
                 f'allowed: {", ".join(allowed_currencies)}')
 
+    # ── 预扣税只支持配了 withholding_tax_rate 的主体（当前仅 thailand）──
+    # 未配置的主体写 true 时，build 会静默按不扣税生成（报价单不会出现预扣税行），
+    # 但 verify 拿 quotation.json 的 flag 比对成稿，必然报「expected in data but not
+    # found in document」——问题会拖到最后一关才暴露，所以在这里直接拦下。
+    wht_rate = entity_cfg.get('withholding_tax_rate')
+    wht_flag = data.get('withholding_tax')
+    if wht_rate is None and wht_flag is True:
+        errors.append(
+            f'withholding_tax 仅支持已配置 withholding_tax_rate 的签约主体，--entity {entity_key} '
+            f'未配置。请删除该字段或改为 false；保留 true 会被 build 静默忽略，'
+            f'并在 verify 阶段报「Withholding tax expected in data but not found in document」')
+    elif wht_rate is not None and 'withholding_tax' not in data:
+        warnings.append(
+            f'--entity {entity_key} 支持预扣税（{float(wht_rate) * 100:g}%），但 quotation.json 缺少顶层 '
+            f'withholding_tax 字段：本次不会扣除。按业务要求需先向用户确认——'
+            f'要扣则填 true，明确不扣则填 false，不要留空')
+
     # ── Notes must not contain currency exchange / rate info ──
     notes = data.get('notes', [])
     if notes:
@@ -111,7 +128,10 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
             if is_process_time_disclaimer(text):
                 errors.append(
                     f'notes[{i}] 是办理时间免责声明，必须删除：服务内容表没有「办理时间」列，'
-                    '备注中的办理时间指不到任何上文；该说明已由页脚备注第 1 条覆盖。'
+                    '备注中的办理时间指不到任何上文。这句话要表达的信息已由文末标准备注第 1 条'
+                    '（办理时间自「收集齐所需资料及信息」起算，法定节假日及办证机构休息日不算入）'
+                    '完整覆盖——客户准备材料、签字盖章反馈、文件邮寄都在起算点之前，本就不计入。'
+                    '直接删除即可，不要改写成别的措辞，也不必另找位置补写一遍。'
                     f'原文：{text}'
                 )
 

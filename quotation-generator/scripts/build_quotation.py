@@ -78,7 +78,7 @@ def main():
     parser = argparse.ArgumentParser(description='Generate quotation from template')
     parser.add_argument('--entity', required=True,
                         choices=list(ENTITY_CONFIG.keys()),
-                        help='Signing entity (required): jakarta/beijing/xian/shenzhen/shanghai/shanghai_new/singapore/deyin/thailand/vietnam')
+                        help='Signing entity (required): ' + '/'.join(ENTITY_CONFIG))
     parser.add_argument('--output', default=None, help='Output .docx path (default: CWD)')
     parser.add_argument('--data', required=True, help='Quotation data file (.json)')
     parser.add_argument('--title-line1', default=None, help='Title first line (default: quote_meta.title_line1 or 报价单)')
@@ -639,7 +639,8 @@ def main():
     if preserve_payment_source and not args.overwrite_payment_terms:
         try:
             preserved_payment_terms = extract_payment_terms(os.path.abspath(preserve_payment_source))
-            print(f"✅ Preserved payment terms from existing .docx: {os.path.abspath(preserve_payment_source)}")
+            print(f"✅ 付款方式来源：旧报价单 {os.path.abspath(preserve_payment_source)}"
+                  f"（如需改用 quotation.json 的条款，加 --overwrite-payment-terms）")
         except Exception as exc:
             print(
                 f"❌ 无法从旧报价单保留付款方式: {preserve_payment_source}: {exc}。"
@@ -648,6 +649,28 @@ def main():
                 file=sys.stderr,
             )
             sys.exit(2)
+    else:
+        # 没有旧 .docx 可沿用：说清楚条款从哪来，避免「手改过的付款方式」被静默换掉。
+        if quote_meta.get('payment_terms'):
+            print("付款方式来源：quotation.json（quote_meta.payment_terms）")
+        else:
+            print(f"付款方式来源：实体默认配置（{entity}）")
+        if args.overwrite_payment_terms and preserve_payment_source:
+            print(f"（--overwrite-payment-terms：已忽略旧报价单 {preserve_payment_source} 的付款方式）")
+        # 修改报价单时按流程应输出新文件；此时同目录旧单子上的手改付款方式不会自动沿用。
+        if not args.preserve_payment_from and not os.path.exists(OUTPUT):
+            out_dir = os.path.dirname(OUTPUT) or os.getcwd()
+            try:
+                siblings = sorted(
+                    n for n in os.listdir(out_dir)
+                    if n.lower().endswith('.docx') and not n.startswith('~$')
+                )[:3]
+            except OSError:
+                siblings = []
+            if siblings:
+                print("⚠️  提示：本次输出的是新文件，同目录已有报价单（" + "、".join(siblings) +
+                      "）；它们上面手改过的付款方式不会自动沿用，"
+                      "若需沿用请传 --preserve-payment-from <旧文件>。")
 
     # ====== PRICING CONFIGURATION (shared module) ======
     # All financial calculations go through scripts.quotation_common to keep
@@ -691,7 +714,7 @@ def main():
         print(f"⚠️  WARNING: {warning}")
 
     # Withholding tax: enabled via quotation.json `withholding_tax: true`
-    # Only applied if entity config defines a withholding_tax_rate
+    # Only applied if entity config defines a withholding_tax_rate (currently thailand only)
     WITHHOLDING_TAX_RATE = entity_cfg.get('withholding_tax_rate')
     WITHHOLDING_ENABLED = False
     if WITHHOLDING_TAX_RATE is not None:
@@ -701,6 +724,12 @@ def main():
                   "quotation.json has no top-level `withholding_tax` field. WHT will NOT be "
                   "deducted. Add `withholding_tax: true` to the TOP level of quotation.json "
                   "(sibling of discount_amount, NOT inside _meta) to apply it.")
+    elif quotation_data.get('withholding_tax', False):
+        # 未配置 withholding_tax_rate 的主体写 true：以前这里什么都不说，报价单不出现预扣税行，
+        # 直到 verify 比对 quotation.json 的 flag 才报错。明确喊出来，别让它拖到最后一关。
+        print(f"⚠️  WARNING: quotation.json 顶层设置了 `withholding_tax: true`，但 --entity {entity} "
+              f"未配置 withholding_tax_rate（预扣税目前仅泰国主体支持），本次生成不会扣除预扣税。"
+              f"请删除该字段或改为 false。")
 
     amounts = calculate_amounts(
         SUBTOTAL_D, DISCOUNT_AMOUNT_INT, VAT_RATE, CURRENCY,

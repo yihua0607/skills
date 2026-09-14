@@ -1,11 +1,11 @@
 ---
 name: quotation-generator
-version: 1.16.2
+version: 1.16.3
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
   支持 12 签约主体、IDR/RMB/USD/SGD/THB/VND/EGP/MYR 八种报价币种。
-last_updated: "2026-09-13"
+last_updated: "2026-09-14"
 ---
 
 # 山海图报价单生成器
@@ -31,10 +31,10 @@ last_updated: "2026-09-13"
 
 | # | 规则 | 要点 |
 |---|------|------|
-| 1 | aiCode 必先 fetch | 只接受 `服务名-19位数字编码`；脚本会将完整字符串作为 `aiCodes` 请求参数；不截取末尾 19 位数字编码 |
+| 1 | aiCode 必先 fetch | 只接受完整的 `服务名-19位数字编码`；脚本将该完整字符串原样作为 `aiCodes` 请求参数。只给 19 位纯数字会被脚本直接拒绝（`不支持纯19位数字编码查询`），此时要求用户补上服务名 |
 | 2 | 手改 `.docx` 优先 | 用户手改过的报价单，先保留客户可见内容再重新 build；付款方式保留规则详见『手改 .docx 保留』 |
 | 3 | 输出位置 | 最终生成的 `.docx` 放在 `quotation/YYYY-MM/` 下（YYYY-MM 为报价单日期所在年月）；`quotation.json`、`queried_services.json` 等过程文件写入其子目录；不写 skill 根目录；修改已有报价单时输出新文件 |
-| 4 | Agent 不改脚本 | 执行报价任务不得修改 build/validate/verify/fetch 等脚本；业务/数据问题按业务处理，只有严重脚本缺陷才提示联系 SKILL 开发者。页眉版式同理：12 主体模板统一为「文本段落 → 唯一定位段（承载 logo + 蓝色分隔线）」，不要手改 `header1.xml`、也不要增删页眉末段——该段的高度正是正文避开蓝线的余量，动它会让蓝线压住正文「公司名称：」。logo 与蓝线必须锚在**同一段**：两个锚点的偏移量都从所在段落的顶端起算，同段时两者间距（`蓝线偏移 − logo 偏移 − logo 可见高度`，可见高度按 PNG alpha 量，位图自带的透明留白不算）才是模板常量；分开锚定会让蓝线随中文行高漂移而 logo 不动，字体缺字回退时蓝线就会压住 logo。承载 logo 的 run 必须沿用蓝线 run 的 `rPr`（字号与字体都会参与该段行高计算，即使是只装浮图、无文字的 run），否则末段变高、正文整体下移。版式已由 `tests/test_smoke.py` 锁定，改动后跑测试即可发现 |
+| 4 | Agent 不改脚本 | 执行报价任务不得修改 build/validate/verify/fetch 等脚本；业务/数据问题按业务处理，只有严重脚本缺陷才提示联系 SKILL 开发者。页眉版式同理：8 套模板（12 个主体共用，4 个中国主体共用 `china` 模板）统一为「文本段落 → 唯一定位段（承载 logo + 蓝色分隔线）」，不要手改 `header1.xml`、也不要增删页眉末段——该段的高度正是正文避开蓝线的余量，动它会让蓝线压住正文「公司名称：」。logo 与蓝线必须锚在**同一段**：两个锚点的偏移量都从所在段落的顶端起算，同段时两者间距（`蓝线偏移 − logo 偏移 − logo 可见高度`，可见高度按 PNG alpha 量，位图自带的透明留白不算）才是模板常量；分开锚定会让蓝线随中文行高漂移而 logo 不动，字体缺字回退时蓝线就会压住 logo。承载 logo 的 run 必须沿用蓝线 run 的 `rPr`（字号与字体都会参与该段行高计算，即使是只装浮图、无文字的 run），否则末段变高、正文整体下移。版式已由 `tests/test_smoke.py` 锁定，改动后跑测试即可发现 |
 | 5 | 重复 aiCode 不累加 | 用户重复输入同一 aiCode 时，数量和价格不翻倍，也不累加；大概率是用户误重复输入。若用户明确要求"多加一行"，则在报价单中新增同名服务行（用序号或 aiCode 末三位区分），每行各自独立 |
 
 ## 签约主体
@@ -85,9 +85,9 @@ last_updated: "2026-09-13"
 
 先确定目录与工作区（见流程规则 #3「输出位置」）：
 
-- `QUOTATION_DIR`（报价单目录）= 用户工作目录下的 `quotation/<报价单日期的年月>/`，如 `quotation/2026-06`。
-- `WORKDIR`（工作子目录）= `QUOTATION_DIR/quotation-<YYYYMMDD>-client`，`YYYYMMDD` 为报价单日期。
-- 脚本执行时先 `cd` 到 skill 根目录，过程文件写入 `WORKDIR`。
+- `QUOTATION_DIR`（报价单目录）= `<用户工作目录>/quotation/<报价单日期的年月>/`，如 `<用户工作目录>/quotation/2026-06`。
+- `WORKDIR`（工作子目录）= `QUOTATION_DIR/quotation-<YYYYMMDD>-<客户简称>`，`YYYYMMDD` 为报价单日期，`<客户简称>` 替换为实际客户名（没有客户名时才用 `client`）。
+- **两者一律用绝对路径**：`QUOTATION_DIR` 与 `WORKDIR` 都必须先解析成绝对路径，命令里直接写绝对路径。脚本执行时会 `cd` 到 skill 根目录，相对路径会被解析到 skill 目录下，过程文件就写进 skill 根目录了（违反流程规则 #3）。用户工作目录取启动本 skill 时所在的工作目录（`pwd`），过程文件写入 `WORKDIR`。
 - 取「年月」注意 Linux/macOS 差异：Linux `date -d '2026-06-15' +%Y-%m`；macOS `date -j -f '%Y-%m-%d' '2026-06-15' +%Y-%m`。
 
 | 场景 | 条件 | 路径 |
@@ -96,7 +96,7 @@ last_updated: "2026-09-13"
 | B 修改 | 用户未提供 aiCode | 定位 → 保留手改/快照对比 → 修改 → validate → build → verify |
 | C 追加 | 用户提供 aiCode + 既有 quotation.json | 定位 → 保留手改/快照对比 → fetch 新服务 → 合并 → validate → build → verify |
 
-（仅限修改/追加场景）找不到既有 quotation.json 时要求用户提供，不从 sample 凭空改；新建场景仍按『数据文件』章节从 sample 复制起步。
+（仅限修改/追加场景）先**定位**既有报价单：在用户工作目录下 `find "<用户工作目录>/quotation" -name quotation.json`，连同同目录的 `.docx` 一起列给用户确认是哪一单，确认后再读它所在目录下的 `quotation.json`；不要凭客户名猜测。找不到时要求用户提供路径，不从 sample 凭空改。新建场景仍按『数据文件』章节从 sample 复制起步。
 
 ## 手改 `.docx` 保留
 
@@ -106,6 +106,7 @@ last_updated: "2026-09-13"
 - 如果 `--output` 指向已存在的 `.docx`，自动从该旧文件读取付款方式并用于本次重建。
 - 如果输出到新文件但需要沿用某个旧报价单的付款方式，传 `--preserve-payment-from "$WORKDIR/已编辑报价单.docx"`。
 - 只有明确要用 `quotation.json` / 实体默认付款方式覆盖旧文件时，才传 `--overwrite-payment-terms`。
+- 每次 build 都会打印一行「付款方式来源：…」（旧报价单 / quotation.json / 实体默认配置）。按流程修改报价单是**输出新文件**，此时不会自动沿用旧单子的付款方式，build 会提示同目录已有的报价单——看到这行就核对一下手改有没有被沿用，需要就补 `--preserve-payment-from`。
 - 如果指定了旧 `.docx` 但付款方式提取失败，必须立即中止；不得回退到 `quotation.json` 或实体默认付款方式，也不得覆盖旧文件。
 - 仅当旧 `.docx` 付款方式提取失败，或用户明确要求修改付款方式时，才向用户询问并确认付款方式。用户明确告知后，将其写入本次工作目录的 `quote_meta.payment_terms`，并传 `--overwrite-payment-terms` 重新生成；这不属于从旧文档同步数据。
 - `validate` / `build` / `verify` 会提醒明显不合理的付款方式：付款比例合计超过 100%，或付款金额合计大于合同含税总计。
@@ -136,20 +137,17 @@ python3 scripts/fetch_services.py '一般纳税人资格办理-20722866565139496
 
 脚本输出服务名称、价格、币种、数量、汇率、Markdown 服务内容。完整结果必须保存为 `queried_services.json`；`人民币兑换服务币种汇率`/`美元兑换服务币种汇率` 是后续换币种/换主体/追加服务的权威汇率来源。生成 `quotation.json` 时，在 `_meta` 或等价字段记录查询文件、源币种、目标币种和使用汇率。
 
-依赖检查：`fetch_services.py` 依赖 `markdownify` 库生成干净的 Markdown 服务内容。如果未安装，脚本会在 stdout 打印 `⚠️ markdownify not available, using fallback HTML cleaner` 警告，该警告会混入 `queried_services.json` 导致 JSON 损坏。**必须在 fetch 前检查并处理**：
+`markdownify` 是可选的：装了服务内容 Markdown 更干净，没装脚本用内置兜底转换器，并在 **stderr** 打一行 `⚠️ markdownify not available, using fallback HTML cleaner`。因为走的是 stderr，`> "$WORKDIR/queried_services.json"` 拿到的 JSON 依然完整，**不需要任何额外处理**。想装就装（`pip install markdownify`，pip 不可用则 `uv pip install markdownify --system`）。
+
+⚠️ 只有自己把 stderr 也并进文件时才会污染 JSON（例如 `... > x.json 2>&1`）。这时按内容过滤警告行，**不要 `tail -n +2` 盲删首行**——正常 JSON 的第一行是 `{`，删掉它反而会把好文件弄坏，症状正好就是下面那条报错：
 
 ```bash
-# 方案 A：安装依赖（推荐）
-pip install markdownify
-# 如 pip 不可用，使用 uv：
-uv pip install markdownify --system
-
-# 方案 B：fetch 后剥离警告行
-python3 scripts/fetch_services.py '...' > "$WORKDIR/queried_services_raw.json"
-tail -n +2 "$WORKDIR/queried_services_raw.json" > "$WORKDIR/queried_services.json"
+python3 scripts/fetch_services.py '...' 2>&1 | grep -v '^⚠️' > "$WORKDIR/queried_services.json"
 ```
 
-`convert_currency.py --query-result` 传入损坏的 JSON 时会报 `Cannot read query result file`，根因通常是此警告行未剥离。
+`convert_currency.py --query-result` 报 `Cannot read query result file` 时，先看 `queried_services.json` 首行是不是 `{`：不是 → 上面那种 stderr 混入，重新 fetch 并过滤警告行；是 → 文件没写成或 fetch 本身失败，重新 fetch。
+
+批量换算时若个别服务报 `Missing price or currency` / `Cannot parse price`，脚本退出码为 1，但 stdout 的 JSON 依然完整可用。这是「该服务价格面议或未标价」的正常信号（见数据规则 2），按提示向用户补充总价即可，**不要当成 fetch 失败重跑**。
 
 失败处理：
 - API 顶层 `success: false`：必须将 API 返回字段 `message` 的文字原样转达给用户，不生成报价单。
@@ -178,11 +176,17 @@ tail -n +2 "$WORKDIR/queried_services_raw.json" > "$WORKDIR/queried_services.jso
 
 币种可由 `_meta.target_currency` 指定（`IDR`/`RMB`/`USD`/`SGD`/`THB`/`VND`/`EGP`/`MYR`），优先级高于实体配置默认币种；例如 `applicable_entity: jakarta` 且 `target_currency: USD` 表示使用雅加达主体生成美元报价单。
 
-⚠️ **实体币种限制**：报价单币种仅支持**签约主体所在国家的本币**与**人民币/美元**外币，且必须在该实体 `allowed_currencies` 内（见上方「签约主体」表）。用户要求切换支付币种时，必须先查 `config/entities.json` 中该实体 `allowed_currencies`，不可凭记忆假设。本币报价只能用于对应主体（IDR→jakarta/deyin、SGD→singapore、THB→thailand、VND→vietnam、EGP→egypt、MYR→malaysia）。若币种不被当前实体支持，向用户提供两个选项：(1) 在备注中标注等值金额；(2) 切换到支持该币种的实体。
+⚠️ **实体币种限制**：报价单币种仅支持**签约主体所在国家的本币**与**人民币/美元**外币，且必须在该实体 `allowed_currencies` 内（见上方「签约主体」表）。用户要求切换支付币种时，必须先查 `config/entities.json` 中该实体 `allowed_currencies`，不可凭记忆假设。本币报价只能用于对应主体（IDR→jakarta/deyin、SGD→singapore、THB→thailand、VND→vietnam、EGP→egypt、MYR→malaysia）。若币种不被当前实体支持，向用户提供两个选项：(1) 用 `convert_currency.py` 换算后，在备注中只写等值金额数字，不得出现汇率/折算/兑换字样（`validate_data.py` 会拦下这些关键词）；(2) 切换到支持该币种的实体。
 
 ### 泰国预扣税
 
-使用泰国主体（`thailand`）报价时，**必须先询问用户是否需要扣除预扣税（Withholding Tax，税率 3%）**。若用户明确要求扣除，在 `quotation.json` **顶层**设置 `withholding_tax: true`（与 `discount_amount`/`notes` 同级，**不要放进 `_meta`**）；若用户明确说不需要，则不设置（`withholding_tax: false`），报价单中不显示和计算预扣税。注意：`withholding_tax` 缺失或误放 `_meta` 时，build 会静默按不扣税处理，报价单只显示增值税。
+**预扣税目前仅泰国主体支持**（唯一配了 `withholding_tax_rate` 的实体）。
+
+计算口径：**预扣税 =（小计 − 优惠）× 3%**，基数是税前小计，**不乘增值税**；**含税总计 = 税前小计 + 增值税 − 预扣税**。该口径由 `calculate_amounts()` 实现，所有数值取脚本输出。
+
+使用泰国主体（`thailand`）报价时，**必须先询问用户是否需要扣除预扣税（Withholding Tax，税率 3%）**。若用户明确要求扣除，在 `quotation.json` **顶层**设置 `withholding_tax: true`（与 `discount_amount`/`notes` 同级，**不要放进 `_meta`**）；若用户明确说不需要，则填 `withholding_tax: false`，报价单中不显示和计算预扣税。泰国主体漏填该字段时 `validate_data.py` 会 warning 提醒（不阻断），build 也会再提醒一次并按不扣税生成。
+
+其他主体**不要**写 `withholding_tax: true`：`validate_data.py` 会直接报错拦下（build 会静默跳过、verify 必然失败）。
 
 ### 汇率与换算
 
@@ -195,6 +199,8 @@ python3 scripts/convert_currency.py --amount 250000000 --from IDR --to RMB --rat
 python3 scripts/convert_currency.py --amount 115000 --from RMB --to IDR --rateToCny 2173.91 --json-only
 python3 scripts/convert_currency.py --amount 30000000 --from IDR --to USD --rateToUsd 17875 --json-only
 ```
+
+⚠️ **本文所有示例里的汇率数字（`2173.91`、`17875`、`5.45`、`1.05`、`2250`、`4.85`、`4.75` 等）只是格式演示，不是可用汇率。**实际汇率一律取自 `queried_services.json` 的 `人民币兑换服务币种汇率`/`美元兑换服务币种汇率`；照抄示例数字会直接算错价格。
 
 `rateToCny` 表示 `1 CNY = N 服务币种`，`rateToUsd` 表示 `1 USD = N 服务币种`。修改已有报价单时优先使用原始 `queried_services.json` 或 `quotation.json` 留档汇率；没有留档汇率，必须让用户提供或确认汇率。
 
@@ -240,11 +246,11 @@ price:   13,333                            （直接写入 quotation.json）
 |---------|----------|------|
 | 服务编码（API `服务编码`） | `services[].items[].code` | **必填，每一列服务都要有**。从 `queried_services.json` 的 `服务编码` 逐条抄入（如 `ID0117`），build 时服务名自动渲染为 `编码-服务名`（如 `ID0117-公司注册`），报价单所有表格的服务名都带这个编码。**禁止自行编造编码**；API 对每个查到的服务都返回 `服务编码`，取不到就重查，不要留空 |
 | 办理时间 | `services[].items[].days` | 提取数字 + 单位（**工作日**或**月**）；多个时间取最长；**填单次/每件办理时间，不乘数量**（如 3 个服务各 15 个工作日 → 填 `15个工作日`，不写 `15个工作日x3`） |
-| 基本信息/服务说明/服务概述 | `services[].items[].note` | 摘要 100-250 字；不足 100 字完整呈现（脚本仅在 <40 字时提示确认信息是否不足）；**若基本信息中包含金额相关描述（如罚款金额、收费标准、官方费用等），必须将金额信息总结写入备注**；**若基本信息中包含带 `*` 的说明项（如 `*备注：`、`*注：`、`*注意：` 等），要将 `*` 标记的内容尽可能完整总结到备注中** |
+| 基本信息/服务说明/服务概述 | `services[].items[].note` | 摘要 100-250 字；不足 100 字完整呈现（脚本仅在 <40 字时提示确认信息是否不足）；**若基本信息中包含金额相关描述（如罚款金额、收费标准、官方费用等），必须将金额信息总结写入备注，且其中的金额一律照抄 API 原文的数字与单位，不得换算、汇总或改写**；**若基本信息中包含带 `*` 的说明项（如 `*备注：`、`*注：`、`*注意：` 等），要将 `*` 标记的内容尽可能完整总结到备注中** |
 | 费用包含/服务包含 | `fee_details[].include` | 每条一项，保留原文 |
 | 费用不含/不包含 | `fee_details[].exclude` + `notes` | 公共不含项进 `notes`；服务特有项留 `exclude`。`notes` 只放不含项与通用说明，**不放办理时间免责声明**——该表没有办理时间列 |
 | 办理流程/服务流程 | `process_data[].process` | 每步一条，保留序号 |
-| 交付文件/交付材料 | `process_data[].deliverables` | 每项一条；**当交付文件数量 >1 时，每项前自动添加有序编号 `1. 2. 3.`** |
+| 交付文件/交付材料 | `process_data[].deliverables` | 每项一条；数量 >1 时**编号写进 JSON**（`1. 2. 3.`，示例均为手工编号），build 只在检测到未编号时才兜底补号，别指望它替你编号 |
 | 所需资料/所需材料 | `doc_data[].docs` | 每项一条，保留子层级编号 |
 
 忽略 API 内容里的付款方式、退款/售后、发票相关。用户明确指定报价单付款条件时写入 `quote_meta.payment_terms`。
@@ -256,7 +262,9 @@ price:   13,333                            （直接写入 quotation.json）
 - `B.exclude = ["政府规费"]`
 - `notes` 统一写“以上服务报价不包括：文件翻译费用（如需）、资料快递费用（国际）。”
 
-**`notes` 里不写办理时间免责声明**：`notes` 渲染在「服务内容」表正下方，而该表只有 序号/服务内容/数量/价格/备注 五列，没有办理时间列——「上述办理时间不包括收集材料时间、检查资料时间、客户签字盖章反馈时间、客户修改或补充资料的时间和文件邮寄时间。」在这里指不到任何上文（办理时间在更靠后的流程表里），该说明也已由页脚备注第 1 条覆盖。API 的每个服务「备注」段都带这句样板文，汇总基本信息时极易顺手带进 `notes`；`validate_data.py` 会直接报错拦下，请从 `notes` 删除而不是改写成别的措辞。
+**`notes` 里不写办理时间免责声明**：`notes` 渲染在「服务内容」表正下方，而该表只有 序号/服务内容/数量/价格/备注 五列，没有办理时间列——「上述办理时间不包括收集材料时间、检查资料时间、客户签字盖章反馈时间、客户修改或补充资料的时间和文件邮寄时间。」在这里指不到任何上文（办理时间在更靠后的流程表里）。**报错只说明位置不对，不代表这条要求被废弃**：这句话要表达的信息已由文末标准备注第 1 条完整覆盖——「以上办理时间为收集齐所需资料及信息开始的官方办理时间，法定节假日及办证政府机构休息日不算入办理时间」；客户准备材料、签字盖章反馈、文件邮寄都发生在「收集齐资料」之前，本就不计入办理时间。所以处理方式就是从 `notes` 删除：不要改写成别的措辞，也不必另找位置补写一遍。API 的每个服务「备注」段都带这句样板文，汇总基本信息时极易顺手带进 `notes`；`validate_data.py` 会直接报错拦下。
+
+判定用的是「办理时间 + 近邻的不包括 + 样板文列举的时间项」三者同时命中，所以「办理时间不包括节假日」这类**正常业务说明不会被误判**（build 也不会剔除）。
 
 ## 数据文件
 
@@ -302,8 +310,9 @@ validate error → 必须修复，warning → 判断后处理。`--entity` 必�
 | validate 报 `services[i].items[j].code is required`，或成稿服务内容只有服务名没有编码 | 汇总时漏抄 `服务编码`。回到 `queried_services.json`，按 `服务名称` 找到对应 `服务编码` 填入 `services[].items[].code`（如 `ID0117`），**不要自己编号码**；填完重新预检。verify 会拿数据文件的原始服务名跟成稿逐字比对，成稿服务名 == 原始服务名即报「服务内容缺少服务编码」 |
 | 金额或币种异常 | 检查 `discount_amount`、服务整数总价、汇率和实体币种；重新运行预检 |
 | 公共不含项重复出现在 `exclude` | 从各服务 `exclude` 移除公共项，在 `notes` 中统一显示 |
-| validate 报 `notes[i] 是办理时间免责声明，必须删除` | API 服务「备注」段的样板文被带进了 `notes`。`notes` 渲染在「服务内容」表下，该表没有办理时间列，「上述办理时间」无所指；直接从 `notes` 删除该条（不是改写），办理时间说明由页脚备注第 1 条承担。build 也会兜底剔除并告警 |
-| `convert_currency.py` 报 `Cannot read query result file` | `queried_services.json` 被 `markdownify` 警告污染 → 见『查询服务信息』章节的 markdownify 警告处理（剥离首行或安装 markdownify 后重新 fetch） |
+| validate 报 `notes[i] 是办理时间免责声明，必须删除` | API 服务「备注」段的样板文被带进了 `notes`。`notes` 渲染在「服务内容」表下，该表没有办理时间列，「上述办理时间」无所指；直接从 `notes` 删除该条（**不要改写成别的措辞，也不必另找位置补写**——文末标准备注第 1 条已覆盖该信息）。build 也会兜底剔除并告警 |
+| `convert_currency.py` 报 `Cannot read query result file` | 先看 `queried_services.json` 首行是不是 `{`。不是 → fetch 时把 stderr 并进了文件（`2>&1`），按『查询服务信息』章节重新 fetch 并过滤 `⚠️` 开头的行；`tail -n +2` 会连 JSON 首行一起删掉，别用。首行正常 → 文件没写成或 fetch 本身失败，重新 fetch |
+| validate 报 `withholding_tax 仅支持…未配置` | 只有泰国主体支持预扣税，把 `withholding_tax` 改为 `false` 或删除该字段；见『泰国预扣税』 |
 | 服务名重复 `Duplicate service name` | 当多个 aiCode 返回相同 `服务名称` 时，用 aiCode 末三位区分（如 `公司注册-114`、`公司注册-818`）；同步更新 `fee_details/process_data/doc_data` 中所有 name 引用 |
 | `build` 报 `Invalid quotation data` | 先跑 `validate_data.py` 定位字段并修正 |
 | `verify` 失败 | 除付款方式等客户最终处理内容外，优先修改 `quotation.json` 后重新 build；不要手改其他 `.docx` 内容 |

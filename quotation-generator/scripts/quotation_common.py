@@ -86,14 +86,25 @@ A4_MARGINS = {
 A4_TEXT_WIDTH = A4_PAGE_W - A4_MARGINS['left'] - A4_MARGINS['right']
 
 # 「服务内容」表只有 序号/服务内容/数量/价格/备注 五列，没有办理时间列；紧跟在它下面的
-# *备注： 区块因此不能出现「上述办理时间不包括……」这类免责声明——办理时间在更靠后的
-# 流程表里，「上述」指不到任何内容，页脚备注第 1 条也已覆盖该说明。
+# *备注： 区块因此不能出现「上述办理时间不包括收集材料时间……」这类免责声明——办理时间
+# 在更靠后的流程表里，「上述」在这里指不到任何上文。
+# 这句话本身仍然是需要的，只是位置不对：不要整条删掉，也不要改写成别的措辞（见 SKILL.md）。
 # API 的服务「备注」段普遍带这句样板文，Agent 汇总基本信息时容易顺手带进 notes：
 # validate 报错拦下、build 兜底剔除并告警、verify 复核成稿，三处共用这一判定。
 #
-# 「办理时间」与「不包括」之间允许少量修饰（如「并不包括」），但不允许隔得很远——
-# 那种句子是恰好在同一段里既提到时间又提到不含项，不是免责声明，不该被误杀。
-PROCESS_TIME_DISCLAIMER_RE = re.compile(r'办理时间[^。；;\n]{0,10}不包括')
+# 判定要认得出样板文，又不能误杀恰好提到时间的正常备注——误杀会让合法信息被 validate
+# 拦下、被 build 删掉。所以除了「办理时间 + 近邻的不包括」这个壳子，还要求紧跟其后出现
+# 样板文列举的时间项之一：只有壳子不算数。「办理时间不包括节假日」「办理时间不包括周末及
+# 法定节假日」都是正常业务说明，必须放行。
+PROCESS_TIME_DISCLAIMER_ITEMS = (
+    '收集材料时间', '收集资料时间', '检查资料时间', '检查材料时间',
+    '签字盖章', '反馈时间', '修改或补充', '补充资料', '邮寄时间', '快递时间',
+)
+PROCESS_TIME_DISCLAIMER_RE = re.compile(
+    r'办理时间[^。；;\n]{0,10}不(?:包括|包含)[^。；;\n]*(?:'
+    + '|'.join(PROCESS_TIME_DISCLAIMER_ITEMS)
+    + r')'
+)
 
 
 def is_process_time_disclaimer(text):
@@ -174,7 +185,8 @@ def calculate_amounts(subtotal, discount, vat_rate, currency, withholding_tax_ra
         subtotal: integer or Decimal, sum of service prices.
         discount: integer or Decimal, discount amount (0 if none).
         vat_rate: Decimal or float, e.g. 0.06 for 6%.
-        currency: 支持 2 位小数的币种（RMB/USD/THB/SGD）税金保留小数；仅 IDR/VND 取整数。
+        currency: 税金保留 2 位小数的币种（除 IDR/VND 外全部：RMB/USD/SGD/THB/EGP/MYR）；
+            仅 IDR/VND 取整数。
         withholding_tax_rate: Decimal or float, e.g. 0.03 for 3% WHT. None if no WHT.
 
     Returns:
@@ -240,7 +252,7 @@ def format_price_display(price_str, currency):
 
 
 def format_price_int(val, currency):
-    """Format integer amounts (subtotal, discount, discounted) with symbol."""
+    """Format integer amounts (subtotal, discount, discounted) — 不带货币符号。"""
     val_d = _to_decimal(val)
     formatted = f'{int(val_d):,}'
     return format_price_display(formatted, currency)
