@@ -1,5 +1,6 @@
 {
   "_meta": {
+    "alias_comment": "aliases：主体别名（用户口语/中英文叫法，匹配大小写不敏感，供 Agent 识别用，脚本不读该字段；--entity 仍只接受实体 key）。2026-09-15 起「德音人力/德音/deyin/dein/DEIN」一律对应 deyin。",
     "_comment": "签约主体配置文件。新增实体只需添加新 key 并确保包含所有 required_entity_fields。payment_terms 缺省时回退 payment_terms_default（jakarta/deyin 用「收到发票后 100%」变体，其余主体共用默认）。universal_excludes 是常见公共费用不含项的种子示例，用于提示去重，不是完整白名单；实际应按多个服务共同项和业务语义抽取公共不含项到 notes。header_address_size_pt 可选：页眉公司地址过长、会换行时设地址字号（单位 pt，如 8），缺省沿用模板原字号。header_company_align 可选：页眉公司名称对齐方式（center/right），缺省 center；公司名过长、居中会压住左侧 logo 的主体（泰国/越南/埃及/新加坡）设 right。tax_label 可选：汇总表税金行标签（缺省「增值税」），马来西亚设「销售与服务税」（SST），税率仍走 vat_rate。",
     "required_entity_fields": [
       "template",
@@ -22,6 +23,7 @@
   "jakarta": {
     "template": "jakarta",
     "company": "PT. SHAN HAI MAP",
+    "aliases": ["PT. SHAN HAI MAP", "PT SHAN HAI MAP", "雅加达", "雅加达山海图", "SHM信头", "印尼shanhaimap", "SHAN HAI MAP JAKARTA", "jakarta"],
     "header_lines": [
       "PT. SHAN HAI MAP",
       "OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5",
@@ -69,6 +71,7 @@
   "beijing": {
     "template": "china",
     "company": "北京山海图科技有限公司",
+    "aliases": ["北京", "北京山海图", "北京山海图科技有限公司", "beijing"],
     "header_lines": [
       "北京山海图科技有限公司",
       "北京市海淀区西四环北路158号1幢一层3-65",
@@ -88,6 +91,7 @@
   "xian": {
     "template": "china",
     "company": "北京山海图科技有限公司西安分公司",
+    "aliases": ["西安", "西安分公司", "西安山海图", "xian"],
     "header_lines": [
       "北京山海图科技有限公司西安分公司",
       "西安市高新区科技路林凯国际大厦15层1501-01-03室",
@@ -109,6 +113,7 @@
   "shenzhen": {
     "template": "china",
     "company": "北京山海图科技有限公司深圳分公司",
+    "aliases": ["深圳", "深圳分公司", "深圳山海图", "shenzhen"],
     "header_lines": [
       "北京山海图科技有限公司深圳分公司",
       "深圳市南山区南海大道1052号海翔广场717",
@@ -130,6 +135,7 @@
   "shanghai": {
     "template": "china",
     "company": "北京山海图科技有限公司上海分公司",
+    "aliases": ["上海", "上海分公司", "上海山海图", "shanghai"],
     "header_lines": [
       "北京山海图科技有限公司上海分公司",
       "上海市闵行区虹桥LM世界中心L3-B栋 305A",
@@ -152,6 +158,7 @@
   "shanghai_new": {
     "template": "china",
     "company": "上海山海图新企业咨询有限公司",
+    "aliases": ["上海新企业", "上海山海图新企业", "上海新企业咨询", "shanghai_new", "shanghai new"],
     "header_lines": [
       "上海山海图新企业咨询有限公司",
       "上海市青浦区虹桥LM世界中心L3-B栋 305A",
@@ -174,6 +181,7 @@
   "singapore": {
     "template": "singapore",
     "company": "SHAN HAI MAP CONSULTANCY PTE.LTD",
+    "aliases": ["新加坡", "新加坡山海图", "SHAN HAI MAP CONSULTANCY", "singapore"],
     "header_lines": [
       "SHAN HAI MAP CONSULTANCY PTE.LTD",
       "1 North Bridge Road, #06-14 High Street Centre,",
@@ -198,6 +206,7 @@
   "deyin": {
     "template": "deyin",
     "company": "PT DEIN TALENT SOLUTIONS",
+    "aliases": ["德音人力", "德音", "德音人力资源", "德音人力服务", "deyin", "dein", "DEIN", "dein信头", "DEIN信头", "德音信头", "德音人力信头", "PT DEIN TALENT SOLUTIONS"],
     "header_lines": [
       "PT DEIN TALENT SOLUTIONS",
       "OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5",
@@ -238,6 +247,7 @@
   "thailand": {
     "template": "thailand",
     "company": "SHAN HAI MAP (THAILAND) CO., LTD.",
+    "aliases": ["泰国", "曼谷", "曼谷山海图", "SHAN HAI MAP (THAILAND)", "thailand"],
     "header_lines": [
       "SHAN HAI MAP (THAILAND) CO., LTD.",
       "Thanapoom Tower, 25th floor Unit A2, 1550 New Petchaburi Rd, ",
@@ -260,6 +270,7 @@
   "vietnam": {
     "template": "vietnam",
     "company": "CÔNG TY TNHH SHANHAIMAP VIỆT NAM",
+    "aliases": ["越南", "越南山海图", "SHANHAIMAP VIET NAM", "SHANHAIMAP VIỆT NAM", "vietnam"],
     "header_lines": [
       "CÔNG TY TNHH SHANHAIMAP VIỆT NAM",
       "Tầng 6, Số 89 Phan Đình Phùng, Phường Phú Nhuận,TPHCM.",
@@ -304,6 +315,7 @@
   "egypt": {
     "template": "egypt",
     "company": "SHAN HAI MAP FOR CONSULTING CO",
+    "aliases": ["埃及", "埃及山海图", "SHAN HAI MAP FOR CONSULTING", "egypt"],
     "header_lines": [
       "SHAN HAI MAP FOR CONSULTING CO",
       "埃及新开罗90号大街TOP90 1层134室",
@@ -355,6 +367,7 @@
   "malaysia": {
     "template": "malaysia",
     "company": "SHANHAIMAP SDN. BHD.",
+    "aliases": ["马来西亚", "大马", "马来西亚山海图", "SHANHAIMAP SDN. BHD.", "malaysia"],
     "header_lines": [
       "SHANHAIMAP SDN. BHD.",
       "Suite 16-03A & 05, Level 16, Wisma UOA II No. 21,",

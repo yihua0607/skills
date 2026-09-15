@@ -1,11 +1,11 @@
 ---
 name: quotation-generator
-version: 1.16.3
+version: 1.16.4
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
   支持 12 签约主体、IDR/RMB/USD/SGD/THB/VND/EGP/MYR 八种报价币种。
-last_updated: "2026-09-14"
+last_updated: "2026-09-15"
 ---
 
 # 山海图报价单生成器
@@ -55,6 +55,27 @@ last_updated: "2026-09-14"
 | SHANHAIMAP SDN. BHD. (马来西亚) | `malaysia` | 8%（SST） | MYR | RMB, USD |
 
 完整银行账户、地址、税号等详见 `config/entities.json` 和 `references/entity-bank-info.md`。
+
+**主体别名识别**（用户说法 → `--entity`）。别名同时登记在 `config/entities.json` 各实体的 `aliases` 字段（脚本不读该字段，`--entity` 仍只接受实体 key；新增主体时记得一起补 `aliases`）：
+
+| 用户可能说法 | `--entity` |
+|--------------|------------|
+| 雅加达 / 雅加达山海图 / PT. SHAN HAI MAP / SHM信头 / 印尼shanhaimap | `jakarta` |
+| **德音人力 / 德音 / 德音人力资源 / deyin / dein / DEIN / dein信头 / DEIN信头 / PT DEIN TALENT SOLUTIONS** | `deyin` |
+| 北京 / 北京山海图 | `beijing` |
+| 西安 / 西安分公司 | `xian` |
+| 深圳 / 深圳分公司 | `shenzhen` |
+| 上海 / 上海分公司 | `shanghai` |
+| 上海新企业 / 上海山海图新企业 | `shanghai_new` |
+| 新加坡 / SHAN HAI MAP CONSULTANCY | `singapore` |
+| 泰国 / 曼谷 | `thailand` |
+| 越南 / SHANHAIMAP VIỆT NAM | `vietnam` |
+| 埃及 / SHAN HAI MAP FOR CONSULTING | `egypt` |
+| 马来西亚 / 大马 / SHANHAIMAP SDN. BHD. | `malaysia` |
+
+- 别名匹配**大小写不敏感**（`DEIN` = `dein` = `deyin`），中英文混写同样按上表识别。
+- ⚠️ **出现「德音」二字或 `dein`/`deyin` 一律走 `deyin`**，不要误判成 `jakarta`：两者都是印尼主体、都能用 IDR，但公司名、页眉地址、银行账户完全不同（`deyin` = PT DEIN TALENT SOLUTIONS，BCA 6802 044 409）。
+- 别名不覆盖「多主体/意图不明」的情形：同时提到两个主体、或只说「印尼」而未指明公司名时，仍须向用户确认。
 
 ⚠️ **马来西亚税金**：马来西亚主体没有增值税（VAT），而是**销售与服务税（SST，Sales & Service Tax）**。报价单汇总表税金行标签用「销售与服务税 8%」替代「增值税 8%」，税率仍走 `config/entities.json` 的 `vat_rate`（字段不变，仅标签不同，由 `tax_label` 控制）。
 
@@ -160,7 +181,7 @@ python3 scripts/fetch_services.py '...' 2>&1 | grep -v '^⚠️' > "$WORKDIR/que
 
 ### 实体默认
 
-用户明确提到北京/西安/深圳/上海/上海新企业/雅加达/新加坡/德音人力/泰国/越南/埃及/马来西亚时使用对应实体。用户未指定时：
+用户明确提到北京/西安/深圳/上海/上海新企业/雅加达/新加坡/德音人力（德音、deyin、dein、DEIN）/泰国/越南/埃及/马来西亚时使用对应实体（完整别名见上方「主体别名识别」表）。用户未指定时：
 - 服务原币种为 IDR 且用户未要求人民币/美元报价，默认倾向 `jakarta`。
 - 服务原币种为 THB 且用户未要求人民币/美元报价，默认倾向 `thailand`。
 - 服务原币种为 SGD 且用户未指定主体，默认倾向 `singapore`。
