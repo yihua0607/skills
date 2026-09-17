@@ -93,6 +93,73 @@ def _png_alpha_bottom_padding(data):
     return 0.0 if last_inked < 0 else (height - 1 - last_inked) / height
 
 
+def _png_alpha_bbox(data):
+    """A banner PNG's ink bounding box as (x0, y0, x1, y1), x1/y1 exclusive.
+
+    This is the same quantity an entity's ``header_image.bbox_px`` must hold, and
+    it is measured from the file rather than read back from the config on purpose:
+    build derives both the crop and the scale factor from ``bbox_px``, so a config
+    that merely *agrees with itself* still renders a shifted, mis-scaled banner.
+    Only the PNG can say what the right answer is.
+
+    Stdlib only, same decoder assumptions as _png_alpha_bottom_padding.
+    """
+    if data[:8] != b'\x89PNG\r\n\x1a\n':
+        raise ValueError('not a PNG')
+    pos, chunks, width = 8, [], None
+    while pos < len(data):
+        (length,) = struct.unpack('>I', data[pos:pos + 4])
+        ctype = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + length]
+        if ctype == b'IHDR':
+            width, height, depth, colour, _, _, interlace = struct.unpack('>IIBBBBB', body)
+            if (depth, colour, interlace) != (8, 6, 0):
+                raise ValueError(f'unsupported PNG: depth={depth} colour={colour}')
+        elif ctype == b'IDAT':
+            chunks.append(body)
+        elif ctype == b'IEND':
+            break
+        pos += 12 + length
+
+    raw = zlib.decompress(b''.join(chunks))
+    stride = width * 4
+    prev = bytearray(stride)
+    x0 = y0 = None
+    x1 = y1 = -1
+    for y in range(height):
+        line = raw[y * (stride + 1):(y + 1) * (stride + 1)]
+        ftype, scan = line[0], bytearray(line[1:])
+        if ftype:  # undo the per-scanline PNG filter
+            for i in range(stride):
+                left = scan[i - 4] if i >= 4 else 0
+                up = prev[i]
+                upleft = prev[i - 4] if i >= 4 else 0
+                if ftype == 1:
+                    scan[i] = (scan[i] + left) & 0xFF
+                elif ftype == 2:
+                    scan[i] = (scan[i] + up) & 0xFF
+                elif ftype == 3:
+                    scan[i] = (scan[i] + (left + up) // 2) & 0xFF
+                elif ftype == 4:
+                    p = left + up - upleft
+                    pa, pb, pc = abs(p - left), abs(p - up), abs(p - upleft)
+                    pred = left if (pa <= pb and pa <= pc) else (up if pb <= pc else upleft)
+                    scan[i] = (scan[i] + pred) & 0xFF
+        inked = [x for x in range(width) if scan[x * 4 + 3] > 0]
+        if inked:
+            if y0 is None:
+                y0 = y
+            y1 = y
+            if x0 is None or inked[0] < x0:
+                x0 = inked[0]
+            if inked[-1] > x1:
+                x1 = inked[-1]
+        prev = scan
+    if y0 is None:
+        raise ValueError('banner PNG is fully transparent')
+    return (x0, y0, x1 + 1, y1 + 1)
+
+
 def _run_script(name, args, cwd=SKILL_ROOT):
     """Run a script from the scripts/ directory and return (returncode, stdout, stderr)."""
     cmd = [sys.executable, os.path.join(SKILL_ROOT, 'scripts', name)] + args
@@ -114,12 +181,78 @@ def _copy_example(tmpdir, example_name):
     return dst
 
 
+def _build_for_entity(test_case, tmpdir, entity, example='minimal_quotation.json', currency=None):
+    """Copy an example, repoint its `_meta` at `entity`, build.
+
+    Returns (data_path, output_path). build refuses a data file whose
+    `_meta.applicable_entity` disagrees with `--entity`, so every test that wants
+    an entity other than the example's own has to rewrite that field. The example's
+    `target_currency` is dropped too (unless `currency` is given) so the entity's
+    own default applies — the examples are priced in RMB, which not every entity
+    accepts.
+    """
+    data_path = _copy_example(tmpdir, example)
+    with open(data_path, encoding='utf-8') as f:
+        data = json.load(f)
+    meta = data.setdefault('_meta', {})
+    meta['applicable_entity'] = entity
+    if currency:
+        meta['target_currency'] = currency
+    else:
+        meta.pop('target_currency', None)
+    with open(data_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    output_path = os.path.join(tmpdir, f'报价单-{entity}-测试.docx')
+    rc, out, err = _run_script(
+        'build_quotation.py',
+        ['--entity', entity, '--data', data_path, '--output', output_path]
+    )
+    test_case.assertEqual(rc, 0, f"build_quotation.py failed:\nstdout: {out}\nstderr: {err}")
+    return data_path, output_path
+
+
+def _drop_drawings_from_header(src_path, dst_path, keep_shape):
+    """Remove the banner/separator drawing from header1.xml, everything else intact.
+
+    `keep_shape` picks which ones survive: True keeps the wordprocessingShape (the
+    blue separator), False keeps the picture (the banner)."""
+    W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    WPS = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape'
+
+    def w(tag):
+        return f'{{{W}}}{tag}'
+
+    with zipfile.ZipFile(src_path) as zf:
+        parts = {name: zf.read(name) for name in zf.namelist()}
+
+    root = ET.fromstring(parts['word/header1.xml'])
+    for drawing in list(root.iter(w('drawing'))):
+        is_shape = drawing.find(f'.//{{{WPS}}}wsp') is not None
+        if is_shape == keep_shape:
+            continue
+        for run in root.iter(w('r')):
+            if drawing in list(run):
+                run.remove(drawing)
+                break
+    parts['word/header1.xml'] = ET.tostring(root, xml_declaration=True, encoding='UTF-8')
+
+    with zipfile.ZipFile(dst_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for name, blob in parts.items():
+            zf.writestr(name, blob)
+
+
 def _header_trailing_paragraph_count(docx_path):
     """Count empty paragraphs following the last text paragraph in header1.xml.
 
-    Every template ends with exactly one such paragraph, and it carries both the
-    blue separator line and the logo. Its height is what reserves room so the
-    body's first line stays clear of the line, so build must not change it."""
+    Every *text* header ends with exactly one such paragraph, and it carries both
+    the blue separator line and the logo. Its height is what reserves room so the
+    body's first line stays clear of the line, so build must not change it.
+
+    Only meaningful for entities that still render a text header — the ones with
+    ``header_image`` get a single paragraph holding an anchored banner and carry
+    no text at all. See test_image_header_replaces_text_header_with_anchored_banner.
+    """
     W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
     with zipfile.ZipFile(docx_path) as zf:
         root = ET.fromstring(zf.read('word/header1.xml'))
@@ -1107,36 +1240,63 @@ class TestQuotationSmoke(unittest.TestCase):
         address, so a header carrying some *other* entity's address still fails
         verification.
         """
+        # Uses a text-header entity on purpose: for the ones configured with
+        # ``header_image`` there is no header address text left to tamper with, and
+        # verify skips the ownership check there by design (see
+        # test_verify_skips_header_ownership_checks_for_image_headers).
         with tempfile.TemporaryDirectory(prefix='quotation-tamper-') as tmpdir:
-            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
-            with open(data_path, encoding='utf-8') as f:
-                data = json.load(f)
-            data['_meta']['applicable_entity'] = 'xian'
-            with open(data_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            data_path, output_path = _build_for_entity(self, tmpdir, 'thailand')
 
-            output_path = os.path.join(tmpdir, '报价单-西安-测试.docx')
-            rc, out, err = _run_script(
-                'build_quotation.py',
-                ['--entity', 'xian', '--data', data_path, '--output', output_path]
-            )
-            self.assertEqual(rc, 0, f"build_quotation.py failed:\nstdout: {out}\nstderr: {err}")
-
-            # Swap xian's header address for shenzhen's, leaving everything else intact.
-            tampered_path = os.path.join(tmpdir, '报价单-西安-篡改.docx')
+            # Swap thailand's header address for vietnam's, leaving everything else intact.
+            tampered_path = os.path.join(tmpdir, '报价单-泰国-篡改.docx')
             _replace_docx_visible_text(
                 output_path, tampered_path,
-                '西安市高新区科技路林凯国际大厦15层1501-01-03室',
-                '深圳市南山区南海大道1052号海翔广场717',
+                'Thanapoom Tower, 25th floor Unit A2, 1550 New Petchaburi Rd, ',
+                'Tầng 6, Số 89 Phan Đình Phùng, Phường Phú Nhuận,TPHCM.',
                 part='word/header1.xml')
 
             rc, out, err = _run_script(
                 'verify_quotation.py',
-                ['--entity', 'xian', '--input', tampered_path, '--data', data_path]
+                ['--entity', 'thailand', '--input', tampered_path, '--data', data_path]
             )
             self.assertNotEqual(
                 rc, 0, f"verify_quotation.py accepted a foreign header address:\n{out}")
             self.assertIn('不属于本主体配置地址', out)
+
+    def test_verify_skips_header_ownership_checks_for_image_headers(self):
+        """图片页眉没有可核对的文字，verify 必须**显式**跳过那两项检查。
+
+        「显式跳过」和「因为取不到文字而顺带没跑」在输出上长得一样，但对以后维护的人
+        不是一回事：后者意味着页眉被改回文字版、或者横幅整个丢了，都没人会发现。所以
+        这里两头都要断言——跳过有说明，而图片页眉该有的自查照跑、丢了会拦下。
+        """
+        for entity in ('jakarta', 'xian'):
+            with self.subTest(entity=entity):
+                with tempfile.TemporaryDirectory(prefix=f'quotation-imgchk-{entity}-') as tmpdir:
+                    data_path, output_path = _build_for_entity(
+                        self, tmpdir, entity,
+                        example='sample_quotation.json' if entity == 'jakarta'
+                                else 'minimal_quotation.json')
+
+                    rc, out, err = _run_script(
+                        'verify_quotation.py',
+                        ['--entity', entity, '--input', output_path, '--data', data_path])
+                    self.assertEqual(rc, 0,
+                                     f"verify_quotation.py failed:\nstdout: {out}\nstderr: {err}")
+                    self.assertIn('跳过「页眉公司名 vs 银行」与「页眉地址归属」检查', out,
+                                  "verify 跳过了图片页眉的两项检查，却没有说明")
+                    self.assertIn('页眉横幅图版式与配置一致', out,
+                                  "verify 没有自查图片页眉的版式")
+
+                    # 跳过的是「内容核对」，不是「页眉整个不看了」：横幅没了仍须拦下。
+                    stripped = os.path.join(tmpdir, '报价单-缺横幅.docx')
+                    _drop_drawings_from_header(output_path, stripped, keep_shape=True)
+                    rc, out, err = _run_script(
+                        'verify_quotation.py',
+                        ['--entity', entity, '--input', stripped, '--data', data_path])
+                    self.assertNotEqual(
+                        rc, 0, f"verify_quotation.py accepted a header with no banner:\n{out}")
+                    self.assertIn('页眉里找不到横幅图', out)
 
     def test_all_entity_templates_share_one_header_layout(self):
         """Every entity template must use the same compact header layout.
@@ -1410,33 +1570,181 @@ class TestQuotationSmoke(unittest.TestCase):
                              "built thailand header must right-align the company name")
 
     def test_build_preserves_header_layout(self):
-        """build_quotation.py must leave the template's header geometry intact.
+        """build_quotation.py must leave a text header's geometry intact.
 
         The separator's floating anchor sits a fixed offset below its paragraph, so
         editing the paragraph's height or dropping it moves the blue line off its
         intended position — onto the body's first line ("公司名称：") or the logo
         anchored in that same paragraph.
+
+        Entities configured with ``header_image`` are out of scope here: build
+        replaces their header wholesale, and the layout that must hold for them is
+        asserted in test_image_header_replaces_text_header_with_anchored_banner.
+
+        Note the ``china`` template has no case below: every entity that uses it
+        (beijing/xian/shenzhen/shanghai/shanghai_new) is an image header now, so
+        build never renders its text header. The template file itself is still
+        covered by test_all_entity_templates_share_one_header_layout.
         """
         cases = [
-            ('jakarta', 'sample_quotation.json', '报价单模板-雅加达公司.docx'),
-            ('xian', 'minimal_quotation.json', '报价单模板-中国公司.docx'),
+            ('thailand', '报价单模板-泰国公司.docx'),
+            ('singapore', '报价单模版-新加坡公司.docx'),
+            ('egypt', '报价单模版-埃及公司.docx'),
+            ('malaysia', '报价单模版-马来西亚公司.docx'),
         ]
-        for entity, example, template_name in cases:
+        for entity, template_name in cases:
             with self.subTest(entity=entity):
                 template = os.path.join(SKILL_ROOT, 'assets', template_name)
                 with tempfile.TemporaryDirectory(prefix='quotation-header-') as tmpdir:
-                    data_path = _copy_example(tmpdir, example)
-                    output_path = os.path.join(tmpdir, '报价单-页眉测试.docx')
-                    rc, out, err = _run_script(
-                        'build_quotation.py',
-                        ['--entity', entity, '--data', data_path, '--output', output_path]
-                    )
-                    self.assertEqual(rc, 0, f"build_quotation.py failed:\nstdout: {out}\nstderr: {err}")
+                    _, output_path = _build_for_entity(self, tmpdir, entity)
                     self.assertEqual(
                         _header_trailing_paragraph_count(output_path),
                         _header_trailing_paragraph_count(template),
                         f"{entity}: build changed the header's trailing paragraphs, "
                         f"so the blue line no longer sits where the template puts it")
+
+    def test_image_header_replaces_text_header_with_anchored_banner(self):
+        """每个配了 header_image 的主体，页眉必须是一幅锚定的横幅图。
+
+        横幅是浮动锚定（wp:anchor + wrapNone），不占版式高度；原图按 alpha 边界用
+        a:srcRect 裁掉透明边距（PNG 文件本身不动），所以图片框就是图墨迹本身——可见
+        内容一个像素不变，框却不会顶到纸张上缘、也不会越过正文栏。版式靠锚点偏移量
+        摆位，靠末段的 space-after 给正文留白。所以这里除了核对「图在不在」，还要核对
+        它落的位置与 entities.json 算出来的一致、且确实没越界。
+        """
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(SKILL_ROOT, 'scripts'))
+        from quotation_common import (
+            header_image_spec, header_image_geometry, text_column_mm,
+            MIN_PRINTABLE_INK_TOP_MM,
+        )
+
+        W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+        WP = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
+        A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+        WPS = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape'
+        R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+
+        # Read the raw JSON rather than load_entity_config(), which strips `_meta`
+        # (where header_image_defaults lives) and validates fields this test
+        # doesn't care about.
+        with open(os.path.join(SKILL_ROOT, 'config', 'entities.json'), encoding='utf-8') as f:
+            config = json.load(f)
+        defaults = config.get('_meta', {}).get('header_image_defaults')
+        image_entities = sorted(
+            key for key, cfg in config.items()
+            if not key.startswith('_') and header_image_spec(cfg, defaults))
+        self.assertTrue(image_entities, "no entity configures header_image")
+
+        for entity in image_entities:
+            with self.subTest(entity=entity):
+                spec = header_image_spec(config[entity], defaults)
+                png_path = os.path.join(SKILL_ROOT, 'assets', spec['file'])
+                self.assertTrue(os.path.exists(png_path), f"{entity}: 页眉图不存在 {png_path}")
+                geom = header_image_geometry(spec, png_path)
+
+                # bbox_px 必须是这张图**实测**的 alpha 边界。build 的裁剪与缩放都从
+                # 它推出来，所以配置自洽不代表版面对——填错只会让横幅被裁歪、被拉伸，
+                # 而下面那些「build == entities.json」的断言照样全过。只有图本身能
+                # 提供正确答案，故这里独立量一次（换图时最容易忘的就是同步这个值）。
+                with open(png_path, 'rb') as f:
+                    measured = _png_alpha_bbox(f.read())
+                self.assertEqual(
+                    tuple(spec['bbox_px']), measured,
+                    f"{entity}: header_image.bbox_px {spec['bbox_px']} 与 "
+                    f"{spec['file']} 实测 alpha 边界 {list(measured)} 不符")
+
+                with tempfile.TemporaryDirectory(prefix=f'quotation-img-{entity}-') as tmpdir:
+                    _, output_path = _build_for_entity(self, tmpdir, entity)
+
+                    # 页眉顶/页脚底距纸张边缘 0.4cm —— 图片页眉靠它把整幅图顶上去
+                    with zipfile.ZipFile(output_path) as zf:
+                        doc_root = ET.fromstring(zf.read('word/document.xml'))
+                        header_root = ET.fromstring(zf.read('word/header1.xml'))
+                        targets = {rel.get('Id'): rel.get('Target') for rel in ET.fromstring(
+                            zf.read('word/_rels/header1.xml.rels'))}
+
+                    pg_mar = doc_root.find(f'.//{{{W}}}sectPr/{{{W}}}pgMar')
+                    self.assertEqual(pg_mar.get(f'{{{W}}}header'), '227',
+                                     f"{entity}: 页眉距纸张上缘应为 0.4cm (227 DXA)")
+                    self.assertEqual(pg_mar.get(f'{{{W}}}footer'), '227',
+                                     f"{entity}: 页脚距纸张下缘应为 0.4cm (227 DXA)")
+
+                    paras = [p for p in header_root if p.tag == f'{{{W}}}p']
+                    self.assertEqual(
+                        len(paras), 1,
+                        f"{entity}: 图片页眉应只有 1 段（承载横幅与蓝线），实得 {len(paras)}")
+                    self.assertEqual(
+                        ''.join(t.text or '' for t in paras[0].iter(f'{{{W}}}t')).strip(), '',
+                        f"{entity}: 图片页眉段不应再残留文字页眉")
+
+                    banner = line = None
+                    for drawing in paras[0].iter(f'{{{W}}}drawing'):
+                        anchor = drawing.find(f'{{{WP}}}anchor')
+                        if anchor is None:
+                            # 内联图会真实占位，等于把裁剪/留白问题又请回来
+                            self.fail(f"{entity}: 页眉图必须是浮动锚定，不能是 wp:inline")
+                        if drawing.find(f'.//{{{WPS}}}wsp') is not None:
+                            line = anchor
+                        elif drawing.find(f'.//{{{A}}}blip') is not None:
+                            banner = anchor
+                    self.assertIsNotNone(banner, f"{entity}: 页眉里没有横幅图")
+                    self.assertIsNotNone(line, f"{entity}: 页眉里没有蓝色分隔线")
+                    self.assertIsNotNone(
+                        banner.find(f'{{{WP}}}wrapNone'),
+                        f"{entity}: 横幅图缺 wrapNone，浮动图会占版式高度")
+
+                    # 必须按 alpha 边界裁剪：不裁的话透明边距会把图片框撑到纸张上缘
+                    # 之外、横向越过正文栏（这正是这次改版要修掉的问题）。
+                    src_rect = banner.find(f'.//{{{A}}}srcRect')
+                    self.assertIsNotNone(
+                        src_rect, f"{entity}: 横幅图没有按 alpha 边界裁剪（缺 a:srcRect）")
+                    for side, expected in geom['src_rect'].items():
+                        self.assertEqual(
+                            src_rect.get(side), str(expected),
+                            f"{entity}: 横幅裁剪 srcRect {side} 与 entities.json 的 "
+                            f"bbox_px 不符")
+                    self.assertEqual(
+                        banner.find(f'{{{WP}}}extent').get('cx'), str(geom['extent_cx']),
+                        f"{entity}: 横幅宽度应为裁剪后的墨迹宽度")
+                    self.assertEqual(
+                        banner.find(f'{{{WP}}}extent').get('cy'), str(geom['extent_cy']),
+                        f"{entity}: 横幅高度应为裁剪后的墨迹高度（按原图长宽比）")
+
+                    for tag, expected in (('positionH', str(geom['banner_off_h'])),
+                                          ('positionV', str(geom['banner_off_v']))):
+                        self.assertEqual(
+                            banner.find(f'{{{WP}}}{tag}/{{{WP}}}posOffset').text, expected,
+                            f"{entity}: 横幅 {tag} 与 entities.json 算出的值不符")
+
+                    # 嵌入的就是原图本身，一个像素都没动
+                    embed = banner.find(f'.//{{{A}}}blip').get(f'{{{R}}}embed')
+                    with zipfile.ZipFile(output_path) as zf:
+                        embedded = zf.read('word/' + targets[embed].lstrip('/'))
+                    with open(png_path, 'rb') as f:
+                        self.assertEqual(
+                            embedded, f.read(),
+                            f"{entity}: 嵌入的横幅图与 assets/ 原图不一致（被改动过）")
+
+                    self.assertGreaterEqual(
+                        spec['ink_top_mm'], MIN_PRINTABLE_INK_TOP_MM,
+                        f"{entity}: 图墨顶 {spec['ink_top_mm']}mm 太贴近纸张上缘，"
+                        f"会落进打印机不可打印区")
+
+                    # 裁过之后图片框就是图墨迹本身，所以框本身也不许越界：横向落在
+                    # 正文栏内，纵向压在正文首行之上（顶边由上面的可打印区检查兜住）。
+                    col_left_mm, col_w_mm = text_column_mm()
+                    self.assertGreaterEqual(
+                        geom['ink_left_mm'], col_left_mm - 0.1,
+                        f"{entity}: 横幅左缘 {geom['ink_left_mm']:.2f}mm 越出正文栏左边界 "
+                        f"{col_left_mm:.2f}mm")
+                    self.assertLessEqual(
+                        geom['ink_left_mm'] + geom['ink_w_mm'], col_left_mm + col_w_mm + 0.1,
+                        f"{entity}: 横幅右缘越出正文栏右边界 {col_left_mm + col_w_mm:.2f}mm")
+                    self.assertLessEqual(
+                        geom['ink_bottom_mm'], spec['body_top_mm'] + 0.1,
+                        f"{entity}: 横幅框底 {geom['ink_bottom_mm']:.2f}mm 压过正文首行 "
+                        f"{spec['body_top_mm']}mm")
 
 
 if __name__ == '__main__':

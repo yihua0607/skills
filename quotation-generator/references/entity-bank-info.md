@@ -7,6 +7,7 @@
 | 实体 | SWIFT CODE | 状态 |
 |------|-----------|------|
 | jakarta (PT. SHAN HAI MAP) | CENAIDJA (IDR) / BNINIDJAXXX (USD) / ICBKIDJAXXX (RMB) | ✅ 已配置 |
+| sci (PT SHM CONSULTING INDONESIA / 山海图咨询印尼) | NISPIDJA | ✅ 已配置 |
 | beijing (北京山海图科技有限公司) | — | ➖ 无需配置（刘旭 2026-09-13 确认：北京不要 SWIFT CODE） |
 | xian (北京山海图科技有限公司西安分公司) | BKCHCNBJ620 | ✅ 已配置 |
 | shenzhen (北京山海图科技有限公司深圳分公司) | BKCHCNBJ45A | ✅ 已配置 |
@@ -44,6 +45,17 @@
 - ⚠️ 户名统一为 `PT. SHAN HAI MAP`（**带点**）：刘旭 2026-09-13 确认「雅加达公司无论什么币种，开户名称都是 PT. SHAN HAI MAP」。三个币种账户的**银行/账号/SWIFT 按币种不同**，只有户名写法一致。
   注：`verify_quotation.py` 的 `normalize_company_name()` 对点号不敏感（三种写法都能过校验），所以户名写错不会被 verify 拦下——必须靠 `config/entities.json` 里的数据正确
 
+### sci
+山海图咨询印尼主体，简称 SCI。**与雅加达（`jakarta`）是两家不同公司**，只是注册地址相同。
+- 公司名称: PT SHM CONSULTING INDONESIA
+- 公司地址: OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5, JL. LINGKAR LUAR BARAT BLOK A NO.1, JAKARTA BARAT 11740（与 `jakarta` 同一地址）
+- 账户名称: PT SHM CONSULTING INDONESIA
+- 开户银行: Bank OCBC Indonesia (PT Bank OCBC NISP Tbk)
+- 银行账号: 545800133641
+- SWIFT CODE: NISPIDJA
+- 分行地址: Jl. Prof.Dr.Satrio No 25, Jakarta Selatan 12940, Indonesia
+- ⚠️ **多币种账户**：IDR / USD / CNH 共用同一个账号 `545800133641`，因此只配 `bank_lines`，不配 `bank_lines_by_currency`（与 `jakarta`/`deyin` 按币种分账户不同）。
+
 ### beijing
 - 账户名称：北京山海图科技有限公司
 - 税号：91110108080546395Q
@@ -77,7 +89,7 @@
 - 开户银行：中国银行上海市虹桥会展中心支行
 - 行号：104290020130
 - SWIFT CODE：BKCHCNBJ300
-- 地址：上海市闵行区虹桥LM世界中心L3-B栋 305A
+- 地址：上海市青浦区虹桥LM世界中心L3-B栋 305A
 
 ### shanghai_new
 - 账户名称：上海山海图新企业咨询有限公司

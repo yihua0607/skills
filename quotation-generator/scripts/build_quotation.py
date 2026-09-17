@@ -32,6 +32,9 @@ from scripts.quotation_common import (
     A4_PAGE_W,
     A4_PAGE_H,
     A4_MARGINS,
+    header_image_spec,
+    header_image_geometry,
+    MIN_PRINTABLE_INK_TOP_MM,
     is_process_time_disclaimer,
 )
 from scripts.sync_payment_terms import extract_payment_terms, check_payment_terms_reasonableness
@@ -253,6 +256,124 @@ def main():
             paragraph.append(child)
         return True
 
+    def _add_header_image_relationship(unpack_dir, img_src):
+        """把横幅图放进 word/media，并给 header1.xml.rels 加一条 image 关系，返回 rId。
+
+        直接改 rels 文本而不是过 ElementTree，是为了原样保留模板 rels 的写法
+        （默认命名空间、属性顺序），避免 ElementTree 重排成 ns0:Relationship。
+        """
+        media_dir = os.path.join(unpack_dir, 'word', 'media')
+        os.makedirs(media_dir, exist_ok=True)
+        shutil.copyfile(img_src, os.path.join(media_dir, 'header_banner.png'))
+
+        rels_path = os.path.join(unpack_dir, 'word', '_rels', 'header1.xml.rels')
+        with open(rels_path, encoding='utf-8') as fh:
+            rels = fh.read()
+        used = [int(m) for m in re.findall(r'Id="rId(\d+)"', rels)]
+        rid = f'rId{max(used) + 1 if used else 1}'
+        rels = rels.replace(
+            '</Relationships>',
+            f'<Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/'
+            f'officeDocument/2006/relationships/image" Target="media/header_banner.png"/>'
+            '</Relationships>',
+        )
+        with open(rels_path, 'w', encoding='utf-8') as fh:
+            fh.write(rels)
+        return rid
+
+    def apply_header_image(unpack_dir, entity_key, cfg, spec):
+        """页眉改用整幅横幅图，保留模板原有的蓝色分隔线。
+
+        横幅与蓝线锚在**同一段**，两个偏移量都从该段顶端起算 —— 沿用模板原有的
+        logo/蓝线不变式（SKILL.md 流程规则 #4）。横幅用浮动锚定（wp:anchor +
+        wrapNone）而非内联：内联时图片自带的透明边距照样占版面，页眉压不下去。
+        锚定之后再按 PNG 的 alpha 边界用 a:srcRect 裁掉透明边距（PNG 文件本身不动），
+        图片框因此就是图墨迹本身 —— 既不会伸到纸张上缘之外，也不会越过正文栏。
+
+        模板的蓝线形状原样搬运（含中国模板的 mc:AlternateContent 包装），只改它的
+        positionV 偏移 —— 粗细、颜色、虚线样式都与文字页眉主体完全一致。
+        """
+        header_path = os.path.join(unpack_dir, 'word', 'header1.xml')
+        if not os.path.exists(header_path):
+            print("⚠️  WARNING: word/header1.xml not found; cannot apply header image.")
+            return
+
+        img_src = os.path.join(SKILL_DIR, 'assets', spec['file'])
+        if not os.path.exists(img_src):
+            sys.exit(f'❌ 页眉图片不存在：{img_src}（检查 config/entities.json 的 header_image.file）')
+
+        geom = header_image_geometry(spec, img_src)
+        if spec['ink_top_mm'] < MIN_PRINTABLE_INK_TOP_MM:
+            print(f"⚠️  WARNING: 页眉图墨迹顶距纸张上缘仅 {spec['ink_top_mm']}mm "
+                  f"(< {MIN_PRINTABLE_INK_TOP_MM}mm) — 多数打印机不可打印区约 4.2mm，logo 顶部可能被切")
+
+        WP_NS, WPS_NS = NS['wp'], NS['wps']
+        A_NS = NS['a']
+        PIC_NS = NS['pic']
+
+        tree = ET.parse(header_path)
+        root = tree.getroot()
+        line_drawing = None
+        for drawing in root.iter(w('drawing')):
+            if drawing.find(f'.//{{{WPS_NS}}}wsp') is not None:
+                line_drawing = drawing
+        if line_drawing is None:
+            sys.exit('❌ 模板页眉里找不到蓝色分隔线（wps 形状），无法保留蓝线')
+        pos = line_drawing.find(f'{{{WP_NS}}}anchor/{{{WP_NS}}}positionV/{{{WP_NS}}}posOffset')
+        if pos is None:
+            sys.exit('❌ 蓝线锚点结构异常：找不到 wp:positionV/wp:posOffset')
+        pos.text = str(geom['line_off_v'])
+        # line_drawing 下面会被挂进全新的页眉树；原树不再序列化，不必先摘除。
+
+        rid = _add_header_image_relationship(unpack_dir, img_src)
+        cx, cy = geom['extent_cx'], geom['extent_cy']
+        sr = geom['src_rect']
+        banner = ET.fromstring(
+            f'<w:drawing xmlns:w="{W}" xmlns:wp="{WP_NS}" xmlns:a="{A_NS}" '
+            f'xmlns:pic="{PIC_NS}" xmlns:r="{NS["r"]}">'
+            '<wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0"'
+            ' relativeHeight="251658240" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">'
+            '<wp:simplePos x="0" y="0"/>'
+            f'<wp:positionH relativeFrom="column"><wp:posOffset>{geom["banner_off_h"]}</wp:posOffset></wp:positionH>'
+            f'<wp:positionV relativeFrom="paragraph"><wp:posOffset>{geom["banner_off_v"]}</wp:posOffset></wp:positionV>'
+            f'<wp:extent cx="{cx}" cy="{cy}"/>'
+            '<wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/>'
+            '<wp:docPr id="901" name="HeaderBanner"/>'
+            '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>'
+            '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+            '<pic:pic><pic:nvPicPr><pic:cNvPr id="901" name="HeaderBanner"/><pic:cNvPicPr/></pic:nvPicPr>'
+            f'<pic:blipFill><a:blip r:embed="{rid}"/>'
+            f'<a:srcRect l="{sr["l"]}" t="{sr["t"]}" r="{sr["r"]}" b="{sr["b"]}"/>'
+            '<a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
+            f'<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+            '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>'
+            '</pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing>'
+        )
+
+        # 文字段落全部丢弃（文字已由图片承载），只留承载横幅 + 蓝线的那一段。
+        # 该段的 space-after 决定正文首行位置，也就是页眉占用的总高度。
+        hdr = ET.Element(w('hdr'))
+        para = ET.SubElement(hdr, w('p'))
+        pPr = ET.SubElement(para, w('pPr'))
+        spacing = ET.SubElement(pPr, w('spacing'))
+        spacing.set(w('before'), '0')
+        spacing.set(w('after'), str(geom['reserve_twips']))
+        _set_run_size(ET.SubElement(pPr, w('rPr')), '2')
+        for element in (banner, line_drawing):
+            run = ET.SubElement(para, w('r'))
+            # 两个 run 用同一套 rPr：行高参与该段总高计算，不一致会让正文下移
+            # （SKILL.md 流程规则 #4 的同一条约束）。
+            _set_run_size(ET.SubElement(run, w('rPr')), '2')
+            run.append(element)
+
+        ET.ElementTree(hdr).write(header_path, xml_declaration=True, encoding='UTF-8')
+        print(f"✅ 页眉改用横幅图 {spec['file']}"
+              f"（按 alpha 边界裁掉透明边距 左{sr['l'] / 1000:.1f}% 上{sr['t'] / 1000:.1f}% "
+              f"右{sr['r'] / 1000:.1f}% 下{sr['b'] / 1000:.1f}%；"
+              f"图片框 {geom['ink_left_mm']:.1f}~{geom['ink_left_mm'] + geom['ink_w_mm']:.1f}mm × "
+              f"{spec['ink_top_mm']:.1f}~{geom['ink_bottom_mm']:.1f}mm，"
+              f"蓝线 {geom['line_mm']:.1f}mm / 正文首行 {spec['body_top_mm']}mm）")
+
     def apply_header(unpack_dir, entity_key):
         """Update the template header from entity-config ``header_lines``.
 
@@ -260,8 +381,15 @@ def main():
         logo/drawing runs, hyperlink fields, and decorative shapes — rather than
         just the last w:t element, so it works correctly even with multi-run text.
         Applied to every entity so the header text is driven solely by
-        config/entities.json ``header_lines``."""
+        config/entities.json ``header_lines``.
+
+        Entities configured with ``header_image`` skip all of that and get the
+        banner-image header instead — see apply_header_image above."""
         cfg = ENTITY_CONFIG.get(entity_key, {})
+        img_spec = header_image_spec(cfg, ENTITY_CONFIG.get('_meta', {}).get('header_image_defaults'))
+        if img_spec:
+            apply_header_image(unpack_dir, entity_key, cfg, img_spec)
+            return
         header_lines = cfg.get('header_lines')
         if not header_lines:
             print(f"⚠️  WARNING: No header override configured for entity={entity_key}; template header is unchanged.")

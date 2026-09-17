@@ -8,6 +8,7 @@ verify_quotation.py to ensure consistent behaviour across the pipeline.
 import json
 import os
 import re
+import struct
 import sys
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -78,12 +79,143 @@ A4_MARGINS = {
     'right': 1133,   # 56.65pt
     'bottom': 1155,  # 57.75pt
     'left': 1440,    # 72pt
-    'header': 567,   # 28.35pt from the paper edge
-    'footer': 340,   # 17pt from the paper edge
+    'header': 227,   # 0.4cm from the paper edge (页眉顶到纸张上缘)
+    'footer': 227,   # 0.4cm from the paper edge (页脚底到纸张下缘)
     'gutter': 0,
 }
 # Width of the text column the body flows into: 11906 - 1440 - 1133 = 9333 DXA.
 A4_TEXT_WIDTH = A4_PAGE_W - A4_MARGINS['left'] - A4_MARGINS['right']
+
+TWIPS_PER_MM = 1440 / 25.4            # 56.6929
+EMU_PER_MM = 36000
+
+# ---- 图片页眉 ---------------------------------------------------------------
+# 7 个主体（beijing / xian / shenzhen / shanghai / shanghai_new / jakarta / deyin）
+# 的页眉用整幅横幅图取代文字，蓝线保留。其余主体仍走文字页眉。
+#
+# 两个要点：
+#   1. 横幅是**浮动锚定**（wp:anchor + wrapNone），不是内联。内联时图片自带的透明边距
+#      照样占版面，页眉压不下去。
+#   2. 横幅与蓝线必须锚在**同一段**，两个偏移量都从该段顶端起算 —— 沿用模板原有的
+#      logo/蓝线不变式（见 SKILL.md 流程规则 #4）。
+#
+# 横幅一律按 PNG 的 alpha 边界**裁掉透明边距**（a:srcRect 裁，PNG 文件本身一个字节都不
+# 动），所以图片框 == 图墨迹：可见内容一个像素不变，框却不会再伸到纸张上缘之外、也不会
+# 越过正文栏。原图的透明上边距有 5.6~6.3mm、下边距 6.3~7.0mm、左右各 3.4~7.0mm，不裁的
+# 话框会顶到纸边（实测雅加达框顶距纸边仅 0.37mm）并一直压到正文首行前 0.66mm。早先的做
+# 法是让框顶伸到纸张上缘之上、靠那一截全透明来兜，位置依赖针对单个渲染器标定的漂移常量，
+# Word/WPS 下并不成立；裁掉之后框有多大就是墨迹有多大，与渲染器无关。
+HEADER_IMAGE_DEFAULTS = {
+    'ink_top_mm': 6.0,    # 图片墨迹顶距纸张上缘；必须 ≥ MIN_PRINTABLE_INK_TOP_MM
+    'line_gap_mm': 3.0,   # 图片墨迹底 → 蓝线
+    'body_top_mm': 30.0,  # 正文首行距纸张上缘，即页眉占用的总高度
+}
+# 多数激光打印机的不可打印区约 4.2mm，图墨迹顶低于这条线会被切掉。
+MIN_PRINTABLE_INK_TOP_MM = 5.0
+
+
+def text_column_mm():
+    """正文栏的左缘位置与宽度（mm），由 A4 页边距算出。
+
+    横幅的可见部分默认与正文栏左右对齐；``ink_left_mm`` / ``ink_width_cm`` 可覆盖。
+    """
+    left = A4_MARGINS['left'] / TWIPS_PER_MM
+    width = (A4_PAGE_W - A4_MARGINS['left'] - A4_MARGINS['right']) / TWIPS_PER_MM
+    return left, width
+
+# 页眉距纸边（A4_MARGINS['header'] = 227 DXA）是**名义**落点，实测页眉首段顶端与两个
+# 锚点的实际落点都跟名义值差一点点。差值由段落行高决定，推不出来，所以量一次写死：
+# 渲染一张 A4 首页，量图墨迹顶与蓝线的位置，与名义值相减。**改动 A4_MARGINS['header']
+# 或页眉段落结构后必须重量**，否则图墨顶会偏离 ink_top_mm，可能掉进不可打印区。
+HEADER_IMAGE_NOMINAL_TOP_MM = A4_MARGINS['header'] / TWIPS_PER_MM   # 4.0
+HEADER_IMAGE_INK_DRIFT_MM = 0.2     # 图墨迹实际落点比名义低 0.2mm
+HEADER_IMAGE_LINE_DRIFT_MM = 0.5    # 蓝线实际落点比名义高 0.5mm
+# 正文首行落在 HEADER_IMAGE_RESERVE_CALIB_BODY_TOP_MM 时，页眉段的 space-after 取
+# HEADER_IMAGE_RESERVE_CALIB_TWIPS；此后每 ±1 twip 正文首行同向移动 1/56.6929 mm。
+HEADER_IMAGE_RESERVE_CALIB_TWIPS = 1330
+HEADER_IMAGE_RESERVE_CALIB_BODY_TOP_MM = 30.1
+
+
+def read_png_size(path):
+    """读 PNG 的宽高（像素）。IHDR 紧跟 8 字节文件头，宽高各 4 字节大端。
+
+    只为了拿宽高比算横幅的显示尺寸，无需解码图像 —— 这样 build 不必依赖图像库。
+    """
+    with open(path, 'rb') as fh:
+        head = fh.read(24)
+    if head[:8] != b'\x89PNG\r\n\x1a\n' or head[12:16] != b'IHDR':
+        raise ValueError(f'不是有效的 PNG 文件: {path}')
+    return struct.unpack('>II', head[16:24])
+
+
+def header_image_spec(entity_cfg, defaults=None):
+    """合并默认值、_meta.header_image_defaults 与实体的 header_image。
+
+    实体没配 header_image（仍是文字页眉）时返回 None。
+    """
+    own = (entity_cfg or {}).get('header_image')
+    if not own:
+        return None
+    spec = dict(HEADER_IMAGE_DEFAULTS)
+    if defaults:
+        spec.update(defaults)
+    spec.update(own)
+    if not spec.get('bbox_px'):
+        raise ValueError(f'header_image 缺少 bbox_px（{spec.get("file")}）：'
+                         f'需要 PNG alpha 边界的 [x0, y0, x1, y1] 像素坐标，用来裁掉透明边距')
+    return spec
+
+
+def header_image_geometry(spec, png_path):
+    """算出横幅的锚点参数与裁剪比例。除标明的 mm 值外，一律是 EMU / twips / 千分之一百分比。
+
+    锚点偏移量都从**页眉首段顶端**起算，所以先减掉名义落点；图墨迹与蓝线的漂移方向相反
+    （图墨迹偏低、蓝线偏高），故分别加修正。
+
+    图片框 == 图墨迹：按 alpha 边界（``bbox_px``）裁掉透明边距后，横幅框顶正好落在
+    ``ink_top_mm`` 上、左右正好落在正文栏边界上，不会再伸到纸张或正文栏之外。
+    """
+    px_w, px_h = read_png_size(png_path)
+    x0, y0, x1, y1 = spec['bbox_px']
+    if not (0 <= x0 < x1 <= px_w and 0 <= y0 < y1 <= px_h):
+        raise ValueError(f'header_image.bbox_px {spec["bbox_px"]} 超出 PNG 尺寸 '
+                         f'{px_w}x{px_h}（{png_path}）')
+
+    col_left_mm, col_w_mm = text_column_mm()
+    ink_left_mm = spec.get('ink_left_mm') or col_left_mm
+    ink_w_mm = (spec.get('ink_width_cm') or col_w_mm / 10) * 10
+    # 以墨迹宽度定缩放比例，高度按原图长宽比推出来，横幅不会被拉伸。
+    px_per_mm = (x1 - x0) / ink_w_mm
+    ink_h_mm = (y1 - y0) / px_per_mm
+
+    line_mm = spec['ink_top_mm'] + ink_h_mm + spec['line_gap_mm']
+    return {
+        'extent_cx': int(round(ink_w_mm * EMU_PER_MM)),
+        'extent_cy': int(round(ink_h_mm * EMU_PER_MM)),
+        # 图片框已裁到墨迹边界，左缘直接落在 ink_left_mm 上。positionH 的
+        # relativeFrom="column"，原点就是左边距，故减掉正文栏左缘。
+        'banner_off_h': int(round((ink_left_mm - col_left_mm) * EMU_PER_MM)),
+        'banner_off_v': int(round((spec['ink_top_mm'] - HEADER_IMAGE_NOMINAL_TOP_MM
+                                   - HEADER_IMAGE_INK_DRIFT_MM) * EMU_PER_MM)),
+        'line_off_v': int(round((line_mm - HEADER_IMAGE_NOMINAL_TOP_MM
+                                 + HEADER_IMAGE_LINE_DRIFT_MM) * EMU_PER_MM)),
+        'reserve_twips': int(round(HEADER_IMAGE_RESERVE_CALIB_TWIPS
+                                   + (spec['body_top_mm'] - HEADER_IMAGE_RESERVE_CALIB_BODY_TOP_MM)
+                                   * TWIPS_PER_MM)),
+        # a:srcRect 的裁剪比例，单位千分之一百分比（100000 = 100%）。
+        'src_rect': {
+            'l': int(round(x0 / px_w * 100000)),
+            't': int(round(y0 / px_h * 100000)),
+            'r': int(round((px_w - x1) / px_w * 100000)),
+            'b': int(round((px_h - y1) / px_h * 100000)),
+        },
+        'ink_left_mm': ink_left_mm,
+        'ink_w_mm': ink_w_mm,
+        'ink_h_mm': ink_h_mm,
+        'ink_top_mm': spec['ink_top_mm'],
+        'ink_bottom_mm': spec['ink_top_mm'] + ink_h_mm,
+        'line_mm': line_mm,
+    }
 
 # 「服务内容」表只有 序号/服务内容/数量/价格/备注 五列，没有办理时间列；紧跟在它下面的
 # *备注： 区块因此不能出现「上述办理时间不包括收集材料时间……」这类免责声明——办理时间

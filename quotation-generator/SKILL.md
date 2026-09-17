@@ -1,11 +1,11 @@
 ---
 name: quotation-generator
-version: 1.16.4
+version: 1.17.0
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
-  支持 12 签约主体、IDR/RMB/USD/SGD/THB/VND/EGP/MYR 八种报价币种。
-last_updated: "2026-09-15"
+  支持 13 签约主体、IDR/RMB/USD/SGD/THB/VND/EGP/MYR 八种报价币种。
+last_updated: "2026-09-17"
 ---
 
 # 山海图报价单生成器
@@ -34,7 +34,7 @@ last_updated: "2026-09-15"
 | 1 | aiCode 必先 fetch | 只接受完整的 `服务名-19位数字编码`；脚本将该完整字符串原样作为 `aiCodes` 请求参数。只给 19 位纯数字会被脚本直接拒绝（`不支持纯19位数字编码查询`），此时要求用户补上服务名 |
 | 2 | 手改 `.docx` 优先 | 用户手改过的报价单，先保留客户可见内容再重新 build；付款方式保留规则详见『手改 .docx 保留』 |
 | 3 | 输出位置 | 最终生成的 `.docx` 放在 `quotation/YYYY-MM/` 下（YYYY-MM 为报价单日期所在年月）；`quotation.json`、`queried_services.json` 等过程文件写入其子目录；不写 skill 根目录；修改已有报价单时输出新文件 |
-| 4 | Agent 不改脚本 | 执行报价任务不得修改 build/validate/verify/fetch 等脚本；业务/数据问题按业务处理，只有严重脚本缺陷才提示联系 SKILL 开发者。页眉版式同理：8 套模板（12 个主体共用，4 个中国主体共用 `china` 模板）统一为「文本段落 → 唯一定位段（承载 logo + 蓝色分隔线）」，不要手改 `header1.xml`、也不要增删页眉末段——该段的高度正是正文避开蓝线的余量，动它会让蓝线压住正文「公司名称：」。logo 与蓝线必须锚在**同一段**：两个锚点的偏移量都从所在段落的顶端起算，同段时两者间距（`蓝线偏移 − logo 偏移 − logo 可见高度`，可见高度按 PNG alpha 量，位图自带的透明留白不算）才是模板常量；分开锚定会让蓝线随中文行高漂移而 logo 不动，字体缺字回退时蓝线就会压住 logo。承载 logo 的 run 必须沿用蓝线 run 的 `rPr`（字号与字体都会参与该段行高计算，即使是只装浮图、无文字的 run），否则末段变高、正文整体下移。版式已由 `tests/test_smoke.py` 锁定，改动后跑测试即可发现 |
+| 4 | Agent 不改脚本 | 执行报价任务不得修改 build/validate/verify/fetch 等脚本；业务/数据问题按业务处理，只有严重脚本缺陷才提示联系 SKILL 开发者。页眉版式同理，一律由 build 按配置生成，不要手改 `header1.xml`。**文字页眉**（8 套模板，共用 `china` 模板的中国主体在内）统一为「文本段落 → 唯一定位段（承载 logo + 蓝色分隔线）」，不要增删页眉末段——该段的高度正是正文避开蓝线的余量，动它会让蓝线压住正文「公司名称：」。logo 与蓝线必须锚在**同一段**：两个锚点的偏移量都从所在段落的顶端起算，同段时两者间距（`蓝线偏移 − logo 偏移 − logo 可见高度`，可见高度按 PNG alpha 量，位图自带的透明留白不算）才是模板常量；分开锚定会让蓝线随中文行高漂移而 logo 不动，字体缺字回退时蓝线就会压住 logo。承载 logo 的 run 必须沿用蓝线 run 的 `rPr`（字号与字体都会参与该段行高计算，即使是只装浮图、无文字的 run），否则末段变高、正文整体下移。**图片页眉**（配了 `header_image` 的 8 家）整段换成横幅，见『页眉的两种形态』。两种情况都已由 `tests/test_smoke.py` 锁定，改动后跑测试即可发现 |
 | 5 | 重复 aiCode 不累加 | 用户重复输入同一 aiCode 时，数量和价格不翻倍，也不累加；大概率是用户误重复输入。若用户明确要求"多加一行"，则在报价单中新增同名服务行（用序号或 aiCode 末三位区分），每行各自独立 |
 
 ## 签约主体
@@ -42,6 +42,7 @@ last_updated: "2026-09-15"
 | 签约主体 | `--entity` | 税率 | 默认币种 | 可切换币种 |
 |----------|------------|------|----------|-----------|
 | PT. SHAN HAI MAP (雅加达) | `jakarta` | 11% | IDR | RMB, USD |
+| PT SHM CONSULTING INDONESIA (山海图咨询印尼) | `sci` | 11% | IDR | RMB, USD |
 | 北京山海图科技有限公司 | `beijing` | 6% | RMB | USD |
 | 北京山海图科技有限公司西安分公司 | `xian` | 6% | RMB | USD |
 | 北京山海图科技有限公司深圳分公司 | `shenzhen` | 6% | RMB | USD |
@@ -61,6 +62,7 @@ last_updated: "2026-09-15"
 | 用户可能说法 | `--entity` |
 |--------------|------------|
 | 雅加达 / 雅加达山海图 / PT. SHAN HAI MAP / SHM信头 / 印尼shanhaimap | `jakarta` |
+| **SCI / 山海图咨询印尼 / 山海图咨询 / 印尼咨询 / PT SHM CONSULTING INDONESIA** | `sci` |
 | **德音人力 / 德音 / 德音人力资源 / deyin / dein / DEIN / dein信头 / DEIN信头 / PT DEIN TALENT SOLUTIONS** | `deyin` |
 | 北京 / 北京山海图 | `beijing` |
 | 西安 / 西安分公司 | `xian` |
@@ -75,17 +77,30 @@ last_updated: "2026-09-15"
 
 - 别名匹配**大小写不敏感**（`DEIN` = `dein` = `deyin`），中英文混写同样按上表识别。
 - ⚠️ **出现「德音」二字或 `dein`/`deyin` 一律走 `deyin`**，不要误判成 `jakarta`：两者都是印尼主体、都能用 IDR，但公司名、页眉地址、银行账户完全不同（`deyin` = PT DEIN TALENT SOLUTIONS，BCA 6802 044 409）。
+- ⚠️ **印尼有三个主体，别混**：`jakarta`（PT. SHAN HAI MAP）、`sci`（PT SHM CONSULTING INDONESIA，山海图咨询印尼）、`deyin`（PT DEIN TALENT SOLUTIONS，德音人力）。三家都能用 IDR，但公司名、银行账户各不相同；`sci` 与 `jakarta` 甚至连注册地址都一样，只能靠公司名区分。用户只说「山海图印尼」时按 `jakarta`，说「SCI」「咨询印尼」时才走 `sci`。
 - 别名不覆盖「多主体/意图不明」的情形：同时提到两个主体、或只说「印尼」而未指明公司名时，仍须向用户确认。
 
 ⚠️ **马来西亚税金**：马来西亚主体没有增值税（VAT），而是**销售与服务税（SST，Sales & Service Tax）**。报价单汇总表税金行标签用「销售与服务税 8%」替代「增值税 8%」，税率仍走 `config/entities.json` 的 `vat_rate`（字段不变，仅标签不同，由 `tax_label` 控制）。
 
 新增签约主体只需在 `config/entities.json` 添加新 key 并包含 `_meta.required_entity_fields` 所列字段（`payment_terms` 可选，缺省回退 `_meta.payment_terms_default`）；`--entity` 的 choices 由脚本从 `entities.json` 自动加载，无需改任何脚本。
 
-**A4 打印**：build 会把模板的 `sectPr` 归一为 A4 纵向（11906×16838 DXA）+ 标准页边距（上下 679/1155、左右 1440/1133 DXA，页眉 567、页脚 340），模板页面尺寸不合规时会强制纠正并在日志说明；verify 独立复核尺寸、方向与页边距。正文表格与页眉蓝线按设计略宽于文本栏（左右各溢出约 20pt），实测距纸张边缘仍 ≥6.8mm，在打印机可达范围内（一般 ≥5mm），属正常版式，不要为了"贴边"去改表格宽度。
+**A4 打印**：build 会把模板的 `sectPr` 归一为 A4 纵向（11906×16838 DXA）+ 标准页边距（上下 679/1155、左右 1440/1133 DXA，页眉 227、页脚 227，即距纸张边缘 0.4cm），模板页面尺寸不合规时会强制纠正并在日志说明；verify 独立复核尺寸、方向与页边距。正文表格与页眉蓝线按设计略宽于文本栏（左右各溢出约 20pt），实测距纸张边缘仍 ≥6.8mm，在打印机可达范围内（一般 ≥5mm），属正常版式，不要为了"贴边"去改表格宽度。
 
-页眉公司地址过长、会换行（页眉 logo 挤压文本宽度所致）时，为该实体加可选字段 `header_address_size_pt`（地址字号，单位 pt，如 `8`），地址行按此字号渲染、公司名与 Web 行不变。目前 `jakarta`、`deyin`、`malaysia` 已设为 8 号；新增实体若地址超过一行同样加上。
+**页眉的两种形态**：主体分「文字页眉」与「图片页眉」两类，由 `config/entities.json` 该实体是否配了 `header_image` 决定。已配图片页眉的 8 家：`beijing`、`xian`、`shenzhen`、`shanghai`、`shanghai_new`、`jakarta`、`sci`、`deyin`；其余（`singapore`、`thailand`、`vietnam`、`egypt`、`malaysia`）仍是文字页眉，下面两段只适用于它们。
 
-页眉公司名称对齐方式：由可选字段 `header_company_align`（`right`/`center`，缺省 `center`）控制。公司名过长时居中会把左端推进左侧 logo（logo 浮动锚定在同一段落带内），这些主体一律右对齐——右对齐把公司名右端钉在右页边距上，从而让出 logo 的空间：`thailand`、`vietnam`、`egypt`、`singapore` 已设 `right`，其余主体居中。新增主体若公司名超过约 25 字符，先渲染确认不压 logo 再决定。页眉 Web 行下方不留空行、蓝线分隔线位置不变，均由 build 脚本自动处理，无需配置。
+**图片页眉**：整个页眉（logo、公司名、地址、Web）替换成 `assets/页眉-<公司>.png` 一幅横幅，蓝线保留。布局由三件事决定，都在 `_meta.header_image_defaults` 与实体的 `header_image` 里：
+
+- **水平位置**：横幅的**可见部分与正文栏左右对齐**（左缘 = 左边距 25.4mm、宽 = 正文栏宽 164.6mm），由 `A4_MARGINS` 算出；需要偏离时用可选字段 `ink_left_mm` / `ink_width_cm` 覆盖。蓝线仍按原设计比正文栏宽约 20pt，两者不等宽是有意的；
+- `ink_top_mm`（6.0，图墨迹顶距纸张上缘）、`line_gap_mm`（3.0，图墨迹底→蓝线）、`body_top_mm`（30.0，正文首行距纸张上缘）；
+- 实体级补充字段 `bbox_px`：该图 alpha 边界在 PNG 里的像素坐标 `[x0, y0, x1, y1]`，各图不同，**配新实体时必须实测，不能照抄**。
+
+横幅用**浮动锚定**（`wp:anchor` + `wp:wrapNone`），再按 `bbox_px` 用 `a:srcRect` **裁掉 PNG 自带的透明边距**（PNG 文件本身一个字节都不动）。裁过之后图片框 == 图墨迹，可见内容一个像素不变，但框不会再顶到纸张上缘、也不会越过正文栏——这些透明边距有 5.6~7.0mm 之厚，不裁的话框会贴到纸边（实测雅加达框顶距纸边仅 0.37mm）并压到正文首行前 0.66mm。页眉高度完全由承载段的 `space-after` 决定。`ink_top_mm` 必须 ≥ `MIN_PRINTABLE_INK_TOP_MM`（5.0mm，多数打印机不可打印区约 4.2mm），低于此值 build 会 warning、verify 直接报错。图片页眉的公司名与地址都印在图里、XML 中没有对应文字，也改不动，因此 verify 会**显式跳过**「页眉公司名 vs 银行」与「页眉地址归属」两项检查并打印说明，改为核对横幅是否在位、锚点与裁剪参数是否与配置一致、图片框有没有越出纸张或正文栏、嵌入的是否就是原图。
+
+⚠️ **不要让横幅图片框越出纸张或正文栏**：不要把透明边距留着靠「框顶伸到纸外、那截全透明不打印」来兜——落点依赖针对单个渲染器标定的漂移常量（`HEADER_IMAGE_INK_DRIFT_MM` / `HEADER_IMAGE_LINE_DRIFT_MM`），Word/WPS 与 LibreOffice 的浮动锚点落点不同，换个渲染器就可能真的越界。裁掉透明边距后框有多大就是墨迹有多大，与渲染器无关。`verify` 与 `tests/test_smoke.py` 都会拦下未裁剪或越界的横幅。
+
+文字页眉的公司地址过长、会换行（页眉 logo 挤压文本宽度所致）时，为该实体加可选字段 `header_address_size_pt`（地址字号，单位 pt，如 `8`），地址行按此字号渲染、公司名与 Web 行不变。目前只有 `malaysia` 设了 8 号（原 `jakarta`、`deyin` 的该字段随图片页眉改造一并删除——图片页眉不读它，留着是死配置）。新增实体若地址超过一行同样加上。
+
+文字页眉的公司名称对齐方式：由可选字段 `header_company_align`（`right`/`center`，缺省 `center`）控制。公司名过长时居中会把左端推进左侧 logo（logo 浮动锚定在同一段落带内），这些主体一律右对齐——右对齐把公司名右端钉在右页边距上，从而让出 logo 的空间：`thailand`、`vietnam`、`egypt`、`singapore` 已设 `right`，其余主体居中。新增主体若公司名超过约 25 字符，先渲染确认不压 logo 再决定——实测 26 字符居中时距 logo 仅 0.2mm，已在碰撞边缘。页眉 Web 行下方不留空行、蓝线分隔线位置不变，均由 build 脚本自动处理，无需配置。
 
 ⚠️ **SWIFT CODE 注意**：生成美元（USD）报价前，检查 `config/entities.json` 中该实体**所选币种对应**的银行信息（有 `bank_lines_by_currency` 时取对应币种，否则取 `bank_lines`）是否含 SWIFT CODE（现状：仅 beijing 没有，按刘旭 2026-09-13 确认北京不需要 SWIFT CODE，别再提示用户补全；xian/shenzhen/shanghai/shanghai_new 等均已配置，见 `references/entity-bank-info.md`）。若用户要求补全，向用户确认具体 SWIFT CODE 后更新 `config/entities.json`，不要凭记忆假设。
 
@@ -197,7 +212,7 @@ python3 scripts/fetch_services.py '...' 2>&1 | grep -v '^⚠️' > "$WORKDIR/que
 
 币种可由 `_meta.target_currency` 指定（`IDR`/`RMB`/`USD`/`SGD`/`THB`/`VND`/`EGP`/`MYR`），优先级高于实体配置默认币种；例如 `applicable_entity: jakarta` 且 `target_currency: USD` 表示使用雅加达主体生成美元报价单。
 
-⚠️ **实体币种限制**：报价单币种仅支持**签约主体所在国家的本币**与**人民币/美元**外币，且必须在该实体 `allowed_currencies` 内（见上方「签约主体」表）。用户要求切换支付币种时，必须先查 `config/entities.json` 中该实体 `allowed_currencies`，不可凭记忆假设。本币报价只能用于对应主体（IDR→jakarta/deyin、SGD→singapore、THB→thailand、VND→vietnam、EGP→egypt、MYR→malaysia）。若币种不被当前实体支持，向用户提供两个选项：(1) 用 `convert_currency.py` 换算后，在备注中只写等值金额数字，不得出现汇率/折算/兑换字样（`validate_data.py` 会拦下这些关键词）；(2) 切换到支持该币种的实体。
+⚠️ **实体币种限制**：报价单币种仅支持**签约主体所在国家的本币**与**人民币/美元**外币，且必须在该实体 `allowed_currencies` 内（见上方「签约主体」表）。用户要求切换支付币种时，必须先查 `config/entities.json` 中该实体 `allowed_currencies`，不可凭记忆假设。本币报价只能用于对应主体（IDR→jakarta/sci/deyin、SGD→singapore、THB→thailand、VND→vietnam、EGP→egypt、MYR→malaysia）。若币种不被当前实体支持，向用户提供两个选项：(1) 用 `convert_currency.py` 换算后，在备注中只写等值金额数字，不得出现汇率/折算/兑换字样（`validate_data.py` 会拦下这些关键词）；(2) 切换到支持该币种的实体。
 
 ### 泰国预扣税
 
@@ -318,7 +333,7 @@ python3 scripts/build_quotation.py --entity shenzhen --data "$WORKDIR/quotation.
 python3 scripts/verify_quotation.py --entity xian --input "$QUOTATION_DIR/报价单.docx" --data "$WORKDIR/quotation.json"
 ```
 
-validate error → 必须修复，warning → 判断后处理。`--entity` 必传。`--title-line1/2`、`--quote-date` 优先级：命令行 > quote_meta > 默认值。报价币种优先级：`_meta.target_currency` > entity 默认币种。verify 自动检查页眉/银行/签名、服务名覆盖、金额公式、字体、A4 打印安全（页面尺寸 + 方向 + 页边距），并在传入 `--data` 时对比 `_meta.applicable_entity` / `_meta.target_currency`。目视补充：标题/客户/日期正确，表格无错位乱码。
+validate error → 必须修复，warning → 判断后处理。`--entity` 必传。`--title-line1/2`、`--quote-date` 优先级：命令行 > quote_meta > 默认值。报价币种优先级：`_meta.target_currency` > entity 默认币种。verify 自动检查页眉/银行/签名、服务名覆盖、金额公式、字体、A4 打印安全（页面尺寸 + 方向 + 页边距），并在传入 `--data` 时对比 `_meta.applicable_entity` / `_meta.target_currency`。图片页眉的主体没有可核对的页眉文字，verify 会显式跳过「页眉公司名 vs 银行」与「页眉地址归属」，改核横幅是否在位、锚点与 `srcRect` 裁剪参数是否与配置一致、图片框有没有越过纸张上缘或正文栏左右界（日志里有说明，不是静默不检查）。目视补充：标题/客户/日期正确，表格无错位乱码。
 
 ## 修复与异常边界
 

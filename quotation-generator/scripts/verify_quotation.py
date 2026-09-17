@@ -34,7 +34,15 @@ from scripts.quotation_common import (
     A4_PAGE_H,
     A4_MARGINS,
     is_process_time_disclaimer,
+    header_image_spec,
+    header_image_geometry,
+    text_column_mm,
+    MIN_PRINTABLE_INK_TOP_MM,
 )
+
+WP = '{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}'
+A_NS = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+WPS = '{http://schemas.microsoft.com/office/word/2010/wordprocessingShape}'
 
 
 def w(tag):
@@ -452,6 +460,87 @@ def configured_header_addresses(entity_cfg):
     return [ln for ln in lines[1:] if not ln.startswith('Web:')]
 
 
+def check_header_image(header_root, spec, png_path):
+    """图片页眉自查，返回 (issues, warnings)。
+
+    页眉换成整幅位图后，公司名和地址都印在图里、XML 里没有对应文字可核对——这正是
+    换图的目的（图改不动，也就不会跟银行信息对不上）。所以这里不再核对内容，改核
+    「版式有没有被改坏」：横幅在不在、锚点参数是否仍等于 entities.json 算出来的值、
+    有没有按 alpha 边界裁掉透明边距、图片框有没有越出纸张或正文栏、蓝线还在不在、
+    图墨顶有没有掉进打印机不可打印区。
+    """
+    issues = []
+    geom = header_image_geometry(spec, png_path)
+
+    banner_anchor = None
+    has_line = False
+    for drawing in header_root.iter(w('drawing')):
+        if drawing.find('.//' + WPS + 'wsp') is not None:
+            has_line = True
+        anchor = drawing.find(WP + 'anchor')
+        if anchor is not None and drawing.find('.//' + A_NS + 'blip') is not None:
+            banner_anchor = anchor
+
+    if banner_anchor is None:
+        issues.append(f"页眉里找不到横幅图（entity 配了 header_image: {spec['file']}，"
+                      f"但 header1.xml 中没有锚定的图片）")
+        return issues, []
+    if not has_line:
+        issues.append("页眉里找不到蓝色分隔线")
+
+    extent = banner_anchor.find(WP + 'extent')
+    pos_h = banner_anchor.find(WP + 'positionH/' + WP + 'posOffset')
+    pos_v = banner_anchor.find(WP + 'positionV/' + WP + 'posOffset')
+    if extent is None or pos_h is None or pos_v is None:
+        issues.append("横幅图锚点结构不完整（缺 extent / positionH / positionV）")
+        return issues, []
+
+    for label, actual, expected in (
+        ('水平偏移 positionH', pos_h.text, str(geom['banner_off_h'])),
+        ('垂直偏移 positionV', pos_v.text, str(geom['banner_off_v'])),
+        ('宽度 extent cx', extent.get('cx'), str(geom['extent_cx'])),
+        ('高度 extent cy', extent.get('cy'), str(geom['extent_cy'])),
+    ):
+        if actual != expected:
+            issues.append(f"横幅图{label} = {actual}，按 entities.json 应为 {expected}"
+                          f"（页眉版式与配置不符）")
+
+    # 横幅按 alpha 边界裁掉透明边距后，图片框 == 图墨迹，所以「框」和「墨迹」是同一个
+    # 矩形：框越界就是墨迹越界，不再有「框顶伸到纸外但全透明所以没关系」的余地。
+    src_rect = banner_anchor.find('.//' + A_NS + 'srcRect')
+    if src_rect is None:
+        issues.append("横幅图没有按 alpha 边界裁剪（缺 a:srcRect）——透明边距会撑大图片框，"
+                      "框顶顶到纸张上缘、并越过正文栏")
+    else:
+        for side, expected in geom['src_rect'].items():
+            actual = src_rect.get(side)
+            if actual != str(expected):
+                issues.append(f"横幅图裁剪 srcRect {side} = {actual}，按 entities.json 的 "
+                              f"bbox_px 应为 {expected}（页眉版式与配置不符）")
+
+    if spec['ink_top_mm'] < MIN_PRINTABLE_INK_TOP_MM:
+        issues.append(f"页眉图墨迹顶距纸张上缘 {spec['ink_top_mm']}mm < "
+                      f"{MIN_PRINTABLE_INK_TOP_MM}mm，多数打印机不可打印区约 4.2mm，"
+                      f"logo 顶部会被裁掉")
+
+    # 图片框已经裁到墨迹边界，所以框本身就是墨迹：横向必须落在正文栏内，纵向不许压到
+    # 正文首行。（顶边由上面的 MIN_PRINTABLE 检查兜住，它比纸张上缘更严。）
+    col_left_mm, col_w_mm = text_column_mm()
+    col_right_mm = col_left_mm + col_w_mm
+    box_right_mm = geom['ink_left_mm'] + geom['ink_w_mm']
+    tol = 0.1   # mm，容忍 entities.json 里 mm 取值的舍入
+    if geom['ink_left_mm'] < col_left_mm - tol:
+        issues.append(f"页眉横幅图片框左缘 {geom['ink_left_mm']:.2f}mm 越出正文栏左边界 "
+                      f"{col_left_mm:.2f}mm")
+    if box_right_mm > col_right_mm + tol:
+        issues.append(f"页眉横幅图片框右缘 {box_right_mm:.2f}mm 越出正文栏右边界 "
+                      f"{col_right_mm:.2f}mm")
+    if geom['ink_bottom_mm'] > spec['body_top_mm'] + tol:
+        issues.append(f"页眉横幅图片框底缘 {geom['ink_bottom_mm']:.2f}mm 压过正文首行 "
+                      f"{spec['body_top_mm']:.2f}mm")
+    return issues, []
+
+
 def check_fonts(document_root):
     """Check that fonts are consistently FangSong."""
     non_fangsong = set()
@@ -822,7 +911,41 @@ def main():
         header_company = None
         header_address = None
 
-        if os.path.exists(header_xml_path):
+        # 配了 header_image 的主体，页眉是一整幅位图：公司名和地址都印在图里，XML 里
+        # 没有对应文字，人工也改不动。所以「页眉公司名 vs 银行」「页眉地址归属」这两项
+        # 对它天然不适用，显式跳过并说明，而不是等 extract_header_info 取不到文字后
+        # 静默不检查——那样页眉万一被改回文字、或横幅整个丢了，都不会有人发现。
+        img_spec = header_image_spec(entity_config.get(detected_entity or '', {}),
+                                     entity_config.get('_meta', {}).get('header_image_defaults'))
+        if img_spec:
+            print(f"页眉形式: 横幅图 {img_spec['file']}")
+            print("ℹ️  页眉公司名/地址均在图内、XML 中无可核对文字，"
+                  "跳过「页眉公司名 vs 银行」与「页眉地址归属」检查")
+            if not os.path.exists(header_xml_path):
+                print("❌ header1.xml 不存在，图片页眉没有生效")
+                all_issues.append("header1.xml 不存在，图片页眉没有生效")
+            else:
+                img_path = os.path.join(SKILL_DIR, 'assets', img_spec['file'])
+                if not os.path.exists(img_path):
+                    print(f"❌ 页眉图片不存在：{img_path}")
+                    all_issues.append(
+                        f"页眉图片不存在：{img_path}（检查 config/entities.json 的 "
+                        f"header_image.file）")
+                else:
+                    img_issues, _ = check_header_image(
+                        ET.parse(header_xml_path).getroot(), img_spec, img_path)
+                    for issue in img_issues:
+                        print(f"❌ {issue}")
+                        all_issues.append(issue)
+                    if not img_issues:
+                        geom = header_image_geometry(img_spec, img_path)
+                        print(f"✅ 页眉横幅图版式与配置一致，且未越界"
+                              f"（图片框 {geom['ink_left_mm']:.1f}~"
+                              f"{geom['ink_left_mm'] + geom['ink_w_mm']:.1f}mm × "
+                              f"{img_spec['ink_top_mm']:.1f}~{geom['ink_bottom_mm']:.1f}mm / "
+                              f"蓝线 {geom['line_mm']:.1f}mm / "
+                              f"正文首行 {img_spec['body_top_mm']}mm）")
+        elif os.path.exists(header_xml_path):
             header_tree = ET.parse(header_xml_path)
             header_root = header_tree.getroot()
             header_company, header_address = extract_header_info(header_root)

@@ -1,7 +1,7 @@
 {
   "_meta": {
     "alias_comment": "aliases：主体别名（用户口语/中英文叫法，匹配大小写不敏感，供 Agent 识别用，脚本不读该字段；--entity 仍只接受实体 key）。2026-09-15 起「德音人力/德音/deyin/dein/DEIN」一律对应 deyin。",
-    "_comment": "签约主体配置文件。新增实体只需添加新 key 并确保包含所有 required_entity_fields。payment_terms 缺省时回退 payment_terms_default（jakarta/deyin 用「收到发票后 100%」变体，其余主体共用默认）。universal_excludes 是常见公共费用不含项的种子示例，用于提示去重，不是完整白名单；实际应按多个服务共同项和业务语义抽取公共不含项到 notes。header_address_size_pt 可选：页眉公司地址过长、会换行时设地址字号（单位 pt，如 8），缺省沿用模板原字号。header_company_align 可选：页眉公司名称对齐方式（center/right），缺省 center；公司名过长、居中会压住左侧 logo 的主体（泰国/越南/埃及/新加坡）设 right。tax_label 可选：汇总表税金行标签（缺省「增值税」），马来西亚设「销售与服务税」（SST），税率仍走 vat_rate。",
+    "_comment": "签约主体配置文件。新增实体只需添加新 key 并确保包含所有 required_entity_fields。payment_terms 缺省时回退 payment_terms_default（jakarta/deyin 用「收到发票后 100%」变体，其余主体共用默认）。universal_excludes 是常见公共费用不含项的种子示例，用于提示去重，不是完整白名单；实际应按多个服务共同项和业务语义抽取公共不含项到 notes。header_address_size_pt 可选：页眉公司地址过长、会换行时设地址字号（单位 pt，如 8），缺省沿用模板原字号。header_company_align 可选：页眉公司名称对齐方式（center/right），缺省 center；公司名过长、居中会压住左侧 logo 的主体（泰国/越南/埃及/新加坡）设 right。tax_label 可选：汇总表税金行标签（缺省「增值税」），马来西亚设「销售与服务税」（SST），税率仍走 vat_rate。header_image 可选：页眉改用整幅横幅图（见 _meta.header_image_defaults 与 SKILL.md『图片页眉』）。file 是 assets 下的图片文件名；bbox_px 是该图 alpha 边界在 PNG 里的像素坐标 [x0, y0, x1, y1]，build 据此裁掉透明边距——不裁的话图片框会顶到纸张上缘、横向越过正文栏（横幅的可见内容其实已经对齐正文栏，撑出框外的全是透明边距）。换图时必须重量，不能照抄。已配：beijing/xian/shenzhen/shanghai/shanghai_new/jakarta/sci/deyin。",
     "required_entity_fields": [
       "template",
       "company",
@@ -14,7 +14,12 @@
     "payment_terms_default": [
       "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
     ],
-    "universal_excludes": [
+    "header_image_defaults": {
+      "ink_top_mm": 6.0,
+      "line_gap_mm": 3.0,
+      "body_top_mm": 30.0
+    },
+  "universal_excludes": [
       "文件翻译费用（如需）",
       "资料快递费用（国际）",
       "差旅费/考察费（如有）"
@@ -30,7 +35,10 @@
       "JL. LINGKAR LUAR BARAT BLOK A NO.1 JAKARTA BARAT 11740",
       "Web: www.shanhaimap.com"
     ],
-    "header_address_size_pt": 8,
+    "header_image": {
+      "file": "页眉-SHM雅加达公司.png",
+      "bbox_px": [137, 111, 3391, 433]
+    },
     "vat_rate": 0.11,
     "currency": "IDR",
     "allowed_currencies": ["IDR", "RMB", "USD"],
@@ -68,6 +76,34 @@
       ]
     }
   },
+  "sci": {
+    "template": "jakarta",
+    "company": "PT SHM CONSULTING INDONESIA",
+    "aliases": ["SCI", "山海图咨询印尼", "山海图咨询", "印尼咨询", "印尼山海图咨询", "PT SHM CONSULTING INDONESIA", "PT SHM CONSULTING", "SHM CONSULTING", "shm consulting", "sci"],
+    "header_lines": [
+      "PT SHM CONSULTING INDONESIA",
+      "OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5",
+      "JL. LINGKAR LUAR BARAT BLOK A NO.1 JAKARTA BARAT 11740",
+      "Web: www.shanhaimap.com"
+    ],
+    "vat_rate": 0.11,
+    "currency": "IDR",
+    "allowed_currencies": ["IDR", "RMB", "USD"],
+    "header_image": {
+      "file": "页眉-SCI山海图咨询.png",
+      "bbox_px": [67, 124, 3391, 447]
+    },
+    "payment_terms": [
+      "甲方应在收到发票后 5 个工作日内支付合同金额的 100%。"
+    ],
+    "bank_lines": [
+      "银行名称：Bank OCBC Indonesia (PT Bank OCBC NISP Tbk)",
+      "账号名称：PT SHM CONSULTING INDONESIA",
+      "银行账号：545800133641",
+      "国际银行代码 Swift Code：NISPIDJA",
+      "分行地址：Jl. Prof.Dr.Satrio No 25, Jakarta Selatan 12940, Indonesia"
+    ]
+  },
   "beijing": {
     "template": "china",
     "company": "北京山海图科技有限公司",
@@ -77,6 +113,10 @@
       "北京市海淀区西四环北路158号1幢一层3-65",
       "Web: www.shanhaimap.com"
     ],
+    "header_image": {
+      "file": "页眉-SHM北京公司.png",
+      "bbox_px": [137, 111, 3390, 433]
+    },
     "vat_rate": 0.06,
     "currency": "RMB",
     "allowed_currencies": ["RMB", "USD"],
@@ -97,6 +137,10 @@
       "西安市高新区科技路林凯国际大厦15层1501-01-03室",
       "Web: www.shanhaimap.com"
     ],
+    "header_image": {
+      "file": "页眉-SHM西安公司.png",
+      "bbox_px": [137, 111, 3390, 433]
+    },
     "vat_rate": 0.06,
     "currency": "RMB",
     "allowed_currencies": ["RMB", "USD"],
@@ -119,6 +163,10 @@
       "深圳市南山区南海大道1052号海翔广场717",
       "Web: www.shanhaimap.com"
     ],
+    "header_image": {
+      "file": "页眉-SHM深圳公司.png",
+      "bbox_px": [137, 114, 3390, 447]
+    },
     "vat_rate": 0.06,
     "currency": "RMB",
     "allowed_currencies": ["RMB", "USD"],
@@ -138,9 +186,13 @@
     "aliases": ["上海", "上海分公司", "上海山海图", "shanghai"],
     "header_lines": [
       "北京山海图科技有限公司上海分公司",
-      "上海市闵行区虹桥LM世界中心L3-B栋 305A",
+      "上海市青浦区虹桥LM世界中心L3-B栋 305A",
       "Web: www.shanhaimap.com"
     ],
+    "header_image": {
+      "file": "页眉-SHM上海分公司.png",
+      "bbox_px": [137, 115, 3390, 447]
+    },
     "vat_rate": 0.01,
     "currency": "RMB",
     "allowed_currencies": ["RMB", "USD"],
@@ -152,7 +204,7 @@
       "开户银行：中国银行上海市虹桥会展中心支行（Bank of China Shanghai Branch Hongqiao Exhibition And Convention Center Sub-Branch）",
       "行号：104290020130",
       "SWIFT CODE：BKCHCNBJ300",
-      "地址：上海市闵行区虹桥LM世界中心L3-B栋 305A"
+      "地址：上海市青浦区虹桥LM世界中心L3-B栋 305A"
     ]
   },
   "shanghai_new": {
@@ -164,6 +216,10 @@
       "上海市青浦区虹桥LM世界中心L3-B栋 305A",
       "Web: www.shanhaimap.com"
     ],
+    "header_image": {
+      "file": "页眉-SHM上海新企业.png",
+      "bbox_px": [137, 115, 3390, 447]
+    },
     "vat_rate": 0.01,
     "currency": "RMB",
     "allowed_currencies": ["RMB", "USD"],
@@ -213,7 +269,10 @@
       "JL. LINGKAR LUAR BARAT BLOK A NO.1 JAKARTA BARAT 11740",
       "Web: www.shanhaimap.com"
     ],
-    "header_address_size_pt": 8,
+    "header_image": {
+      "file": "页眉-德音人力.png",
+      "bbox_px": [119, 111, 3391, 433]
+    },
     "vat_rate": 0.11,
     "currency": "IDR",
     "allowed_currencies": ["IDR", "USD"],
