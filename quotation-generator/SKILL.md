@@ -1,11 +1,11 @@
 ---
 name: quotation-generator
-version: 1.17.0
+version: 1.17.1
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
   支持 13 签约主体、IDR/RMB/USD/SGD/THB/VND/EGP/MYR 八种报价币种。
-last_updated: "2026-09-17"
+last_updated: "2026-09-18"
 ---
 
 # 山海图报价单生成器
@@ -287,7 +287,7 @@ price:   13,333                            （直接写入 quotation.json）
 | 费用不含/不包含 | `fee_details[].exclude` + `notes` | 公共不含项进 `notes`；服务特有项留 `exclude`。`notes` 只放不含项与通用说明，**不放办理时间免责声明**——该表没有办理时间列 |
 | 办理流程/服务流程 | `process_data[].process` | 每步一条，保留序号 |
 | 交付文件/交付材料 | `process_data[].deliverables` | 每项一条；数量 >1 时**编号写进 JSON**（`1. 2. 3.`，示例均为手工编号），build 只在检测到未编号时才兜底补号，别指望它替你编号 |
-| 所需资料/所需材料 | `doc_data[].docs` | 每项一条，保留子层级编号 |
+| 所需资料/所需材料 | `doc_data[].docs` | 每项一条（**一个元素＝一个段落**，不要把多行内容塞进一条，否则渲染时换行会被压成空格、子项挤在一行里），保留子层级编号；**要用层级缩进就在行首写全角空格**（1 个＝1 级、最多 6 级），build 会把它转成段落左缩进 `w:ind`（每级 360 twips）并在末尾打印「所需资料及信息行缩进：N 行」。行首写半角空格或 NBSP 无效——`quotation_schema` 的 `item.strip()` 会把它们剥掉 |
 
 忽略 API 内容里的付款方式、退款/售后、发票相关。用户明确指定报价单付款条件时写入 `quote_meta.payment_terms`。
 
@@ -371,6 +371,7 @@ validate error → 必须修复，warning → 判断后处理。`--entity` 必�
 | `服务币种=IDR` 但 `rateToCny` 异常低 + 服务编码非 ID 前缀 | API 币种标记错误，按服务编码前缀判断真实币种；见 `references/edge-cases.md`「rateToCny 异常低」 |
 | API 服务内容 Markdown 格式不一致导致提取失败 | 用 `str.find()` 定位 + 截取，不用正则；见 `references/edge-cases.md`「Markdown 格式不一致」 |
 | `doc_data[].docs` 为空导致 validate 失败 | 补兜底 `or ["请咨询山海图获取详细资料清单"]`；见 `references/edge-cases.md`「docs 为空」 |
+| 「所需资料及信息」列子项挤在一行 / 看不到层级缩进 | ① 先拆行：一个数组元素只放一行（多行塞一条时，段落内换行会被压成空格）；② 缩进只在**行首写全角空格**（U+3000）才生效，1 个＝1 级；半角空格 / NBSP / U+3164 / U+2800 / U+200B 都无效（`quotation_schema` 的 `item.strip()` 剥掉空白，填充字符不产生位移）。build 会打印「所需资料及信息行缩进：N 行」，没有这行就说明一条都没标层级 |
 
 业务/数据问题包括但不限于：数据填写错误、缺字段、金额不一致、实体选择错误、页眉公司名称和签约名称不一致、金额过大疑似选错币种、付款金额与合同金额不一致、付款条件/优惠/税率/签约主体等业务口径不明确。此类问题应修数据或向用户确认，不许提示联系 SKILL 开发者。
 

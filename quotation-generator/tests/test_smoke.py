@@ -1747,5 +1747,93 @@ class TestQuotationSmoke(unittest.TestCase):
                         f"{spec['body_top_mm']}mm")
 
 
+class TestDocLineIndent(unittest.TestCase):
+    """doc_data[].docs 的行首全角空格 → 段落左缩进 w:ind（v1.17.1）。
+
+    一个数组元素渲染成一个段落；行首每 1 个全角空格（U+3000）＝ 1 级 ＝ 360 twips。
+    层级必须在数据归一化（item.strip() 会吃掉行首空白）之前从原始 JSON 读取，这里用成稿回读校验。
+    """
+
+    _W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    _HEADER = '所需资料及信息'
+
+    def _build_docx(self, tmpdir, docs, tag):
+        with open(os.path.join(SKILL_ROOT, 'examples', 'minimal_quotation.json'), encoding='utf-8') as f:
+            data = json.load(f)
+        data['doc_data'][0]['docs'] = docs
+        data_path = os.path.join(tmpdir, f'{tag}.json')
+        with open(data_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        out = os.path.join(tmpdir, f'{tag}.docx')
+        rc, out_text, err = _run_script(
+            'build_quotation.py', ['--entity', 'xian', '--data', data_path, '--output', out])
+        self.assertEqual(rc, 0, f'build failed:\n{out_text}\n{err}')
+        return out, out_text
+
+    def _doc_column(self, docx_path):
+        """返回「所需资料及信息」列每行的 (文本, w:ind left 或 0)。"""
+        w = lambda tag: f'{{{self._W}}}{tag}'  # noqa: E731
+        with zipfile.ZipFile(docx_path) as zf:
+            root = ET.fromstring(zf.read('word/document.xml'))
+        for tbl in root.iter(w('tbl')):
+            rows = list(tbl.findall(w('tr')))
+            if not rows:
+                continue
+            header = [''.join(t.text or '' for t in tc.iter(w('t'))) for tc in rows[0].findall(w('tc'))]
+            if not any(self._HEADER in h for h in header):
+                continue
+            col = next(i for i, h in enumerate(header) if self._HEADER in h)
+            out = []
+            for row in rows[1:]:
+                cells = row.findall(w('tc'))
+                if len(cells) <= col:
+                    continue
+                for p in cells[col].findall(w('p')):
+                    text = ''.join(t.text or '' for t in p.iter(w('t')))
+                    if not text.strip():
+                        continue
+                    left = 0
+                    ind = p.find(f'{w("pPr")}/{w("ind")}')
+                    if ind is not None and ind.get(w('left')):
+                        left = int(ind.get(w('left')))
+                    out.append((text, left))
+            return out
+        self.fail('未找到「所需资料及信息」表')
+
+    def test_indented_lines_get_w_ind(self):
+        docs = [
+            '1. 股东证件及信息：',
+            '\u3000（1）由个人当股东：',
+            '\u3000\u3000a. 印尼籍：身份证、税卡',
+            '\u3000（2）由外国公司当股东：',
+        ]
+        with tempfile.TemporaryDirectory(prefix='quotation-indent-') as tmpdir:
+            docx, out_text = self._build_docx(tmpdir, docs, 'indent')
+            lines = self._doc_column(docx)
+            self.assertEqual([lv for _, lv in lines], [0, 360, 720, 360],
+                             f'行缩进不符：{lines}')
+            # 层级标记本身不应留在文本里（schema 的 strip 负责剥掉）
+            self.assertTrue(all('\u3000' not in t for t, _ in lines), f'行首全角空格未被剥掉：{lines}')
+            self.assertIn('所需资料及信息行缩进：3 行', out_text)
+
+    def test_plain_lines_stay_flat(self):
+        """没有层级标注的旧数据必须照旧顶格（纯增量，不写 w:ind）。"""
+        docs = ['1. 护照首页扫描件', '2. 营业执照副本']
+        with tempfile.TemporaryDirectory(prefix='quotation-flat-') as tmpdir:
+            docx, out_text = self._build_docx(tmpdir, docs, 'flat')
+            lines = self._doc_column(docx)
+            self.assertEqual([lv for _, lv in lines], [0, 0], f'不应有缩进：{lines}')
+            self.assertNotIn('所需资料及信息行缩进', out_text)
+
+    def test_half_width_and_nbsp_are_not_levels(self):
+        """半角空格 / NBSP / 填充字符都不算层级（会被 strip 或零位移），只有全角空格算。"""
+        docs = ['1. 顶格行', '   a. 半角空格缩进无效', '\u00a0b. NBSP 无效', '\u3164c. 填充字符无效',
+                '\u3000（1）全角空格有效']
+        with tempfile.TemporaryDirectory(prefix='quotation-fill-') as tmpdir:
+            docx, _ = self._build_docx(tmpdir, docs, 'fill')
+            lines = self._doc_column(docx)
+            self.assertEqual([lv for _, lv in lines], [0, 0, 0, 0, 360], f'层级判定不符：{lines}')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -56,6 +56,35 @@ TEMPLATES = {
 
 ENTITY_CONFIG, _ = load_entity_config()
 
+# 「所需资料及信息」列的行缩进刻度：数据里行首每 1 个全角空格（U+3000）＝ 1 级 ＝ 360 twips
+# （与 notes 的 indent 同一刻度：1 级 360、2 级 720）。0 级不写 w:ind，即顶格。
+DOC_LINE_INDENT_TWIPS = 360
+DOC_LINE_INDENT_MAX_LEVEL = 6
+
+
+def extract_doc_line_indents(raw_data):
+    """从**原始**（尚未 strip 的）doc_data[].docs 读出每行的缩进（twips）。
+
+    必须在 validate_and_normalize_data() 之前调用：quotation_schema 对每个条目做 item.strip()，
+    行首的全角空格/其他空白会被剥掉，归一化之后就再也拿不到层级了。返回 {服务名: [twips, ...]}，
+    与归一化后的 docs 逐行同序对应（校验失败时 build 会直接退出，不存在长度错位）。
+    """
+    out = {}
+    if not isinstance(raw_data, dict):
+        return out
+    for dd in raw_data.get('doc_data') or []:
+        if not isinstance(dd, dict):
+            continue
+        name, docs = dd.get('name'), dd.get('docs')
+        if not isinstance(name, str) or not isinstance(docs, list):
+            continue
+        levels = []
+        for item in docs:
+            lead = len(item) - len(item.lstrip('\u3000')) if isinstance(item, str) else 0
+            levels.append(min(lead, DOC_LINE_INDENT_MAX_LEVEL) * DOC_LINE_INDENT_TWIPS)
+        out[name] = levels
+    return out
+
 
 def load_quotation_data(path):
     """Load quotation data from JSON."""
@@ -99,6 +128,8 @@ def main():
 
     try:
         raw_quotation = load_quotation_data(args.data)
+        # 行缩进层级必须在归一化（item.strip() 会吃掉行首空白）之前从原始数据取
+        doc_line_indents = extract_doc_line_indents(raw_quotation)
         quotation_data = validate_and_normalize_data(raw_quotation)
     except ValueError as exc:
         print(f'❌ {exc}', file=sys.stderr)
@@ -668,9 +699,11 @@ def main():
             width, fill='BDD6EE', valign='center'
         )
 
-    def make_data_cell(text, width, bold=False, jc=None, small=False, price=False):
+    def make_data_cell(text, width, bold=False, jc=None, small=False, price=False, indents=None):
         """Create a data cell. text can be a string or list of strings (each becomes a paragraph).
-        small=True: 11pt for notes/documents (10.5pt for non-China). price=True: 10pt for price column."""
+        small=True: 11pt for notes/documents (10.5pt for non-China). price=True: 10pt for price column.
+        indents: 与 text 等长的左缩进列表（twips，来自 extract_doc_line_indents）；
+                 0/None 表示该行顶格（不写 w:ind）。仅当 text 是列表时生效。"""
         if small:
             sz = SZ_SMALL
         elif price:
@@ -679,10 +712,12 @@ def main():
             sz = SZ_BODY
         if isinstance(text, list):
             paras = []
-            for line in text:
+            for idx, line in enumerate(text):
+                indent = indents[idx] if (indents and idx < len(indents)) else 0
                 paras.append(make_para(
                     [make_run(line, sz=sz, bold=bold)],
-                    spacing_after=0, line='280', jc=jc
+                    spacing_after=0, line='280', jc=jc,
+                    indent_left=(indent or None)
                 ))
         else:
             paras = [make_para(
@@ -1177,15 +1212,21 @@ def main():
         dhdr_row.append(make_hdr_cell(ht, DCOLS[i]))
     dtbl.append(dhdr_row)
 
+    indented_lines = 0
     for i, dd in enumerate(doc_data):
+        indents = doc_line_indents.get(dd['name']) or []
+        indented_lines += sum(1 for v in indents if v)
         cells = [
             make_data_cell(str(i+1), DCOLS[0], jc='center'),
             make_data_cell(with_code(dd['name']), DCOLS[1]),
-            make_data_cell(dd['docs'], DCOLS[2], small=True),
+            make_data_cell(dd['docs'], DCOLS[2], small=True, indents=indents),
         ]
         dtbl.append(make_table_row(cells))
 
     body_children.append(dtbl)
+    if indented_lines:
+        print(f'✅ 所需资料及信息行缩进：{indented_lines} 行'
+              f'（层级取自行首全角空格，每级 {DOC_LINE_INDENT_TWIPS} twips）')
 
     # 9. Footer — 标准备注（固定 9 条，全部签约主体一致），带数字序号
     footer_notes = [
