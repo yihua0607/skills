@@ -236,3 +236,125 @@ class TestCliSurface(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestInvalidRatesAreRefused(unittest.TestCase):
+    """0 / 负数 / NaN / Infinity 这类汇率必须在换算前被拦下。
+
+    以前 0 会让除法直接抛 ArithmeticError，从 CLI 一路冒成 traceback（调用方看到
+    的是「脚本崩了」而不是「汇率填错了」）；负数更糟——它不抛异常，只是安安静静地
+    把负金额写进报价单；NaN/Infinity 则一路写进产物，金额栏印出 "NaN"。
+    """
+
+    NAN = Decimal('NaN')
+    INF = Decimal('Infinity')
+
+    def test_zero_rate_is_refused_not_crashed(self):
+        result = convert_single(Decimal('250000000'), 'IDR', 'RMB', rateToCny=Decimal('0'))
+        self.assertIn('error', result)
+        self.assertIn('取值非法', result['error'])
+
+    def test_negative_rate_is_refused(self):
+        for rate in (Decimal('-2173.91'), Decimal('-1')):
+            with self.subTest(rate=str(rate)):
+                result = convert_single(Decimal('250000000'), 'IDR', 'RMB', rateToCny=rate)
+                self.assertIn('error', result)
+                self.assertIn('取值非法', result['error'])
+
+    def test_every_rate_slot_is_checked(self):
+        """三个汇率入参走的是同一道校验，别只堵住 rateToCny。"""
+        cases = [
+            ('rateToCny', dict(rateToCny=Decimal('0'))),
+            ('rateToUsd', dict(rateToUsd=Decimal('-1'))),
+            ('cross-rate', dict(cross_rate=Decimal('0'))),
+        ]
+        for label, kwargs in cases:
+            with self.subTest(slot=label):
+                result = convert_single(Decimal('100000'), 'THB', 'VND', **kwargs)
+                self.assertIn('error', result)
+                self.assertIn(label, result['error'])
+
+    def test_non_finite_rates_are_refused(self):
+        for rate in (self.NAN, self.INF, Decimal('-Infinity')):
+            with self.subTest(rate=str(rate)):
+                result = convert_single(Decimal('250000000'), 'IDR', 'RMB', rateToCny=rate)
+                self.assertIn('error', result,
+                              f'{rate} 不该被当成合法汇率算出一笔钱')
+
+    def test_non_finite_amount_is_refused(self):
+        result = convert_single(self.NAN, 'IDR', 'RMB', rateToCny=Decimal('2173.91'))
+        self.assertIn('error', result)
+        self.assertIn('有限数值', result['error'])
+
+    def test_same_currency_ignores_a_dirty_rate(self):
+        """同币种不需要汇率，调用方顺手传进来的脏值不该让换算失败。"""
+        result = convert_single(Decimal('115000'), 'RMB', 'RMB', rateToCny=Decimal('0'))
+        self.assertNotIn('error', result)
+        self.assertEqual(result['converted'], '115000')
+
+    def test_a_valid_rate_still_converts(self):
+        """反例：校验不能把正常汇率一起拦掉。"""
+        result = convert_single(Decimal('250000000'), 'IDR', 'RMB',
+                                rateToCny=Decimal('2173.91'))
+        self.assertNotIn('error', result)
+        self.assertEqual(result['converted'], '115000')
+
+    def test_batch_reports_the_bad_rate_without_killing_the_batch(self):
+        """一条脏汇率只该毁掉它自己那条服务。"""
+        services = [
+            {'服务名称': '坏汇率服务', '服务币种': 'IDR', '服务价格': '250000000',
+             '人民币兑换服务币种汇率': 0, '美元兑换服务币种汇率': 16000},
+            {'服务名称': '好汇率服务', '服务币种': 'THB', '服务价格': '48500',
+             '人民币兑换服务币种汇率': 4.85, '美元兑换服务币种汇率': 6.98},
+        ]
+        with tempfile.TemporaryDirectory(prefix='convert-badrate-') as tmpdir:
+            path = os.path.join(tmpdir, 'queried_services.json')
+            with open(path, 'w', encoding='utf-8') as fh:
+                json.dump({'success': True, 'services': services}, fh,
+                          ensure_ascii=False, indent=2)
+            results = batch_convert(path, 'RMB')
+
+        bad = [r for r in results if r['service'] == '坏汇率服务'][0]
+        good = [r for r in results if r['service'] == '好汇率服务'][0]
+        self.assertIn('error', bad)
+        self.assertNotIn('error', good, good)
+        self.assertEqual(good['converted'], '10000')      # 48500 ÷ 4.85
+
+    def test_nan_rate_from_the_api_is_treated_as_missing(self):
+        """API 回字符串 "nan" 时，Decimal 解析得动，但不是一个能用的汇率。"""
+        services = [{'服务名称': 'IDR 服务', '服务币种': 'IDR', '服务价格': '250000000',
+                     '人民币兑换服务币种汇率': 'nan', '美元兑换服务币种汇率': 'Infinity'}]
+        with tempfile.TemporaryDirectory(prefix='convert-nanrate-') as tmpdir:
+            path = os.path.join(tmpdir, 'queried_services.json')
+            with open(path, 'w', encoding='utf-8') as fh:
+                json.dump({'success': True, 'services': services}, fh,
+                          ensure_ascii=False, indent=2)
+            results = batch_convert(path, 'RMB')
+        self.assertIn('error', results[0])
+        self.assertNotIn('NaN', json.dumps(results, ensure_ascii=False))
+
+
+class TestInvalidRateCliSurface(unittest.TestCase):
+
+    def test_zero_rate_exits_nonzero_without_a_traceback(self):
+        rc = _run(['--amount', '250000000', '--from', 'IDR', '--to', 'RMB',
+                   '--rateToCny', '0'])
+        self.assertNotEqual(rc.returncode, 0)
+        self.assertNotIn('Traceback', rc.stdout + rc.stderr)
+        self.assertIn('取值非法', rc.stderr)
+        self.assertEqual(rc.stdout.strip(), '')
+
+    def test_negative_rate_exits_nonzero_without_a_traceback(self):
+        rc = _run(['--amount', '250000000', '--from', 'IDR', '--to', 'RMB',
+                   '--rateToCny=-2173.91'])
+        self.assertNotEqual(rc.returncode, 0)
+        self.assertNotIn('Traceback', rc.stdout + rc.stderr)
+        self.assertIn('取值非法', rc.stderr)
+
+    def test_non_finite_rate_exits_nonzero(self):
+        for raw in ('nan', 'Infinity', '-Infinity'):
+            with self.subTest(rate=raw):
+                rc = _run(['--amount', '250000000', '--from', 'IDR', '--to', 'RMB',
+                           '--rateToCny', raw])
+                self.assertNotEqual(rc.returncode, 0)
+                self.assertNotIn('Traceback', rc.stdout + rc.stderr)

@@ -10,13 +10,14 @@ Usage:
 Checks:
   1. Header company name/address vs bank info consistency
   2. Signature company name vs header company name consistency
-  3. Service name coverage (fee_details / process / docs all present)
+  3. Service codes are rendered consistently
   4. Font sanity (FangSong throughout)
   5. A4 page size (sectPr)
   6. Amount internal consistency (subtotal, discount, VAT, total)
   7. Cross-check with input data (if --data provided)
 """
 import argparse, zipfile, os, sys, re, json, tempfile, shutil
+from decimal import Decimal
 from xml.etree import ElementTree as ET
 
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -27,7 +28,8 @@ if SKILL_DIR not in sys.path:
 
 from scripts.sync_payment_terms import extract_payment_terms, check_payment_terms_reasonableness
 from scripts.quotation_common import (
-    load_entity_config,
+    load_entity_config_with_meta,
+    calculate_amounts,
     currency_has_decimals,
     CURRENCY_NAME_TO_CODE,
     A4_PAGE_W,
@@ -36,9 +38,14 @@ from scripts.quotation_common import (
     is_process_time_disclaimer,
     header_image_spec,
     header_image_geometry,
+    header_logo_spec,
+    png_alpha_bottom_padding,
     text_column_mm,
     MIN_PRINTABLE_INK_TOP_MM,
+    MIN_LOGO_LINE_GAP_MM,
+    EMU_PER_MM,
 )
+from scripts.quotation_schema import validate_and_normalize_data
 
 WP = '{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}'
 A_NS = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
@@ -209,7 +216,7 @@ def detect_entity(paragraph_texts, entity_config):
 
 
 def parse_formatted_amount(text, currency='RMB'):
-    """Parse a formatted amount string into a number."""
+    """Parse a formatted amount string into Decimal without float conversion."""
     text = text.strip()
     if currency == 'RMB':
         text = text.replace('￥', '').replace('¥', '')
@@ -225,10 +232,8 @@ def parse_formatted_amount(text, currency='RMB'):
         text = re.sub(r'^Rp\s*', '', text, flags=re.I)
     text = text.replace(',', '').replace(' ', '')
     try:
-        if '.' in text:
-            return float(text)
-        return int(text)
-    except ValueError:
+        return Decimal(text)
+    except Exception:
         return None
 
 
@@ -541,6 +546,92 @@ def check_header_image(header_root, spec, png_path):
     return issues, []
 
 
+def _header_logo_anchors(header_root):
+    """返回页眉里的 (logo 锚点, 蓝线锚点)，取不到的那个为 None。"""
+    logo = line = None
+    for anchor in header_root.iter(WP + 'anchor'):
+        if anchor.find('.//' + A_NS + 'blip') is not None:
+            logo = anchor
+        else:
+            line = anchor
+    return logo, line
+
+
+def _header_logo_png(word_dir, logo_anchor):
+    """按 header1.xml.rels 把 logo 锚点引用的位图读出来；找不到返回 None。"""
+    R_NS = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
+    blip = logo_anchor.find('.//' + A_NS + 'blip')
+    rels_path = os.path.join(word_dir, '_rels', 'header1.xml.rels')
+    if blip is None or not os.path.exists(rels_path):
+        return None
+    rid = blip.get(R_NS + 'embed')
+    if not rid:
+        return None
+    with open(rels_path, encoding='utf-8') as fh:
+        match = re.search(r'Id="%s"[^>]*Target="([^"]*)"' % re.escape(rid), fh.read())
+    if not match:
+        return None
+    target = os.path.join(word_dir, match.group(1).replace('../', ''))
+    if not os.path.isfile(target):
+        return None
+    with open(target, 'rb') as fh:
+        return fh.read()
+
+
+def check_header_logo(header_root, spec, word_dir, template_anchor=None):
+    """文字页眉的 logo 垂直位置自查，返回 (issues, warnings)。
+
+    与横幅自查同理，核的是「版式有没有被改坏」而不是内容：logo 锚点在不在、下移量是否
+    等于 entities.json 里算出来的值、蓝线有没有被动过、logo 墨迹底边与蓝线之间是否还留
+    着净空。净空按 PNG 的 alpha 边界算——位图自带的透明留白不参与视觉。
+
+    ``template_anchor`` 传模板 header1.xml 里 logo 锚点的原始 posOffset，用来核对下移量
+    确实是「模板原位 + 配置值」；拿不到模板时跳过这一项，其余检查照做。
+    """
+    issues, warnings = [], []
+    shift_emu = int(round(spec['shift_mm'] * EMU_PER_MM))
+
+    logo, line = _header_logo_anchors(header_root)
+    if logo is None:
+        issues.append("文字页眉里找不到 logo 锚点（含 a:blip 的 wp:anchor）")
+        return issues, warnings
+    if line is None:
+        issues.append("文字页眉里找不到蓝色分隔线")
+        return issues, warnings
+
+    pos_v = logo.find(WP + 'positionV/' + WP + 'posOffset')
+    extent = logo.find(WP + 'extent')
+    line_v = line.find(WP + 'positionV/' + WP + 'posOffset')
+    if pos_v is None or extent is None or line_v is None:
+        issues.append("logo/蓝线锚点结构不完整（缺 posOffset 或 extent）")
+        return issues, warnings
+
+    # logo 与蓝线必须锚在同一段：两个偏移量都从该段顶端起算，间距才是模板常量。
+    if template_anchor is not None and int(pos_v.text) != template_anchor + shift_emu:
+        issues.append(f"页眉 logo 垂直偏移 = {pos_v.text}，按模板原位 {template_anchor} + "
+                      f"配置下移 {spec['shift_mm']}mm 应为 {template_anchor + shift_emu}"
+                      f"（页眉版式与配置不符）")
+
+    # 墨迹可见高度 = wp:extent 减掉位图底部的透明留白。
+    box_emu = int(extent.get('cy'))
+    ink_emu = box_emu
+    png = _header_logo_png(word_dir, logo)
+    if png:
+        try:
+            ink_emu = int(round(box_emu * (1 - png_alpha_bottom_padding(png))))
+        except ValueError as exc:
+            warnings.append(f"无法按 alpha 边界量 logo 可见高度（{exc}），净空按图片框估算")
+
+    clearance_mm = (int(line_v.text) - (int(pos_v.text) + ink_emu)) / EMU_PER_MM
+    if clearance_mm <= 0:
+        issues.append(f"页眉 logo 墨迹底边越过蓝线 {abs(clearance_mm):.2f}mm —— 蓝线压在 logo 上")
+    elif clearance_mm < MIN_LOGO_LINE_GAP_MM:
+        warnings.append(f"页眉 logo 底边距蓝线仅 {clearance_mm:.2f}mm "
+                        f"(< {MIN_LOGO_LINE_GAP_MM}mm)，两者视觉上会粘连")
+
+    return issues, warnings
+
+
 def check_fonts(document_root):
     """Check that fonts are consistently FangSong."""
     non_fangsong = set()
@@ -635,12 +726,12 @@ def extract_summary_amounts(tables, currency, tax_label='增值税'):
                 amounts['vat'] = parsed
                 rate_match = re.search(r'(\d+(?:\.\d+)?)%', label_lower)
                 if rate_match:
-                    amounts['vat_rate'] = float(rate_match.group(1)) / 100
+                    amounts['vat_rate'] = Decimal(rate_match.group(1)) / Decimal('100')
             elif '预扣税' in label_lower and parsed is not None:
                 amounts['withholding_tax'] = parsed
                 rate_match = re.search(r'(\d+(?:\.\d+)?)%', label_lower)
                 if rate_match:
-                    amounts['withholding_tax_rate'] = float(rate_match.group(1)) / 100
+                    amounts['withholding_tax_rate'] = Decimal(rate_match.group(1)) / Decimal('100')
             elif '含税总计' in label_lower and parsed is not None:
                 amounts['total'] = parsed
     return amounts
@@ -653,56 +744,64 @@ def verify_amounts(amounts, currency):
         issues.append("Could not extract summary amounts from document")
         return issues
 
-    subtotal = amounts.get('subtotal')
-    discount = amounts.get('discount', 0)
-    vat = amounts.get('vat')
-    total = amounts.get('total')
-    vat_rate = amounts.get('vat_rate')
+    required = {
+        'subtotal': 'Subtotal not found in document',
+        'vat': 'Tax amount not found in document',
+        'vat_rate': 'Tax rate not found in document',
+        'total': 'Total not found in document',
+    }
+    for field, message in required.items():
+        if amounts.get(field) is None:
+            issues.append(message)
 
-    if subtotal is None:
-        issues.append("Subtotal not found in document")
-        return issues
-
-    # Check VAT calculation: VAT = (subtotal - discount) * vat_rate
-    if vat_rate is not None and vat is not None:
-        expected_vat = (subtotal - discount) * vat_rate
-        if currency_has_decimals(currency):
-            expected_vat = round(expected_vat, 2)
-        else:
-            expected_vat = round(expected_vat)
-        tolerance = 0.02 if currency_has_decimals(currency) else 2
-        if abs(vat - expected_vat) > tolerance:
-            issues.append(
-                f"VAT mismatch: document={vat}, expected={expected_vat} "
-                f"(rate={vat_rate*100}% x ({subtotal}-{discount}))")
-
-    # Check withholding tax calculation
     wht = amounts.get('withholding_tax')
     wht_rate = amounts.get('withholding_tax_rate')
+    if (wht is None) != (wht_rate is None):
+        issues.append('Withholding tax amount and rate must both be present or both be absent')
+    if issues:
+        return issues
+
+    subtotal = Decimal(str(amounts['subtotal']))
+    discount = amounts.get('discount', 0)
+    discount = Decimal(str(discount))
+    vat = Decimal(str(amounts['vat']))
+    total = Decimal(str(amounts['total']))
+    vat_rate = Decimal(str(amounts['vat_rate']))
+    wht = Decimal(str(wht)) if wht is not None else None
+    wht_rate = Decimal(str(wht_rate)) if wht_rate is not None else None
+
+    # Reuse the build/validate Decimal + ROUND_HALF_UP calculation.
+    expected = calculate_amounts(
+        subtotal, discount, vat_rate, currency,
+        withholding_tax_rate=wht_rate,
+    )
+
+    # Check VAT calculation: VAT = (subtotal - discount) * vat_rate
+    expected_vat = Decimal(str(expected['vat']))
+    tolerance = Decimal('0.001') if currency_has_decimals(currency) else Decimal('0.1')
+    if abs(vat - expected_vat) > tolerance:
+        issues.append(
+            f"VAT mismatch: document={vat}, expected={expected_vat} "
+            f"(rate={vat_rate*100}% x ({subtotal}-{discount}))")
+
+    # Check withholding tax calculation
     if wht_rate is not None and wht is not None:
-        expected_wht = (subtotal - discount) * wht_rate
-        if currency_has_decimals(currency):
-            expected_wht = round(expected_wht, 2)
-        else:
-            expected_wht = round(expected_wht)
-        tolerance = 0.02 if currency_has_decimals(currency) else 2
+        expected_wht = expected['withholding_tax']
+        tolerance = Decimal('0.001') if currency_has_decimals(currency) else Decimal('0.1')
         # WHT is displayed as negative in document, but stored as positive in parsed amount
         # Use absolute value for comparison
-        if abs(abs(wht) - expected_wht) > tolerance:
+        if abs(abs(wht) - Decimal(str(expected_wht))) > tolerance:
             issues.append(
                 f"Withholding tax mismatch: document={wht}, expected={expected_wht} "
                 f"(rate={wht_rate*100}% x ({subtotal}-{discount}))")
 
     # Check total = discounted subtotal + VAT - |WHT|
-    if total is not None and vat is not None:
-        expected_total = (subtotal - discount) + vat
-        if wht is not None:
-            expected_total -= abs(wht)
-        tolerance = 0.02 if currency_has_decimals(currency) else 2
-        if abs(total - expected_total) > tolerance:
-            issues.append(
-                f"Total mismatch: document={total}, expected={expected_total} "
-                f"(subtotal={subtotal} - discount={discount} + vat={vat} - wht={wht})")
+    expected_total = Decimal(str(expected['total']))
+    tolerance = Decimal('0.001') if currency_has_decimals(currency) else Decimal('0.1')
+    if abs(total - expected_total) > tolerance:
+        issues.append(
+            f"Total mismatch: document={total}, expected={expected_total} "
+            f"(subtotal={subtotal} - discount={discount} + vat={vat} - wht={wht})")
 
     return issues
 
@@ -710,19 +809,15 @@ def verify_amounts(amounts, currency):
 def check_service_codes(doc_service_names, data_for_verify):
     """服务内容列必须以「编码-服务名」渲染，缺编码即报错。
 
-    build 用 with_code() 统一拼码，数据里没有 code 时它会静默回退成纯服务名；
-    fee/流程/材料三处按 name 反查、走的是同一个回退，所以「所有服务都缺编码」
-    在成稿里彼此自洽，光看文档发现不了——只有拿数据文件里的原始服务名对照：
-    成稿服务名若与原始服务名逐字相同，就是这个服务没渲染出编码。
+    用数据文件里的原始服务名对照成稿，防止编码在渲染中丢失。
     """
     if not data_for_verify or not doc_service_names:
         return []
     bare_names = set()
-    for group in data_for_verify.get('services', []):
-        for item in group.get('items', []):
-            name = (item.get('name') or '').strip()
-            if name:
-                bare_names.add(name)
+    for service in data_for_verify.get('services', []):
+        name = (service.get('name') or '').strip()
+        if name:
+            bare_names.add(name)
     return [
         f"服务内容缺少服务编码: {doc_name}"
         f"（数据文件中该服务未填 code，成稿应渲染为「编码-{doc_name}」）"
@@ -746,26 +841,22 @@ def cross_check_with_data(document_amounts, data_path, currency):
     issues = []
     try:
         with open(data_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except Exception as exc:
-        issues.append(f"Cannot read data file: {exc}")
+            raw_data = json.load(f)
+        data = validate_and_normalize_data(raw_data, data_path=data_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        issues.append(f"Input data validation failed: {exc}")
         return issues
 
-    expected_subtotal = 0
-    for group in data.get('services', []):
-        for item in group.get('items', []):
-            price = item.get('price', 0)
-            if isinstance(price, str):
-                price = int(price.replace(',', ''))
-            # Price field is already the total price (not unit price), so do NOT multiply by quantity
-            expected_subtotal += price
+    expected_subtotal = sum(
+        (Decimal(service['price_int']) for service in data['services']), Decimal('0')
+    )
 
     doc_subtotal = document_amounts.get('subtotal')
     if doc_subtotal is not None and expected_subtotal != doc_subtotal:
         issues.append(
             f"Subtotal mismatch: document={doc_subtotal} vs data={expected_subtotal}")
 
-    expected_discount = data.get('discount_amount', 0)
+    expected_discount = Decimal(data['discount_amount'])
     doc_discount = document_amounts.get('discount', 0)
     if doc_discount is not None and expected_discount != doc_discount:
         issues.append(
@@ -779,33 +870,11 @@ def cross_check_with_data(document_amounts, data_path, currency):
     elif not expected_wht and doc_wht is not None:
         issues.append("Withholding tax found in document but not expected in data")
 
-    # Check service name coverage in fee_details / process_data / doc_data
-    doc_service_names = set()
-    for group in data.get('services', []):
-        for item in group.get('items', []):
-            name = item.get('name', '')
-            base_name = re.sub(r'\s*[x×]\d+$', '', name)
-            doc_service_names.add(base_name)
-
-    for key in ['fee_details', 'process_data', 'doc_data']:
-        records = data.get(key, [])
-        seen_names = set()
-        for record in records:
-            name = record.get('name', '')
-            if name:
-                seen_names.add(name)
-        missing = sorted(doc_service_names - seen_names)
-        extra = sorted(seen_names - doc_service_names)
-        if missing:
-            issues.append(f"{key} missing services: {', '.join(missing)}")
-        if extra:
-            issues.append(f"{key} contains unknown services: {', '.join(extra)}")
-
     return issues
 
 
 def main():
-    entity_config, _ = load_entity_config()
+    entity_config, _, entity_meta = load_entity_config_with_meta()
 
     parser = argparse.ArgumentParser(description='Verify a generated quotation .docx')
     parser.add_argument('--input', required=True,
@@ -916,7 +985,7 @@ def main():
         # 对它天然不适用，显式跳过并说明，而不是等 extract_header_info 取不到文字后
         # 静默不检查——那样页眉万一被改回文字、或横幅整个丢了，都不会有人发现。
         img_spec = header_image_spec(entity_config.get(detected_entity or '', {}),
-                                     entity_config.get('_meta', {}).get('header_image_defaults'))
+                                     entity_meta.get('header_image_defaults'))
         if img_spec:
             print(f"页眉形式: 横幅图 {img_spec['file']}")
             print("ℹ️  页眉公司名/地址均在图内、XML 中无可核对文字，"
@@ -951,6 +1020,42 @@ def main():
             header_company, header_address = extract_header_info(header_root)
             print(f"页眉公司名: {header_company}")
             print(f"页眉地址: {header_address}")
+
+            logo_spec = header_logo_spec(entity_config.get(detected_entity or '', {}),
+                                         entity_meta.get('header_logo_defaults'))
+            if logo_spec:
+                # 模板里 logo 的原始偏移是「下移量」的基准，从模板现读，不从配置反推——
+                # 配置只说移动了多少，改成什么样由模板原始版式决定。
+                template_anchor = None
+                tpl_rel = entity_config.get(detected_entity or '', {}).get('template_file')
+                if tpl_rel:
+                    tpl_path = os.path.join(SKILL_DIR, tpl_rel)
+                    if os.path.isfile(tpl_path):
+                        try:
+                            with zipfile.ZipFile(tpl_path) as zf:
+                                tpl_root = ET.fromstring(zf.read('word/header1.xml'))
+                            tpl_logo, _ = _header_logo_anchors(tpl_root)
+                            if tpl_logo is not None:
+                                tpl_v = tpl_logo.find(WP + 'positionV/' + WP + 'posOffset')
+                                if tpl_v is not None:
+                                    template_anchor = int(tpl_v.text)
+                        except (KeyError, ET.ParseError, ValueError):
+                            template_anchor = None
+                if template_anchor is None:
+                    all_warnings.append("读不到模板里 logo 的原始偏移，"
+                                        "跳过「下移量 = 模板原位 + 配置值」核对")
+
+                logo_issues, logo_warnings = check_header_logo(
+                    header_root, logo_spec,
+                    os.path.join(unpack_dir, 'word'), template_anchor)
+                for issue in logo_issues:
+                    print(f"❌ {issue}")
+                    all_issues.append(issue)
+                for warning in logo_warnings:
+                    print(f"⚠️  {warning}")
+                    all_warnings.append(warning)
+                if not logo_issues:
+                    print(f"✅ 页眉 logo 版式与配置一致（模板原位下移 {logo_spec['shift_mm']}mm）")
         else:
             print("⚠️  header1.xml 不存在，跳过页眉与银行信息一致性检查")
             all_warnings.append("header1.xml 不存在，无法核对页眉与银行信息")
@@ -1151,6 +1256,17 @@ def main():
         else:
             print("✅ 验证通过: 所有检查OK")
 
+    except zipfile.BadZipFile:
+        print(f"❌ 无法打开 .docx（不是有效的 zip 包）: {input_path}")
+        print("   常见原因：文件传输被截断，或该路径下的内容其实是 HTML 报错页而非 docx。")
+        print("   处理建议：确认 build 已完整写出文件后重新生成，再跑 verify。")
+        sys.exit(1)
+    except ET.ParseError as exc:
+        print(f"❌ word/document.xml 不是合法 XML: {exc}")
+        print("   这通常是输入数据含有 XML 非法字符（NUL、ESC、BEL 等控制符）导致的产物损坏，")
+        print("   而不是 SKILL 本身的问题——请检查 quotation.json 与实体配置中的文本字段，")
+        print("   剔除控制字符后重新 build。")
+        sys.exit(1)
     finally:
         shutil.rmtree(unpack_dir, ignore_errors=True)
 

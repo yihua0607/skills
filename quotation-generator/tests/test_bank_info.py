@@ -7,6 +7,7 @@ the detection both have to survive that without the quotation printing a name th
 bank would reject.
 """
 import json
+import copy
 import os
 import subprocess
 import sys
@@ -25,6 +26,8 @@ from scripts.verify_quotation import (
     find_bank_info_section,
     normalize_company_name,
 )
+from scripts.generate_bank_reference import render_bank_reference
+from scripts.quotation_common import load_entity_config_with_meta, validate_entity_configs
 
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 
@@ -165,6 +168,50 @@ class TestBankInfoConfigIntegrity(unittest.TestCase):
                 with self.subTest(entity=key, currency=currency):
                     self.assertIn(currency, cfg['allowed_currencies'])
 
+    def test_generated_reference_matches_entity_config(self):
+        expected = render_bank_reference(self.config)
+        path = os.path.join(SKILL_ROOT, 'references', 'entity-bank-info.md')
+        with open(path, encoding='utf-8') as fh:
+            self.assertEqual(fh.read(), expected)
+
+    def test_config_meta_exposes_header_image_defaults(self):
+        _, _, meta = load_entity_config_with_meta()
+        self.assertEqual(meta['header_image_defaults']['ink_top_mm'], 6.0)
+        self.assertEqual(meta['header_image_defaults']['line_gap_mm'], 3.0)
+        self.assertEqual(meta['header_image_defaults']['body_top_mm'], 30.0)
+
+    def test_required_entity_fields_have_one_authoritative_source(self):
+        self.assertNotIn('required_entity_fields', self.config['_meta'])
+
+    def test_every_entity_declares_swift_policy(self):
+        for key, cfg in self.config.items():
+            if key.startswith('_'):
+                continue
+            with self.subTest(entity=key):
+                self.assertIn(cfg['swift_policy'], {'required', 'not_required'})
+
+    def test_thailand_layout_and_tax_note_are_configuration(self):
+        thailand = self.config['thailand']
+        self.assertEqual(thailand['tax_note'], '（以开发票时泰国现行税率为准）')
+        self.assertEqual(thailand['summary_layout']['subtotal'], [1, 2, 2, 'left'])
+        self.assertEqual(thailand['summary_layout']['other'], [0, 3, 2, 'left'])
+
+    def test_invalid_summary_layout_is_rejected(self):
+        config = copy.deepcopy(self.config)
+        config['thailand']['summary_layout']['subtotal'] = [1, 4, 2, 'diagonal']
+        errors = validate_entity_configs(config)
+        self.assertTrue(any('exceeds the 5-column table' in error for error in errors))
+        self.assertTrue(any('alignment is invalid' in error for error in errors))
+
+    def test_swift_policy_is_checked_against_every_account(self):
+        config = copy.deepcopy(self.config)
+        config['jakarta']['bank_lines_by_currency']['USD'] = [
+            line for line in config['jakarta']['bank_lines_by_currency']['USD']
+            if 'swift' not in line.casefold()
+        ]
+        errors = validate_entity_configs(config)
+        self.assertTrue(any("jakarta' account 'USD' requires SWIFT" in error for error in errors))
+
 
 class TestPerCurrencyAccountInGeneratedDocx(unittest.TestCase):
 
@@ -219,3 +266,51 @@ class TestPerCurrencyAccountInGeneratedDocx(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestCurrencyAccountLabels(unittest.TestCase):
+    """币种账户里的币种标记必须指它自己那个币种。
+
+    越南主体的人民币账户与美元账户是同一个账号（104 799 1540），线上一度把美元
+    那一份整段照抄给了人民币，连「(USD)」后缀一起印进报价单——客户照这个账号汇
+    人民币会被退汇。埃及同样共用账户，但它印的是不带后缀的裸账号，才是对的样子。
+    """
+
+    CURRENCY_MARKERS = ('IDR', 'RMB', 'CNY', 'USD', 'SGD', 'THB', 'VND', 'EGP', 'MYR')
+
+    def setUp(self):
+        self.config = _entity_config()
+
+    @staticmethod
+    def _same_currency(a, b):
+        return a == b or {a, b} == {'RMB', 'CNY'}
+
+    def test_no_account_block_is_labelled_with_another_currencys_code(self):
+        """通用断言：任何币种账户里都不该出现别的币种的 (XXX) 后缀。"""
+        for key, cfg in self.config.items():
+            if key.startswith('_'):
+                continue
+            for currency, lines in cfg.get('bank_lines_by_currency', {}).items():
+                block = '\n'.join(lines)
+                for other in self.CURRENCY_MARKERS:
+                    if self._same_currency(currency, other):
+                        continue
+                    with self.subTest(entity=key, currency=currency, label=other):
+                        self.assertNotIn(
+                            f'({other})', block,
+                            f'{key} 的 {currency} 账户里出现了 ({other}) 后缀——'
+                            f'客户会照这个账号汇错币种')
+
+    def test_vietnam_rmb_account_shares_the_number_but_not_the_usd_label(self):
+        by_currency = self.config['vietnam']['bank_lines_by_currency']
+        usd = '\n'.join(by_currency['USD'])
+        rmb = '\n'.join(by_currency['RMB'])
+
+        # 同一个账号，这是银行的安排，不是配置抄错。
+        self.assertIn('104 799 1540', usd)
+        self.assertIn('104 799 1540', rmb)
+        # 但人民币那一份不能带美元后缀。
+        self.assertIn('(USD)', usd)
+        self.assertNotIn('(USD)', rmb)
+        # VND 是另一个账号，别被上面的共用带偏。
+        self.assertIn('104 799 1200', '\n'.join(by_currency['VND']))

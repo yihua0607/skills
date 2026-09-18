@@ -11,6 +11,7 @@ Entity configuration is loaded from config/entities.json — no business data is
 """
 import zipfile, os, sys, argparse, tempfile, shutil, json, re
 from datetime import date
+from decimal import Decimal
 from xml.etree import ElementTree as ET
 
 # Ensure imports work when this script is run directly as `python3 scripts/build_quotation.py`.
@@ -25,7 +26,7 @@ from scripts.quotation_common import (
     format_price_total,
     format_price_display,
     vat_percent_label,
-    load_entity_config,
+    load_entity_config_with_meta,
     price_magnitude_warnings,
     CURRENCY_NAMES,
     is_target_currency,
@@ -34,27 +35,39 @@ from scripts.quotation_common import (
     A4_MARGINS,
     header_image_spec,
     header_image_geometry,
+    header_logo_spec,
+    png_alpha_bottom_padding,
     MIN_PRINTABLE_INK_TOP_MM,
+    MIN_LOGO_LINE_GAP_MM,
+    EMU_PER_MM,
     is_process_time_disclaimer,
+    xml_safe_text,
 )
 from scripts.sync_payment_terms import extract_payment_terms, check_payment_terms_reasonableness
 
 # Skill root directory (where SKILL.md lives)
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Template paths
-TEMPLATES = {
-    'china': os.path.join(SKILL_DIR, 'assets', '报价单模板-中国公司.docx'),
-    'jakarta': os.path.join(SKILL_DIR, 'assets', '报价单模板-雅加达公司.docx'),
-    'singapore': os.path.join(SKILL_DIR, 'assets', '报价单模版-新加坡公司.docx'),
-    'deyin': os.path.join(SKILL_DIR, 'assets', '报价单模版-德音人力.docx'),
-    'thailand': os.path.join(SKILL_DIR, 'assets', '报价单模板-泰国公司.docx'),
-    'vietnam': os.path.join(SKILL_DIR, 'assets', '报价单模版-越南公司.docx'),
-    'egypt': os.path.join(SKILL_DIR, 'assets', '报价单模版-埃及公司.docx'),
-    'malaysia': os.path.join(SKILL_DIR, 'assets', '报价单模版-马来西亚公司.docx'),
-}
+ENTITY_CONFIG, _, ENTITY_META = load_entity_config_with_meta()
 
-ENTITY_CONFIG, _ = load_entity_config()
+
+def template_path_for_entity(entity_cfg):
+    """Resolve a configured template while preventing paths outside the skill."""
+    relative = entity_cfg['template_file']
+    path = os.path.abspath(os.path.join(SKILL_DIR, relative))
+    if not path.startswith(os.path.abspath(SKILL_DIR) + os.sep):
+        raise ValueError(f'template_file must stay inside the skill directory: {relative}')
+    if not os.path.isfile(path):
+        raise ValueError(f'configured template_file does not exist: {relative}')
+    return path
+
+
+# Backward-compatible inventory used by template tests. Building the inventory
+# performs no file I/O; only the selected entity is validated in main().
+TEMPLATES = {
+    key: os.path.abspath(os.path.join(SKILL_DIR, cfg['template_file']))
+    for key, cfg in ENTITY_CONFIG.items()
+}
 
 # 「所需资料及信息」列的行缩进刻度：数据里行首每 1 个全角空格（U+3000）＝ 1 级 ＝ 360 twips
 # （与 notes 的 indent 同一刻度：1 级 360、2 级 720）。0 级不写 w:ind，即顶格。
@@ -63,26 +76,26 @@ DOC_LINE_INDENT_MAX_LEVEL = 6
 
 
 def extract_doc_line_indents(raw_data):
-    """从**原始**（尚未 strip 的）doc_data[].docs 读出每行的缩进（twips）。
+    """从原始 services[].documents 读出每行缩进，按 line_id 返回。
 
     必须在 validate_and_normalize_data() 之前调用：quotation_schema 对每个条目做 item.strip()，
-    行首的全角空格/其他空白会被剥掉，归一化之后就再也拿不到层级了。返回 {服务名: [twips, ...]}，
-    与归一化后的 docs 逐行同序对应（校验失败时 build 会直接退出，不存在长度错位）。
+    行首空白在归一化时会被剥掉，因此必须先提取。
     """
     out = {}
     if not isinstance(raw_data, dict):
         return out
-    for dd in raw_data.get('doc_data') or []:
-        if not isinstance(dd, dict):
+    for service in raw_data.get('services') or []:
+        if not isinstance(service, dict):
             continue
-        name, docs = dd.get('name'), dd.get('docs')
-        if not isinstance(name, str) or not isinstance(docs, list):
+        line_id, docs = service.get('line_id'), service.get('documents')
+        if not isinstance(line_id, str) or not isinstance(docs, list):
             continue
+        line_id = line_id.strip()
         levels = []
         for item in docs:
             lead = len(item) - len(item.lstrip('\u3000')) if isinstance(item, str) else 0
             levels.append(min(lead, DOC_LINE_INDENT_MAX_LEVEL) * DOC_LINE_INDENT_TWIPS)
-        out[name] = levels
+        out[line_id] = levels
     return out
 
 
@@ -130,14 +143,18 @@ def main():
         raw_quotation = load_quotation_data(args.data)
         # 行缩进层级必须在归一化（item.strip() 会吃掉行首空白）之前从原始数据取
         doc_line_indents = extract_doc_line_indents(raw_quotation)
-        quotation_data = validate_and_normalize_data(raw_quotation)
+        quotation_data = validate_and_normalize_data(raw_quotation, data_path=args.data)
     except ValueError as exc:
         print(f'❌ {exc}', file=sys.stderr)
         sys.exit(2)
     for warning in quotation_data['warnings']:
         print(f'⚠️  WARNING: {warning}')
 
-    TEMPLATE = TEMPLATES[template_key]
+    try:
+        TEMPLATE = template_path_for_entity(entity_cfg)
+    except ValueError as exc:
+        print(f'❌ {exc}', file=sys.stderr)
+        sys.exit(2)
     if args.output:
         OUTPUT = os.path.abspath(args.output)
     else:
@@ -277,7 +294,7 @@ def main():
             new_run = ET.Element(w('r'))
             new_run.append(rpr_copy)
             t = ET.SubElement(new_run, w('t'))
-            t.text = str(value)
+            t.text = xml_safe_text(value)
             new_children.append(new_run)
         else:
             new_children.append(make_run(value, sz=sz if sz is not None else '24'))
@@ -405,6 +422,79 @@ def main():
               f"{spec['ink_top_mm']:.1f}~{geom['ink_bottom_mm']:.1f}mm，"
               f"蓝线 {geom['line_mm']:.1f}mm / 正文首行 {spec['body_top_mm']}mm）")
 
+    def apply_header_logo_shift(unpack_dir, entity_key, cfg, spec):
+        """把文字页眉的 logo 沿页眉末段顶端下移 spec['shift_mm']（mm）。
+
+        logo 与蓝线浮动锚定在**同一段**，两个偏移量都从该段顶端起算，所以只改 logo 的
+        wp:positionV 即可 —— 蓝线原样不动：蓝线落点决定正文首行能避开多少（末段的高度
+        就是这份余量），挪它会压到正文「公司名称：」。
+
+        下移后 logo 墨迹的可见底边与蓝线之间必须仍有净空，否则蓝线压在 logo 上。净空按
+        PNG 的 alpha 边界算，不按 wp:extent —— 位图自带的透明留白不参与视觉。"""
+        shift_mm = spec['shift_mm']
+        if not shift_mm:
+            return
+
+        header_path = os.path.join(unpack_dir, 'word', 'header1.xml')
+        if not os.path.exists(header_path):
+            print("⚠️  WARNING: word/header1.xml not found; cannot shift header logo.")
+            return
+
+        WP_NS, A_NS, R_NS = NS['wp'], NS['a'], NS['r']
+        tree = ET.parse(header_path)
+        root = tree.getroot()
+        logo = line = None
+        for anchor in root.iter(f'{{{WP_NS}}}anchor'):
+            if anchor.find(f'.//{{{A_NS}}}blip') is not None:
+                logo = anchor
+            else:
+                line = anchor
+        if logo is None:
+            print(f"⚠️  WARNING: {entity_key} 页眉里找不到 logo 锚点（含 a:blip 的 wp:anchor），"
+                  f"跳过 logo 下移。")
+            return
+
+        pos = logo.find(f'{{{WP_NS}}}positionV/{{{WP_NS}}}posOffset')
+        extent = logo.find(f'{{{WP_NS}}}extent')
+        if pos is None or pos.text is None or extent is None:
+            print(f"⚠️  WARNING: {entity_key} 页眉 logo 锚点缺少 positionV/posOffset 或 extent，"
+                  f"跳过 logo 下移。")
+            return
+
+        # 墨迹可见高度 = wp:extent 减掉位图底部的透明留白。
+        box_emu = int(extent.get('cy'))
+        ink_emu = box_emu
+        blip = logo.find(f'.//{{{A_NS}}}blip')
+        rid = blip.get(f'{{{R_NS}}}embed') if blip is not None else None
+        rels_path = os.path.join(unpack_dir, 'word', '_rels', 'header1.xml.rels')
+        if rid and os.path.exists(rels_path):
+            with open(rels_path, encoding='utf-8') as fh:
+                match = re.search(r'Id="%s"[^>]*Target="([^"]*)"' % re.escape(rid), fh.read())
+            if match:
+                media = os.path.join(unpack_dir, 'word', match.group(1).replace('../', ''))
+                if os.path.isfile(media):
+                    with open(media, 'rb') as fh:
+                        try:
+                            ink_emu = int(round(box_emu * (1 - png_alpha_bottom_padding(fh.read()))))
+                        except ValueError:
+                            pass
+
+        new_off = int(pos.text) + int(round(shift_mm * EMU_PER_MM))
+        gap_txt = ''
+        if line is not None:
+            line_pos = line.find(f'{{{WP_NS}}}positionV/{{{WP_NS}}}posOffset')
+            if line_pos is not None and line_pos.text is not None:
+                gap_mm = (int(line_pos.text) - (new_off + ink_emu)) / EMU_PER_MM
+                gap_txt = f"，logo 底距蓝线 {gap_mm:.2f}mm"
+                if gap_mm < MIN_LOGO_LINE_GAP_MM:
+                    print(f"⚠️  WARNING: {entity_key} 页眉 logo 下移 {shift_mm}mm 后距蓝线仅 "
+                          f"{gap_mm:.2f}mm (< {MIN_LOGO_LINE_GAP_MM}mm)，两者会视觉粘连；"
+                          f"请调小 config/entities.json 的 header_logo_shift_mm。")
+        pos.text = str(new_off)
+
+        tree.write(header_path, xml_declaration=True, encoding='UTF-8')
+        print(f"✅ 页眉 logo 下移 {shift_mm}mm{gap_txt}（蓝线位置不变）")
+
     def apply_header(unpack_dir, entity_key):
         """Update the template header from entity-config ``header_lines``.
 
@@ -417,7 +507,7 @@ def main():
         Entities configured with ``header_image`` skip all of that and get the
         banner-image header instead — see apply_header_image above."""
         cfg = ENTITY_CONFIG.get(entity_key, {})
-        img_spec = header_image_spec(cfg, ENTITY_CONFIG.get('_meta', {}).get('header_image_defaults'))
+        img_spec = header_image_spec(cfg, ENTITY_META.get('header_image_defaults'))
         if img_spec:
             apply_header_image(unpack_dir, entity_key, cfg, img_spec)
             return
@@ -476,6 +566,11 @@ def main():
         tree.write(header_path, xml_declaration=True, encoding='UTF-8')
         print(f"✅ Updated template header for {cfg['company']}")
 
+        # 文字段落的排版到此为止；logo 的垂直位置单独调整（图片页眉在上面就返回了）。
+        logo_spec = header_logo_spec(cfg, ENTITY_META.get('header_logo_defaults'))
+        if logo_spec:
+            apply_header_logo_shift(unpack_dir, entity_key, cfg, logo_spec)
+
     def make_rpr(font=None, sz='24', bold=False, color=None, hint='eastAsia'):
         """Create a w:rPr element matching template pattern."""
         if font is None:
@@ -508,13 +603,17 @@ def main():
         return rpr
 
     def make_run(text, font=None, sz='24', bold=False, color=None, hint='eastAsia'):
-        """Create a w:r element. XML special characters are escaped automatically by ElementTree."""
+        """Create a w:r element.
+
+        ElementTree 只转义 &<>，不会剔除 XML 非法字符，所以文本一律先过
+        xml_safe_text()，否则控制字符会让 document.xml 无法解析。
+        """
         if font is None:
             font = FONT_NAME
         r = ET.Element(w('r'))
         r.append(make_rpr(font, sz, bold, color, hint))
         t = ET.SubElement(r, w('t'))
-        t.text = str(text)
+        t.text = xml_safe_text(text)
         return r
 
     def make_para(runs_or_text, spacing_before=0, spacing_after=0, line='280',
@@ -574,11 +673,11 @@ def main():
         r1 = ET.Element(w('r'))
         r1.append(make_rpr(FONT_NAME, SZ_BODY))
         t1 = ET.SubElement(r1, w('t'))
-        t1.text = label
+        t1.text = xml_safe_text(label)
         r2 = ET.Element(w('r'))
         r2.append(make_rpr(FONT_NAME, SZ_BODY))
         t2 = ET.SubElement(r2, w('t'))
-        t2.text = value
+        t2.text = xml_safe_text(value)
         return make_para([r1, r2], spacing_after=0, line='280')
 
     def make_section_header(text):
@@ -768,19 +867,9 @@ def main():
     # (序号, 服务内容, 数量, 价格, 备注)
     COLS = [431, 2714, 765, 1835, 4289]
     services_data = quotation_data['services']
-    fee_details = quotation_data['fee_details']
-    process_data = quotation_data['process_data']
-    doc_data = quotation_data['doc_data']
 
-    # 服务名展示：带上产品编码（code-name），无编码则原样；fee/process/doc 按 name 反查。
-    code_by_name = {}
-    for svc in services_data:
-        for item in svc['items']:
-            code_by_name[item['name']] = item.get('code', '')
-
-    def with_code(name):
-        code = code_by_name.get(name, '')
-        return f'{code}-{name}' if code else name
+    def with_code(service):
+        return f'{service["code"]}-{service["name"]}'
 
     # 服务内容表没有办理时间列，其下 *备注： 区块不得出现办理时间免责声明。validate 会拦截，
     # 这里再兜底剔除一次，保证任何来源（沿用旧 quotation.json / 手工编辑）的数据都不会把它印进去。
@@ -859,20 +948,18 @@ def main():
             file=sys.stderr,
         )
         sys.exit(2)
-    VAT_RATE = float(entity_cfg['vat_rate'])
+    VAT_RATE = Decimal(str(entity_cfg['vat_rate']))
 
     vat_label_pct = vat_percent_label(VAT_RATE)
     TAX_LABEL = entity_cfg.get('tax_label', '增值税')
     VAT_LABEL = f"{TAX_LABEL} {vat_label_pct}"
     VAT_NOTE = None
-    if template_key == 'thailand':
-        # 与泰国模板一致：注明税率以开票时泰国现行税率为准；注释字号小于主体
-        VAT_NOTE = "（以开发票时泰国现行税率为准）"
+    VAT_NOTE = entity_cfg.get('tax_note')
 
-    SUBTOTAL_D = sum(item['price_int'] for svc in services_data for item in svc['items'])
+    SUBTOTAL_D = sum(service['price_int'] for service in services_data)
 
     # Price magnitude guard — catch RMB/IDR data mix-up (shared with validate_data.py)
-    all_prices = [item['price_int'] for svc in services_data for item in svc['items']]
+    all_prices = [service['price_int'] for service in services_data]
     for warning in price_magnitude_warnings(all_prices, CURRENCY):
         print(f"⚠️  WARNING: {warning}")
 
@@ -999,20 +1086,22 @@ def main():
 
     # Service rows
     seq = 0
-    for svc in services_data:
-        if svc['category']:
-            tbl.append(make_category_row(svc['category']))
-        for item in svc['items']:
-            seq += 1
-            price_display = format_price_display(item["price"], CURRENCY)
-            cells = [
-                make_data_cell(str(seq), COLS[0], jc='center'),
-                make_data_cell(with_code(item['name']), COLS[1]),
-                make_data_cell(str(item['quantity']), COLS[2], jc='center'),
-                make_data_cell(price_display, COLS[3], jc='right', price=True),
-                make_data_cell(item['note'].split('\n') if '\n' in item['note'] else item['note'], COLS[4], small=True),
-            ]
-            tbl.append(make_table_row(cells))
+    current_category = object()
+    for service in services_data:
+        if service['category'] != current_category:
+            current_category = service['category']
+            if current_category:
+                tbl.append(make_category_row(current_category))
+        seq += 1
+        price_display = format_price_display(service['price'], CURRENCY)
+        cells = [
+            make_data_cell(str(seq), COLS[0], jc='center'),
+            make_data_cell(with_code(service), COLS[1]),
+            make_data_cell(f"{service['quantity']} {service['unit']}", COLS[2], jc='center'),
+            make_data_cell(price_display, COLS[3], jc='right', price=True),
+            make_data_cell(service['note'].split('\n') if '\n' in service['note'] else service['note'], COLS[4], small=True),
+        ]
+        tbl.append(make_table_row(cells))
 
     # Summary rows — all use Decimal values
     # 汇总行布局（label 右对齐、金额左对齐，用模板原始 XML 核验）：
@@ -1021,9 +1110,9 @@ def main():
     #   雅加达模板为 6 列(span4/span2)，builder 生成 5 列，统一适配 span3/span2
     #   布局元组 = (leading_empty, label_span, amount_span, amount_align)
     DEFAULT_LAYOUT = (0, 3, 2, 'left')
-    SUMMARY_LAYOUT = {
-        'thailand': ((1, 2, 2, 'left'), (0, 3, 2, 'left')),   # (小计行, 其他行)
-    }
+    configured_layout = entity_cfg.get('summary_layout', {})
+    subtotal_layout = tuple(configured_layout.get('subtotal', DEFAULT_LAYOUT))
+    other_layout = tuple(configured_layout.get('other', DEFAULT_LAYOUT))
 
     def summary_row(label, value_d, fmt='int', highlight=False, note=None, label_sz=SZ_BODY):
         if fmt == 'vat':
@@ -1035,8 +1124,8 @@ def main():
             formatted = fmt_price_vat(value_d)
         else:
             formatted = fmt_price_int(value_d)
-        subtotal_l, others_l = SUMMARY_LAYOUT.get(template_key, (DEFAULT_LAYOUT, DEFAULT_LAYOUT))
-        leading, label_span, amount_span, amount_align = (subtotal_l if label == '小计' else others_l)
+        leading, label_span, amount_span, amount_align = (
+            subtotal_layout if label == '小计' else other_layout)
         label_w = sum(COLS[leading:leading + label_span])
         amount_w = sum(COLS[leading + label_span:leading + label_span + amount_span])
         cells = []
@@ -1086,9 +1175,10 @@ def main():
             spacing_after=0, line='280', indent_left=indent
         ))
 
-    for i, fd in enumerate(fee_details):
+    for i, service in enumerate(services_data):
+        fd = service['fees']
         body_children.append(make_para(
-            [make_run(f'{i+1}. {with_code(fd["name"])}', sz=SZ_SMALL, bold=True)],
+            [make_run(f'{i+1}. {with_code(service)}', sz=SZ_SMALL, bold=True)],
             spacing_before=40, spacing_after=0, line='280', indent_left=360
         ))
         body_children.append(make_para(
@@ -1139,12 +1229,6 @@ def main():
     body_children.append(make_section_header(process_title))
     body_children.append(make_para('', spacing_before=0, spacing_after=120))
 
-    # Build name→days lookup from services for the process table's "时间工作日" column
-    service_days_map = {}
-    for svc in services_data:
-        for item in svc['items']:
-            service_days_map[item['name']] = item['days']
-
     PCOLS = [596, 2249, 872, 3679, 2671]  # 序号, 项目, 时间工作日, 流程, 服务完成后交付文件（与中国模板 gridCol 一致）
 
     ptbl = ET.Element(w('tbl'))
@@ -1169,8 +1253,8 @@ def main():
             phdr_row.append(make_hdr_cell(ht, PCOLS[i]))
     ptbl.append(phdr_row)
 
-    for i, pd in enumerate(process_data):
-        deliverables = pd['deliverables']
+    for i, service in enumerate(services_data):
+        deliverables = service['deliverables']
         if isinstance(deliverables, list) and len(deliverables) > 1:
             # Only add numbers if not already numbered
             already_numbered = any(
@@ -1179,12 +1263,11 @@ def main():
             )
             if not already_numbered:
                 deliverables = [f"{j}. {item}" for j, item in enumerate(deliverables, 1)]
-        days_val = service_days_map.get(pd['name'], '-')
         cells = [
             make_data_cell(str(i+1), PCOLS[0], jc='center'),
-            make_data_cell(with_code(pd['name']), PCOLS[1]),
-            make_data_cell(days_val, PCOLS[2], jc='center'),
-            make_data_cell(pd['process'], PCOLS[3], small=True),
+            make_data_cell(with_code(service), PCOLS[1]),
+            make_data_cell(service['days'], PCOLS[2], jc='center'),
+            make_data_cell(service['process'], PCOLS[3], small=True),
             make_data_cell(deliverables, PCOLS[4], small=True),
         ]
         ptbl.append(make_table_row(cells))
@@ -1213,13 +1296,13 @@ def main():
     dtbl.append(dhdr_row)
 
     indented_lines = 0
-    for i, dd in enumerate(doc_data):
-        indents = doc_line_indents.get(dd['name']) or []
+    for i, service in enumerate(services_data):
+        indents = doc_line_indents.get(service['line_id']) or []
         indented_lines += sum(1 for v in indents if v)
         cells = [
             make_data_cell(str(i+1), DCOLS[0], jc='center'),
-            make_data_cell(with_code(dd['name']), DCOLS[1]),
-            make_data_cell(dd['docs'], DCOLS[2], small=True, indents=indents),
+            make_data_cell(with_code(service), DCOLS[1]),
+            make_data_cell(service['documents'], DCOLS[2], small=True, indents=indents),
         ]
         dtbl.append(make_table_row(cells))
 

@@ -14,6 +14,7 @@ import sys
 import struct
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 import zlib
 from xml.etree import ElementTree as ET
@@ -383,13 +384,13 @@ class TestQuotationSmoke(unittest.TestCase):
                 data = json.load(f)
 
             # Inject XML special characters into multiple text fields.
-            data['services'][0]['items'][0]['note'] = (
+            data['services'][0]['note'] = (
                 "本服务包含 A&B 公司 <特殊> 流程，价格 > 1000 元。"
             )
-            data['fee_details'][0]['include'][0] = "服务费 & 资料费"
-            data['process_data'][0]['process'][0] = "第一步：收集资料 <电子版>"
-            data['process_data'][0]['deliverables'][0] = "1. 认证结果 & 报告"
-            data['doc_data'][0]['docs'][0] = "1. 产品资料 <原件> > 100 页"
+            data['services'][0]['fees']['include'][0] = "服务费 & 资料费"
+            data['services'][0]['process'][0] = "第一步：收集资料 <电子版>"
+            data['services'][0]['deliverables'][0] = "1. 认证结果 & 报告"
+            data['services'][0]['documents'][0] = "1. 产品资料 <原件> > 100 页"
 
             with open(data_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -428,13 +429,13 @@ class TestQuotationSmoke(unittest.TestCase):
             data_path = os.path.join(tmpdir, 'quotation.json')
             with open(src, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            del data['services'][0]['items'][0]['note']
+            del data['services'][0]['note']
             with open(data_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
             rc, out, err = _run_script('validate_data.py', ['--entity', 'xian', '--data', data_path])
             self.assertNotEqual(rc, 0)
-            self.assertIn('services[0].items[0].note is required', out)
+            self.assertIn('services[0].note is required', out)
 
     def test_process_time_disclaimer_matcher_does_not_fire_on_unrelated_notes(self):
         """判定要认得免责声明，但不能误杀恰好同时提到时间与不含项的备注。
@@ -557,13 +558,13 @@ class TestQuotationSmoke(unittest.TestCase):
             data_path = os.path.join(tmpdir, 'quotation.json')
             with open(src, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            del data['services'][0]['items'][0]['code']
+            del data['services'][0]['code']
             with open(data_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
             rc, out, err = _run_script('validate_data.py', ['--entity', 'xian', '--data', data_path])
             self.assertNotEqual(rc, 0)
-            self.assertIn('services[0].items[0].code is required', out)
+            self.assertIn('services[0].code is required', out)
 
     def test_build_renders_code_in_service_content(self):
         """成稿「服务内容」列必须是「编码-服务名」，而不是裸服务名。"""
@@ -579,6 +580,28 @@ class TestQuotationSmoke(unittest.TestCase):
             texts = _docx_texts(output_path)
             self.assertIn('ID1504-BPOM 化妆品延期注册', texts,
                           "服务内容必须渲染为「编码-服务名」")
+            self.assertIn('1 项', texts, "数量列必须同时显示 quantity 和 unit")
+
+    def test_verify_normalizes_comma_formatted_discount(self):
+        """verify must use the same schema normalization as build."""
+        with tempfile.TemporaryDirectory(prefix='quotation-string-discount-') as tmpdir:
+            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
+            with open(data_path, encoding='utf-8') as handle:
+                data = json.load(handle)
+            data['discount_amount'] = '1,000'
+            with open(data_path, 'w', encoding='utf-8') as handle:
+                json.dump(data, handle, ensure_ascii=False, indent=2)
+            output_path = os.path.join(tmpdir, '报价单-字符串优惠.docx')
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'xian', '--data', data_path, '--output', output_path]
+            )
+            self.assertEqual(rc, 0, f"build failed:\n{out}\n{err}")
+            rc, out, err = _run_script(
+                'verify_quotation.py',
+                ['--entity', 'xian', '--input', output_path, '--data', data_path]
+            )
+            self.assertEqual(rc, 0, f"verify failed:\n{out}\n{err}")
 
     def test_verify_rejects_service_content_without_code(self):
         """verify 独立复核：成稿服务内容掉了编码就要失败。
@@ -1018,7 +1041,7 @@ class TestQuotationSmoke(unittest.TestCase):
                 data = json.load(f)
             data['_meta']['applicable_entity'] = 'thailand'
             data['_meta']['target_currency'] = 'THB'
-            data['services'][0]['items'][0]['price'] = 52000
+            data['services'][0]['price'] = 52000
             data['withholding_tax'] = True
 
             with open(data_path, 'w', encoding='utf-8') as f:
@@ -1432,6 +1455,96 @@ class TestQuotationSmoke(unittest.TestCase):
                         f"now sets that paragraph's line height and pushes the body "
                         f"down the page")
 
+    def test_text_header_logo_is_shifted_down_by_the_configured_amount(self):
+        """文字页眉的 logo 必须在成稿里下移 entities.json 配置的量，且不撞上蓝线。
+
+        下移发生在 build 里、不在模板里，所以只能量成稿：模板原位 + 配置下移量应当等于
+        成稿的 logo 偏移，蓝线则一个 EMU 都不能动（蓝线落点决定正文首行能避开多少）。
+
+        只查文字页眉：图片页眉主体（印尼/中国）的页眉整段换成横幅，成稿里的锚点位置由
+        header_image 的几何参数算出来、与模板无关，拿模板比值没有意义（横幅本身由
+        test_image_header_replaces_text_header_with_anchored_banner 覆盖）。这里对它们
+        只核一件事——配置不许给它们配上 logo 下移，因为横幅里没有可独立调整的 logo。
+        """
+        sys.path.insert(0, os.path.join(SKILL_ROOT, 'scripts'))
+        from build_quotation import TEMPLATES
+        from quotation_common import (
+            header_logo_spec, load_entity_config_with_meta, MIN_LOGO_LINE_GAP_MM)
+
+        WP = '{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}'
+        A = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+        R = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
+        EMU_PER_MM = 36000
+
+        entity_config, _, entity_meta = load_entity_config_with_meta()
+        shifted = image_entities = 0
+        with tempfile.TemporaryDirectory(prefix='quotation-logo-') as tmpdir:
+            for entity, template in sorted(TEMPLATES.items()):
+                spec = header_logo_spec(entity_config[entity],
+                                        entity_meta.get('header_logo_defaults'))
+                with self.subTest(entity=entity):
+                    if spec is None:
+                        # 图片页眉：header_logo_spec 必须说不适用，否则 build 会去找一个
+                        # 不存在的 logo 锚点，或误挪横幅。
+                        self.assertTrue(
+                            entity_config[entity].get('header_image'),
+                            f"{entity}: 既没配 header_image 又拿不到 logo 下移配置，"
+                            f"文字页眉会被漏掉")
+                        image_entities += 1
+                        continue
+
+                    with zipfile.ZipFile(template) as zf:
+                        tpl_root = ET.fromstring(zf.read('word/header1.xml'))
+                    tpl_logo = tpl_line = None
+                    for anchor in tpl_root.iter(WP + 'anchor'):
+                        if anchor.find('.//' + A + 'blip') is not None:
+                            tpl_logo = anchor
+                        else:
+                            tpl_line = anchor
+                    if tpl_logo is None:
+                        self.skipTest(f"{entity}: 模板页眉没有独立的 logo 锚点")
+                    tpl_v = int(tpl_logo.find(WP + 'positionV/' + WP + 'posOffset').text)
+                    tpl_line_v = int(tpl_line.find(WP + 'positionV/' + WP + 'posOffset').text)
+
+                    _, docx = _build_for_entity(self, tmpdir, entity)
+                    with zipfile.ZipFile(docx) as zf:
+                        root = ET.fromstring(zf.read('word/header1.xml'))
+                        targets = {rel.get('Id'): rel.get('Target') for rel in ET.fromstring(
+                            zf.read('word/_rels/header1.xml.rels'))}
+                        logo_png = zf.read('word/' + targets[
+                            next(root.iter(A + 'blip')).get(R + 'embed')].lstrip('/'))
+                    logo = line = None
+                    for anchor in root.iter(WP + 'anchor'):
+                        if anchor.find('.//' + A + 'blip') is not None:
+                            logo = anchor
+                        else:
+                            line = anchor
+
+                    got_v = int(logo.find(WP + 'positionV/' + WP + 'posOffset').text)
+                    got_line_v = int(line.find(WP + 'positionV/' + WP + 'posOffset').text)
+                    self.assertEqual(
+                        got_line_v, tpl_line_v,
+                        f"{entity}: 蓝线位置被挪动了（{got_line_v} != 模板 {tpl_line_v}）——"
+                        f"蓝线落点决定正文首行能避开多少，只能动 logo")
+
+                    expected = tpl_v + int(round(spec['shift_mm'] * EMU_PER_MM))
+                    self.assertEqual(
+                        got_v, expected,
+                        f"{entity}: logo 垂直偏移 {got_v} != 模板原位 {tpl_v} + "
+                        f"配置下移 {spec['shift_mm']}mm ({expected})")
+
+                    box = int(logo.find(WP + 'extent').get('cy'))
+                    ink = box * (1 - _png_alpha_bottom_padding(logo_png))
+                    clearance = (got_line_v - got_v - ink) / EMU_PER_MM
+                    self.assertGreaterEqual(
+                        clearance, MIN_LOGO_LINE_GAP_MM,
+                        f"{entity}: logo 下移后距蓝线仅 {clearance:.2f}mm "
+                        f"(< {MIN_LOGO_LINE_GAP_MM}mm)，两者会视觉粘连")
+                    if spec['shift_mm']:
+                        shifted += 1
+        self.assertGreater(shifted, 0, "没有任何文字页眉主体实际下移了 logo")
+        self.assertGreater(image_entities, 0, "没有主体走图片页眉，分支没被覆盖")
+
     def test_build_normalizes_non_a4_template_to_a4(self):
         """A drifted (non-A4) template must still yield an A4-printable quotation.
 
@@ -1455,16 +1568,15 @@ class TestQuotationSmoke(unittest.TestCase):
 
             sys.path.insert(0, os.path.join(SKILL_ROOT, 'scripts'))
             import build_quotation
-            saved_template = build_quotation.TEMPLATES['china']
             saved_argv = sys.argv
-            build_quotation.TEMPLATES['china'] = letter
             sys.argv = ['build_quotation.py', '--entity', 'xian',
                         '--data', data_path, '--output', output_path]
             try:
-                with contextlib.redirect_stdout(io.StringIO()) as captured:
-                    build_quotation.main()
+                with mock.patch.object(
+                        build_quotation, 'template_path_for_entity', return_value=letter):
+                    with contextlib.redirect_stdout(io.StringIO()) as captured:
+                        build_quotation.main()
             finally:
-                build_quotation.TEMPLATES['china'] = saved_template
                 sys.argv = saved_argv
             log = captured.getvalue()
 
@@ -1748,7 +1860,7 @@ class TestQuotationSmoke(unittest.TestCase):
 
 
 class TestDocLineIndent(unittest.TestCase):
-    """doc_data[].docs 的行首全角空格 → 段落左缩进 w:ind（v1.17.1）。
+    """services[].documents 的行首全角空格 → 段落左缩进 w:ind。
 
     一个数组元素渲染成一个段落；行首每 1 个全角空格（U+3000）＝ 1 级 ＝ 360 twips。
     层级必须在数据归一化（item.strip() 会吃掉行首空白）之前从原始 JSON 读取，这里用成稿回读校验。
@@ -1757,10 +1869,12 @@ class TestDocLineIndent(unittest.TestCase):
     _W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
     _HEADER = '所需资料及信息'
 
-    def _build_docx(self, tmpdir, docs, tag):
+    def _build_docx(self, tmpdir, docs, tag, line_id=None):
         with open(os.path.join(SKILL_ROOT, 'examples', 'minimal_quotation.json'), encoding='utf-8') as f:
             data = json.load(f)
-        data['doc_data'][0]['docs'] = docs
+        data['services'][0]['documents'] = docs
+        if line_id is not None:
+            data['services'][0]['line_id'] = line_id
         data_path = os.path.join(tmpdir, f'{tag}.json')
         with open(data_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1824,6 +1938,12 @@ class TestDocLineIndent(unittest.TestCase):
             lines = self._doc_column(docx)
             self.assertEqual([lv for _, lv in lines], [0, 0], f'不应有缩进：{lines}')
             self.assertNotIn('所需资料及信息行缩进', out_text)
+
+    def test_line_id_whitespace_does_not_lose_document_indentation(self):
+        docs = ['1. 顶格', '\u3000（1）缩进']
+        with tempfile.TemporaryDirectory(prefix='quotation-line-id-strip-') as tmpdir:
+            docx, _ = self._build_docx(tmpdir, docs, 'line-id-strip', line_id=' 1 ')
+            self.assertEqual([lv for _, lv in self._doc_column(docx)], [0, 360])
 
     def test_half_width_and_nbsp_are_not_levels(self):
         """半角空格 / NBSP / 填充字符都不算层级（会被 strip 或零位移），只有全角空格算。"""

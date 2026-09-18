@@ -1,19 +1,9 @@
 {
   "_meta": {
-    "description": "最小报价数据示例；price 为目标报价币种的整数总价。services[].items[].code 必填，须取自 API 的 `服务编码`，下例 ID1504 即 queried_services.json 中该服务的真实编码。",
+    "description": "最小手工报价数据示例；price 为目标报价币种的整数总价。使用 API 服务时须填 ai_code，并配置 query_result_file。",
     "applicable_entity": "xian",
-    "query_result_file": "queried_services.json",
-    "source_currency": "IDR",
     "target_currency": "RMB",
-    "exchange_rates": [
-      {
-        "service_name": "BPOM 化妆品延期注册",
-        "ai_code": "BPOM 化妆品延期注册-2098636528563453953",
-        "rateToCny": "2173.91",
-        "rateToUsd": "16000",
-        "rate_source": "ShanhaiMap aiCode API"
-      }
-    ]
+    "schema_version": 2
   },
   "quote_meta": {
     "title_line1": "印尼投资",
@@ -29,45 +19,27 @@
   },
   "services": [
     {
+      "line_id": "1",
+      "ai_code": null,
+      "code": "ID1504",
+      "name": "BPOM 化妆品延期注册",
       "category": null,
-      "items": [
-        {
-          "id": "1",
-          "name": "BPOM 化妆品延期注册",
-          "code": "ID1504",
-          "quantity": 1,
-          "days": "19个工作日",
-          "price": 115000,
-          "note": "本服务为 BPOM 化妆品分销许可证（NIE）到期前的延期注册申请，无需更改产品配方即可提交。须在有效期到期前 100 天提交，且不得晚于到期前 30 天；许可证一旦过期只能重新申请。"
-        }
-      ]
-    }
-  ],
-  "discount_amount": 0,
-  "withholding_tax": false,
-  "notes": [
-    {
-      "text": "以上服务报价不包括：文件翻译费用（如需）、资料快递费用（国际）、差旅费/考察费（如有）。",
-      "indent": 360
-    }
-  ],
-  "fee_details": [
-    {
-      "name": "BPOM 化妆品延期注册",
-      "include": [
-        "山海图服务费"
-      ],
-      "exclude": [
-        "SPB 官费（东盟以外生产的化妆品 Rp1,500,000/产品）",
-        "资料快递费（国际快递）",
-        "文件翻译费"
-      ],
-      "note": ""
-    }
-  ],
-  "process_data": [
-    {
-      "name": "BPOM 化妆品延期注册",
+      "quantity": 1,
+      "unit": "项",
+      "days": "19个工作日",
+      "price": 115000,
+      "note": "本服务为 BPOM 化妆品分销许可证（NIE）到期前的延期注册申请，无需更改产品配方即可提交。须在有效期到期前 100 天提交，且不得晚于到期前 30 天；许可证一旦过期只能重新申请。",
+      "fees": {
+        "include": [
+          "山海图服务费"
+        ],
+        "exclude": [
+          "SPB 官费（东盟以外生产的化妆品 Rp1,500,000/产品）",
+          "资料快递费（国际快递）",
+          "文件翻译费"
+        ],
+        "note": ""
+      },
       "process": [
         "第一步：收集资料",
         "第二步：提交 BPOM 化妆品注册延期申请及 SPB 付款通知（1 个工作日）",
@@ -77,13 +49,8 @@
       ],
       "deliverables": [
         "1. BPOM NIE 产品分销许可证号期延长函"
-      ]
-    }
-  ],
-  "doc_data": [
-    {
-      "name": "BPOM 化妆品延期注册",
-      "docs": [
+      ],
+      "documents": [
         "1. 商业登记证",
         "2. 工厂与进口商的合作协议（印尼公证）/CFS 自由销售证书（海牙认证）",
         "3. GMP / ISO 22716（海牙认证）",
@@ -91,6 +58,14 @@
         "5. 化妆品成分表（含 INCI 名称、材料功能、百分比 100%）",
         "6. 化妆品安全评估报告（山海图提供）"
       ]
+    }
+  ],
+  "discount_amount": 0,
+  "withholding_tax": false,
+  "notes": [
+    {
+      "text": "以上服务报价不包括：文件翻译费用（如需）、资料快递费用（国际）、差旅费/考察费（如有）。",
+      "indent": 360
     }
   ]
 }

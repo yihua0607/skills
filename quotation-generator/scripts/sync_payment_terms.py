@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import zipfile
+from decimal import Decimal, InvalidOperation
 from xml.etree import ElementTree as ET
 
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -109,9 +110,9 @@ def _parse_money_amounts(text):
                 continue
             raw = match.group(1).replace(',', '')
             try:
-                amounts.append(float(raw))
+                amounts.append(Decimal(raw))
                 occupied.append((match.start(), match.end()))
-            except ValueError:
+            except InvalidOperation:
                 continue
     return amounts
 
@@ -129,25 +130,25 @@ def check_payment_terms_reasonableness(terms, contract_total=None, currency=None
     percentages = []
     for match in re.finditer(r'(\d+(?:\.\d+)?)\s*%', text):
         try:
-            percentages.append(float(match.group(1)))
-        except ValueError:
+            percentages.append(Decimal(match.group(1)))
+        except InvalidOperation:
             continue
 
     warnings = []
-    total = sum(percentages)
-    if any(value > 100 for value in percentages):
+    total = sum(percentages, Decimal('0'))
+    if any(value > Decimal('100') for value in percentages):
         warnings.append('付款方式中存在超过 100% 的单项付款比例，请确认。')
-    if total > 100:
+    if total > Decimal('100'):
         label = f'{total:g}%'
         parts = ' + '.join(f'{value:g}%' for value in percentages)
         warnings.append(f'付款方式比例合计为 {label}（{parts}），超过 100%，请提醒用户确认。')
 
     if contract_total is not None:
         money_amounts = _parse_money_amounts(text)
-        money_total = sum(money_amounts)
+        money_total = sum(money_amounts, Decimal('0'))
         try:
-            contract_total_num = float(contract_total)
-        except (TypeError, ValueError):
+            contract_total_num = Decimal(str(contract_total))
+        except (InvalidOperation, TypeError, ValueError):
             contract_total_num = None
         if money_amounts and contract_total_num is not None and money_total > contract_total_num:
             currency_label = currency or ''

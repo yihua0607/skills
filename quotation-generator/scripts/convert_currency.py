@@ -54,13 +54,31 @@ KNOWN_CURRENCIES = tuple(CURRENCIES)
 
 
 def _to_decimal(value):
-    """把 API 的字符串/数字汇率转成 Decimal；转不了返回 None。"""
+    """把 API 的字符串/数字汇率转成 Decimal；转不了、或非有限值返回 None。
+
+    ``Decimal('nan')`` / ``Decimal('Infinity')`` 都能解析成功，但参与运算后不会抛
+    异常，只会把金额一路污染成 NaN / Infinity 写进报价单，所以在解析层就挡掉。
+    """
     if value is None:
         return None
     try:
-        return Decimal(str(value).replace(',', '').strip())
+        result = Decimal(str(value).replace(',', '').strip())
     except Exception:
         return None
+    return result if result.is_finite() else None
+
+
+def _rate_error(value, label):
+    """汇率取值非法时返回给用户看的错误串；合法返回 None。
+
+    0 会让除法直接 ArithmeticError 崩栈，负数会静默算出负金额，两者都是
+    客户可见的财务错误，必须在换算前拦下。
+    """
+    if value is None or (value.is_finite() and value > 0):
+        return None
+    return (f'汇率 {label} 取值非法：{value}。汇率必须为正数'
+            f'（例如 1 CNY = 2173.91 IDR → --rateToCny 2173.91）。'
+            f'请向用户确认该币种的实时汇率后重新换算')
 
 
 def _fmt(amount):
@@ -108,6 +126,16 @@ def convert_single(amount: Decimal, from_currency: str, to_currency: str,
             'rate_type': 'identity',
             'note': 'No conversion needed — same currency',
         }
+
+    # ── 取值校验 ──
+    # 放在同币种短路之后：同币种不需要汇率，调用方传进来的脏值不该让换算失败。
+    if isinstance(amount, Decimal) and not amount.is_finite():
+        return {'error': f'金额不是有限数值：{amount}，无法换算'}
+    for value, label in ((rateToCny, 'rateToCny'), (rateToUsd, 'rateToUsd'),
+                         (cross_rate, 'cross-rate')):
+        err = _rate_error(value, label)
+        if err:
+            return {'error': err}
 
     from_is_base = from_c in BASE_CURRENCIES
     to_is_base = to_c in BASE_CURRENCIES
@@ -318,7 +346,15 @@ def batch_convert(query_result_path: str, to_currency: str) -> list:
             rateToCny_d = slot.get('rateToCny')
             rateToUsd_d = slot.get('rateToUsd')
 
-        conversion = convert_single(price_d, from_norm, to_c, rateToCny_d, rateToUsd_d)
+        try:
+            conversion = convert_single(price_d, from_norm, to_c, rateToCny_d, rateToUsd_d)
+        except ArithmeticError as exc:
+            # 取值校验应该已经拦住这类输入；留作兜底，免得一条脏数据掀翻整批换算。
+            results.append({
+                'service': name,
+                'error': f'换算失败（{type(exc).__name__}）: {exc}；请检查汇率是否为 0',
+            })
+            continue
         conversion['service'] = name
         conversion['original_currency'] = from_norm
         results.append(conversion)
@@ -418,25 +454,35 @@ def main():
         amount_raw = args.amount.replace(',', '').strip()
         amount_d = Decimal(amount_raw)
     except Exception:
-        print(f"❌ Cannot parse amount: {args.amount}", file=sys.stderr)
+        print(f"❌ Cannot parse amount: {args.amount}（必须是有限数值）", file=sys.stderr)
         sys.exit(1)
 
     # Parse rates
     rateToCny_d = _to_decimal(args.rateToCny)
     if args.rateToCny is not None and rateToCny_d is None:
-        print(f"❌ Cannot parse rateToCny: {args.rateToCny}", file=sys.stderr)
+        print(f"❌ 无法使用 rateToCny: {args.rateToCny}（无法解析，或为 NaN/Infinity 等非有限值）",
+              file=sys.stderr)
         sys.exit(1)
     rateToUsd_d = _to_decimal(args.rateToUsd)
     if args.rateToUsd is not None and rateToUsd_d is None:
-        print(f"❌ Cannot parse rateToUsd: {args.rateToUsd}", file=sys.stderr)
+        print(f"❌ 无法使用 rateToUsd: {args.rateToUsd}（无法解析，或为 NaN/Infinity 等非有限值）",
+              file=sys.stderr)
         sys.exit(1)
     cross_rate_d = _to_decimal(args.cross_rate)
     if args.cross_rate is not None and cross_rate_d is None:
-        print(f"❌ Cannot parse cross-rate: {args.cross_rate}", file=sys.stderr)
+        print(f"❌ 无法使用 cross-rate: {args.cross_rate}（无法解析，或为 NaN/Infinity 等非有限值）",
+              file=sys.stderr)
         sys.exit(1)
 
-    result = convert_single(amount_d, args.from_currency, args.to_currency,
-                            rateToCny_d, rateToUsd_d, cross_rate_d)
+    try:
+        result = convert_single(amount_d, args.from_currency, args.to_currency,
+                                rateToCny_d, rateToUsd_d, cross_rate_d)
+    except ArithmeticError as exc:
+        # convert_single 内部已校验汇率取值，这里是兜底：宁可一行错误信息，
+        # 也不要一段 traceback 让调用方误判成 SKILL 自身有 bug。
+        print(f"❌ 换算失败（{type(exc).__name__}）: {exc}", file=sys.stderr)
+        print("   常见原因：汇率为 0 或过于接近 0、金额超出 Decimal 精度。", file=sys.stderr)
+        sys.exit(1)
 
     if 'error' in result:
         print(f"❌ {result['error']}", file=sys.stderr)

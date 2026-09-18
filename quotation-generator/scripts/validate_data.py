@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import sys
+from decimal import Decimal
 
 # Ensure imports work when this script is run directly as `python3 scripts/validate_data.py`.
 _SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -38,11 +39,11 @@ from scripts.sync_payment_terms import check_payment_terms_reasonableness
 from scripts.quotation_schema import validate_and_normalize_data as schema_validate_and_normalize_data
 
 
-def validate_quotation_data(data, entity_key, entity_config, universal_excludes=None):
+def validate_quotation_data(data, entity_key, entity_config, universal_excludes=None, data_path=None):
     """Validate quotation data and return list of errors and warnings.
 
-    Schema-level checks (services, fee_details, process_data, doc_data, notes,
-    discount, quote_meta structure) are delegated to quotation_schema.py. This
+    Schema-level checks (flat services, notes, discount, quote_meta structure)
+    are delegated to quotation_schema.py. This
     function only adds entity-specific, business-level checks.
     """
     errors = []
@@ -56,7 +57,7 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
     schema_ok = False
     validated = None
     try:
-        validated = schema_validate_and_normalize_data(data)
+        validated = schema_validate_and_normalize_data(data, data_path=data_path)
         schema_ok = True
         warnings.extend(validated.get('warnings', []))
     except ValueError as exc:
@@ -107,7 +108,7 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
             f'并在 verify 阶段报「Withholding tax expected in data but not found in document」')
     elif wht_rate is not None and 'withholding_tax' not in data:
         warnings.append(
-            f'--entity {entity_key} 支持预扣税（{float(wht_rate) * 100:g}%），但 quotation.json 缺少顶层 '
+            f'--entity {entity_key} 支持预扣税（{vat_percent_label(Decimal(str(wht_rate)))}），但 quotation.json 缺少顶层 '
             f'withholding_tax 字段：本次不会扣除。按业务要求需先向用户确认——'
             f'要扣则填 true，明确不扣则填 false，不要留空')
 
@@ -137,20 +138,20 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
 
     # ── Entity-specific checks that depend on validated data ──
     if schema_ok and validated is not None:
-        all_prices = [item['price_int'] for group in validated['services'] for item in group['items']]
+        all_prices = [service['price_int'] for service in validated['services']]
 
         # Price magnitude check (business-level guard against currency mix-ups)
         warnings.extend(price_magnitude_warnings(all_prices, currency))
 
         # Universal excludes — check per-service exclude lists for items that
         # should instead appear in notes (shared across all services)
-        for i, fd in enumerate(validated['fee_details']):
-            exclude = fd.get('exclude', [])
+        for i, service in enumerate(validated['services']):
+            exclude = service['fees'].get('exclude', [])
             if exclude and universal_excludes:
                 overlap = [item for item in exclude if any(ue in item for ue in universal_excludes)]
                 if overlap:
                     warnings.append(
-                        f'fee_details[{i}].exclude contains universal items that should be in notes instead: '
+                        f'services[{i}].fees.exclude contains universal items that should be in notes instead: '
                         f'{", ".join(overlap)}')
 
         # VAT sanity preview
@@ -208,7 +209,9 @@ def main():
     print(f"Validating: {data_path}")
     print(f"Entity: {args.entity} ({entity_config[args.entity]['company']})")
 
-    errors, warnings = validate_quotation_data(data, args.entity, entity_config, universal_excludes)
+    errors, warnings = validate_quotation_data(
+        data, args.entity, entity_config, universal_excludes, data_path=data_path
+    )
 
     # ── Output results ──
     if warnings:

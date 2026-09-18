@@ -16,10 +16,13 @@ import sys
 import urllib.parse
 import urllib.request
 import urllib.error
+import time
+from collections import Counter
 
 
 ENDPOINT = "https://server.shanhaimap.com/apis/jeecg-app/app/product/aiCode/resolve"
 MAX_RETRIES = 3
+MAX_AI_CODES_PER_REQUEST = 20
 TIMEOUT_SECONDS = 15
 AI_CODE_PATTERN = re.compile(r'^.+-\d{19}$')
 PURE_CODE_PATTERN = re.compile(r'^\d{19}$')
@@ -135,7 +138,22 @@ def parse_ai_code_arg(value):
     return raw
 
 
-def request_services(ai_codes):
+def parse_ai_codes(values):
+    """Split comma-separated/independent args, validate, and de-duplicate in order."""
+    parsed = []
+    seen = set()
+    for value in values:
+        for part in str(value).split(','):
+            ai_code = parse_ai_code_arg(part)
+            if ai_code not in seen:
+                seen.add(ai_code)
+                parsed.append(ai_code)
+    if not parsed:
+        raise ValueError('至少需要提供一个 aiCode。')
+    return parsed
+
+
+def _request_services_once(ai_codes):
     """POST to the resolve endpoint with retry logic.
 
     Returns a dict with:
@@ -156,7 +174,10 @@ def request_services(ai_codes):
     )
 
     last_error = None
+    failure_message = "无法获取服务详情，请检查网络"
+    error_type = "network_timeout"
     for attempt in range(1, MAX_RETRIES + 1):
+        should_retry = True
         try:
             with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
                 payload = json.loads(response.read().decode("utf-8"))
@@ -164,20 +185,32 @@ def request_services(ai_codes):
                     api_msg = payload.get("message") or "unknown error"
                     print(f"⚠️  API returned failure: {api_msg}", file=sys.stderr)
                 return payload
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            error_type = "http_error"
+            failure_message = f"HTTP {exc.code} {exc.reason}"
+            try:
+                error_body = exc.read().decode('utf-8')
+                api_error = json.loads(error_body)
+                failure_message = api_error.get('message') or failure_message
+            except Exception:
+                pass
+            print(f"⚠️  Request attempt {attempt}/{MAX_RETRIES} failed: HTTP {exc.code} {exc.reason}", file=sys.stderr)
+            # 408/429 and server errors may recover. Other 4xx errors are
+            # deterministic request failures and must not waste retries.
+            should_retry = exc.code in (408, 429) or 500 <= exc.code <= 599
         except urllib.error.URLError as exc:
             last_error = exc
             reason = exc.reason if hasattr(exc, 'reason') else str(exc)
             print(f"⚠️  Request attempt {attempt}/{MAX_RETRIES} failed: {reason}", file=sys.stderr)
-        except urllib.error.HTTPError as exc:
-            last_error = exc
-            print(f"⚠️  Request attempt {attempt}/{MAX_RETRIES} failed: HTTP {exc.code} {exc.reason}", file=sys.stderr)
         except Exception as exc:
             last_error = exc
             print(f"⚠️  Request attempt {attempt}/{MAX_RETRIES} failed: {exc}", file=sys.stderr)
 
-        # Exponential backoff before retry: 1s → 2s → 4s
+        if not should_retry:
+            break
+        # At most three total attempts, with 1s then 2s backoff.
         if attempt < MAX_RETRIES:
-            import time
             time.sleep(2 ** (attempt - 1))
 
     # All retries exhausted — output structured error JSON for Agent consumption.
@@ -186,18 +219,68 @@ def request_services(ai_codes):
     error_output = {
         "success": False,
         "code": -1,
-        "message": "无法获取服务详情，请检查网络",
-        "error_type": "network_timeout",
+        "message": failure_message,
+        "error_type": error_type,
         "last_error": str(last_error) if last_error else "unknown",
         "services": [],
         "errors": [{
             "aiCode": None,
-            "message": "无法获取服务详情，请检查网络",
+            "message": failure_message,
         }],
     }
     json.dump(error_output, sys.stdout, ensure_ascii=False, indent=2)
     print()
     sys.exit(1)
+
+
+def request_services(ai_codes):
+    """Query all aiCodes in batches of at most 20 and merge API results."""
+    batches = []
+    for batch_index, start in enumerate(
+            range(0, len(ai_codes), MAX_AI_CODES_PER_REQUEST), start=1):
+        chunk = ai_codes[start:start + MAX_AI_CODES_PER_REQUEST]
+        payload = _request_services_once(chunk)
+        result = payload.get('result')
+        if isinstance(result, dict) and isinstance(result.get('items'), list):
+            batch_items = result['items']
+        elif isinstance(result, dict):
+            batch_items = [{
+                'aiCode': result.get('aiCode'),
+                'success': payload.get('success'),
+                'message': payload.get('message'),
+                'data': result,
+            }]
+        else:
+            batch_items = []
+        batches.append({
+            'batch': batch_index,
+            'requested_ai_codes': list(chunk),
+            'success': payload.get('success'),
+            'code': payload.get('code'),
+            'message': payload.get('message'),
+            'returned_ai_codes': [item.get('aiCode') for item in batch_items],
+            '_items': batch_items,
+        })
+
+    items = []
+    failure_messages = []
+    first_failure_code = None
+    for batch in batches:
+        if batch['success'] is False:
+            failure_messages.append(
+                f"batch {batch['batch']}: {batch['message'] or 'unknown error'}")
+            if first_failure_code is None:
+                first_failure_code = batch['code']
+        items.extend(batch.pop('_items'))
+
+    all_success = not failure_messages
+    return {
+        'success': all_success,
+        'code': 200 if all_success else first_failure_code,
+        'message': 'ok' if all_success else '; '.join(failure_messages),
+        'result': {'items': items},
+        'batch_results': batches,
+    }
 
 
 def iter_service_records(payload):
@@ -238,7 +321,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        parsed_ai_codes = [parse_ai_code_arg(value) for value in args.ai_code]
+        parsed_ai_codes = parse_ai_codes(args.ai_code)
     except ValueError as exc:
         output = {
             "success": False,
@@ -253,10 +336,10 @@ def main():
         sys.exit(1)
 
     original_by_code = {}
-    for parsed, original in zip(parsed_ai_codes, args.ai_code):
-        original_by_code[parsed] = original
+    for parsed in parsed_ai_codes:
+        original_by_code[parsed] = parsed
         suffix = parsed.rsplit('-', 1)[-1]
-        original_by_code[suffix] = original
+        original_by_code[suffix] = parsed
     payload = request_services(parsed_ai_codes)
 
     # Check for partial failures
@@ -269,7 +352,17 @@ def main():
     has_item_failure = bool(failed_services)
     top_level_failure = payload.get("success") is False
     no_services = not services
-    should_abort = top_level_failure or has_item_failure or no_services
+    requested_by_suffix = {code.rsplit('-', 1)[-1]: code for code in parsed_ai_codes}
+    returned_suffixes = [str(s.get('查询aiCode')).rsplit('-', 1)[-1]
+                         for s in services if s.get('查询aiCode') is not None]
+    returned_counts = Counter(returned_suffixes)
+    missing_ai_codes = [full for suffix, full in requested_by_suffix.items()
+                        if returned_counts[suffix] == 0]
+    unexpected_ai_codes = sorted({suffix for suffix in returned_counts
+                                  if suffix not in requested_by_suffix})
+    duplicate_ai_codes = sorted(suffix for suffix, count in returned_counts.items() if count > 1)
+    coverage_failure = bool(missing_ai_codes or unexpected_ai_codes or duplicate_ai_codes)
+    should_abort = top_level_failure or has_item_failure or no_services or coverage_failure
     errors = [
         {
             "aiCode": fs.get("查询aiCode"),
@@ -288,13 +381,23 @@ def main():
         print(f"❌ 未查询到任何服务，已中断报价单生成: {no_services_message}", file=sys.stderr)
         errors.append({"aiCode": None, "message": no_services_message})
 
+    for ai_code in missing_ai_codes:
+        errors.append({'aiCode': ai_code, 'message': 'API 未返回该 aiCode 的查询结果'})
+    for ai_code in unexpected_ai_codes:
+        errors.append({'aiCode': ai_code, 'message': 'API 返回了未请求的 aiCode'})
+    for ai_code in duplicate_ai_codes:
+        errors.append({'aiCode': ai_code, 'message': 'API 重复返回该 aiCode'})
+    if coverage_failure:
+        print('❌ aiCode 请求与返回结果不一致，已中断报价单生成', file=sys.stderr)
+
     output = {
         "success": False if should_abort else payload.get("success"),
         "code": payload.get("code"),
         "message": payload.get("message") or ("未查询到任何服务" if no_services else None),
-        "partial_failure": has_item_failure,
+        "partial_failure": has_item_failure or coverage_failure,
         "services": services,
         "errors": errors,
+        "batch_results": payload.get('batch_results', []),
     }
     json.dump(output, sys.stdout, ensure_ascii=False, indent=2)
     print()
@@ -304,7 +407,7 @@ def main():
         print(f"❌ API message: {api_message}", file=sys.stderr)
         sys.exit(1)
 
-    if has_item_failure or no_services:
+    if has_item_failure or no_services or coverage_failure:
         sys.exit(1)
 
 

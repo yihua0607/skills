@@ -105,7 +105,7 @@ def main():
         'paragraphs': paragraphs,
         'tables': tables,
         'classified': classify_paragraphs(header_paragraphs + paragraphs),
-        'usage_note': 'Compare this customer-visible snapshot with quotation.json. Map clear differences back to quote_meta/services/fee_details/process_data/doc_data/notes; ask the user about ambiguous business meaning before rebuilding.',
+        'usage_note': 'Compare this customer-visible snapshot with quotation.json. Map clear differences back to quote_meta/services/notes; ask the user about ambiguous business meaning before rebuilding.',
     }
 
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)

@@ -1,16 +1,7 @@
 {
   "_meta": {
-    "alias_comment": "aliases：主体别名（用户口语/中英文叫法，匹配大小写不敏感，供 Agent 识别用，脚本不读该字段；--entity 仍只接受实体 key）。2026-09-15 起「德音人力/德音/deyin/dein/DEIN」一律对应 deyin。",
-    "_comment": "签约主体配置文件。新增实体只需添加新 key 并确保包含所有 required_entity_fields。payment_terms 缺省时回退 payment_terms_default（jakarta/deyin 用「收到发票后 100%」变体，其余主体共用默认）。universal_excludes 是常见公共费用不含项的种子示例，用于提示去重，不是完整白名单；实际应按多个服务共同项和业务语义抽取公共不含项到 notes。header_address_size_pt 可选：页眉公司地址过长、会换行时设地址字号（单位 pt，如 8），缺省沿用模板原字号。header_company_align 可选：页眉公司名称对齐方式（center/right），缺省 center；公司名过长、居中会压住左侧 logo 的主体（泰国/越南/埃及/新加坡）设 right。tax_label 可选：汇总表税金行标签（缺省「增值税」），马来西亚设「销售与服务税」（SST），税率仍走 vat_rate。header_image 可选：页眉改用整幅横幅图（见 _meta.header_image_defaults 与 SKILL.md『图片页眉』）。file 是 assets 下的图片文件名；bbox_px 是该图 alpha 边界在 PNG 里的像素坐标 [x0, y0, x1, y1]，build 据此裁掉透明边距——不裁的话图片框会顶到纸张上缘、横向越过正文栏（横幅的可见内容其实已经对齐正文栏，撑出框外的全是透明边距）。换图时必须重量，不能照抄。已配：beijing/xian/shenzhen/shanghai/shanghai_new/jakarta/sci/deyin。",
-    "required_entity_fields": [
-      "template",
-      "company",
-      "header_lines",
-      "vat_rate",
-      "currency",
-      "allowed_currencies",
-      "bank_lines"
-    ],
+    "alias_comment": "aliases：主体别名（用户口语/中英文叫法，匹配大小写及常见标点不敏感，由 scripts/resolve_entity.py 解析；--entity 仍只接受实体 key）。ambiguous_aliases 保存必须由用户确认的泛称。",
+    "_comment": "签约主体配置文件。新增实体必须满足 scripts/quotation_common.py 的 REQUIRED_ENTITY_FIELDS。payment_terms 缺省时回退 payment_terms_default（jakarta/deyin 用「收到发票后 100%」变体，其余主体共用默认）。universal_excludes 是常见公共费用不含项的种子示例，用于提示去重，不是完整白名单；实际应按多个服务共同项和业务语义抽取公共不含项到 notes。header_address_size_pt 可选：页眉公司地址过长、会换行时设地址字号（单位 pt，如 8），缺省沿用模板原字号。header_company_align 可选：页眉公司名称对齐方式（center/right），缺省 center；公司名过长、居中会压住左侧 logo 的主体（泰国/越南/埃及/新加坡）设 right。tax_label 可选：汇总表税金行标签（缺省「增值税」），马来西亚设「销售与服务税」（SST），税率仍走 vat_rate。header_image 可选：页眉改用整幅横幅图（见 _meta.header_image_defaults 与 SKILL.md『图片页眉』）。file 是 assets 下的图片文件名；bbox_px 是该图 alpha 边界在 PNG 里的像素坐标 [x0, y0, x1, y1]，build 据此裁掉透明边距。换图时必须重新测量，不能照抄。已配：beijing/xian/shenzhen/shanghai/shanghai_new/jakarta/sci/deyin。 header_logo_defaults 可选：文字页眉主体（非印尼/中国，即未配 header_image 的 5 家）的 logo 沿页眉末段顶端下移量（mm），0 表示保持模板原位；实体可用 header_logo_shift_mm 覆盖。图片页眉主体的 logo 印在横幅图里，没有独立锚点，不读该字段。",
     "payment_terms_default": [
       "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
     ],
@@ -19,7 +10,26 @@
       "line_gap_mm": 3.0,
       "body_top_mm": 30.0
     },
-  "universal_excludes": [
+    "header_logo_defaults": {
+      "shift_mm": 1.0
+    },
+    "ambiguous_aliases": {
+      "印尼": [
+        "jakarta",
+        "sci",
+        "deyin"
+      ],
+      "印度尼西亚": [
+        "jakarta",
+        "sci",
+        "deyin"
+      ],
+      "上海公司": [
+        "shanghai",
+        "shanghai_new"
+      ]
+    },
+    "universal_excludes": [
       "文件翻译费用（如需）",
       "资料快递费用（国际）",
       "差旅费/考察费（如有）"
@@ -27,8 +37,18 @@
   },
   "jakarta": {
     "template": "jakarta",
+    "template_file": "assets/报价单模板-雅加达公司.docx",
     "company": "PT. SHAN HAI MAP",
-    "aliases": ["PT. SHAN HAI MAP", "PT SHAN HAI MAP", "雅加达", "雅加达山海图", "SHM信头", "印尼shanhaimap", "SHAN HAI MAP JAKARTA", "jakarta"],
+    "aliases": [
+      "PT. SHAN HAI MAP",
+      "PT SHAN HAI MAP",
+      "雅加达",
+      "雅加达山海图",
+      "SHM信头",
+      "印尼shanhaimap",
+      "SHAN HAI MAP JAKARTA",
+      "jakarta"
+    ],
     "header_lines": [
       "PT. SHAN HAI MAP",
       "OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5",
@@ -37,11 +57,24 @@
     ],
     "header_image": {
       "file": "页眉-SHM雅加达公司.png",
-      "bbox_px": [137, 111, 3391, 433]
+      "bbox_px": [
+        137,
+        111,
+        3391,
+        433
+      ]
     },
     "vat_rate": 0.11,
     "currency": "IDR",
-    "allowed_currencies": ["IDR", "RMB", "USD"],
+    "allowed_currencies": [
+      "IDR",
+      "RMB",
+      "USD"
+    ],
+    "swift_policy": "required",
+    "bank_notes": [
+      "IDR、USD、RMB 使用不同银行账户；账户名称统一为 PT. SHAN HAI MAP。"
+    ],
     "payment_terms": [
       "甲方应在收到发票后 5 个工作日内支付合同金额的 100%。"
     ],
@@ -78,8 +111,20 @@
   },
   "sci": {
     "template": "jakarta",
+    "template_file": "assets/报价单模板-雅加达公司.docx",
     "company": "PT SHM CONSULTING INDONESIA",
-    "aliases": ["SCI", "山海图咨询印尼", "山海图咨询", "印尼咨询", "印尼山海图咨询", "PT SHM CONSULTING INDONESIA", "PT SHM CONSULTING", "SHM CONSULTING", "shm consulting", "sci"],
+    "aliases": [
+      "SCI",
+      "山海图咨询印尼",
+      "山海图咨询",
+      "印尼咨询",
+      "印尼山海图咨询",
+      "PT SHM CONSULTING INDONESIA",
+      "PT SHM CONSULTING",
+      "SHM CONSULTING",
+      "shm consulting",
+      "sci"
+    ],
     "header_lines": [
       "PT SHM CONSULTING INDONESIA",
       "OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5",
@@ -88,10 +133,23 @@
     ],
     "vat_rate": 0.11,
     "currency": "IDR",
-    "allowed_currencies": ["IDR", "RMB", "USD"],
+    "allowed_currencies": [
+      "IDR",
+      "RMB",
+      "USD"
+    ],
+    "swift_policy": "required",
+    "bank_notes": [
+      "IDR、USD、RMB 共用同一个多币种账户。"
+    ],
     "header_image": {
       "file": "页眉-SCI山海图咨询.png",
-      "bbox_px": [67, 124, 3391, 447]
+      "bbox_px": [
+        67,
+        124,
+        3391,
+        447
+      ]
     },
     "payment_terms": [
       "甲方应在收到发票后 5 个工作日内支付合同金额的 100%。"
@@ -106,8 +164,14 @@
   },
   "beijing": {
     "template": "china",
+    "template_file": "assets/报价单模板-中国公司.docx",
     "company": "北京山海图科技有限公司",
-    "aliases": ["北京", "北京山海图", "北京山海图科技有限公司", "beijing"],
+    "aliases": [
+      "北京",
+      "北京山海图",
+      "北京山海图科技有限公司",
+      "beijing"
+    ],
     "header_lines": [
       "北京山海图科技有限公司",
       "北京市海淀区西四环北路158号1幢一层3-65",
@@ -115,11 +179,23 @@
     ],
     "header_image": {
       "file": "页眉-SHM北京公司.png",
-      "bbox_px": [137, 111, 3390, 433]
+      "bbox_px": [
+        137,
+        111,
+        3390,
+        433
+      ]
     },
     "vat_rate": 0.06,
     "currency": "RMB",
-    "allowed_currencies": ["RMB", "USD"],
+    "allowed_currencies": [
+      "RMB",
+      "USD"
+    ],
+    "swift_policy": "not_required",
+    "bank_notes": [
+      "北京主体不使用 SWIFT CODE。"
+    ],
     "bank_lines": [
       "账户名称：北京山海图科技有限公司",
       "税号：91110108080546395Q",
@@ -130,8 +206,14 @@
   },
   "xian": {
     "template": "china",
+    "template_file": "assets/报价单模板-中国公司.docx",
     "company": "北京山海图科技有限公司西安分公司",
-    "aliases": ["西安", "西安分公司", "西安山海图", "xian"],
+    "aliases": [
+      "西安",
+      "西安分公司",
+      "西安山海图",
+      "xian"
+    ],
     "header_lines": [
       "北京山海图科技有限公司西安分公司",
       "西安市高新区科技路林凯国际大厦15层1501-01-03室",
@@ -139,11 +221,20 @@
     ],
     "header_image": {
       "file": "页眉-SHM西安公司.png",
-      "bbox_px": [137, 111, 3390, 433]
+      "bbox_px": [
+        137,
+        111,
+        3390,
+        433
+      ]
     },
     "vat_rate": 0.06,
     "currency": "RMB",
-    "allowed_currencies": ["RMB", "USD"],
+    "allowed_currencies": [
+      "RMB",
+      "USD"
+    ],
+    "swift_policy": "required",
     "bank_lines": [
       "账户名称：北京山海图科技有限公司西安分公司",
       "税号：91610131MAB11JW331",
@@ -156,8 +247,14 @@
   },
   "shenzhen": {
     "template": "china",
+    "template_file": "assets/报价单模板-中国公司.docx",
     "company": "北京山海图科技有限公司深圳分公司",
-    "aliases": ["深圳", "深圳分公司", "深圳山海图", "shenzhen"],
+    "aliases": [
+      "深圳",
+      "深圳分公司",
+      "深圳山海图",
+      "shenzhen"
+    ],
     "header_lines": [
       "北京山海图科技有限公司深圳分公司",
       "深圳市南山区南海大道1052号海翔广场717",
@@ -165,11 +262,20 @@
     ],
     "header_image": {
       "file": "页眉-SHM深圳公司.png",
-      "bbox_px": [137, 114, 3390, 447]
+      "bbox_px": [
+        137,
+        114,
+        3390,
+        447
+      ]
     },
     "vat_rate": 0.06,
     "currency": "RMB",
-    "allowed_currencies": ["RMB", "USD"],
+    "allowed_currencies": [
+      "RMB",
+      "USD"
+    ],
+    "swift_policy": "required",
     "bank_lines": [
       "账户名称：北京山海图科技有限公司深圳分公司",
       "税号：91440300MA5HXMAEXM",
@@ -182,8 +288,14 @@
   },
   "shanghai": {
     "template": "china",
+    "template_file": "assets/报价单模板-中国公司.docx",
     "company": "北京山海图科技有限公司上海分公司",
-    "aliases": ["上海", "上海分公司", "上海山海图", "shanghai"],
+    "aliases": [
+      "上海",
+      "上海分公司",
+      "上海山海图",
+      "shanghai"
+    ],
     "header_lines": [
       "北京山海图科技有限公司上海分公司",
       "上海市青浦区虹桥LM世界中心L3-B栋 305A",
@@ -191,11 +303,20 @@
     ],
     "header_image": {
       "file": "页眉-SHM上海分公司.png",
-      "bbox_px": [137, 115, 3390, 447]
+      "bbox_px": [
+        137,
+        115,
+        3390,
+        447
+      ]
     },
     "vat_rate": 0.01,
     "currency": "RMB",
-    "allowed_currencies": ["RMB", "USD"],
+    "allowed_currencies": [
+      "RMB",
+      "USD"
+    ],
+    "swift_policy": "required",
     "bank_lines": [
       "账户名称：北京山海图科技有限公司上海分公司",
       "Account Name: Beijing Shanhaitu Technology Co., Ltd. Shanghai Branch",
@@ -209,8 +330,15 @@
   },
   "shanghai_new": {
     "template": "china",
+    "template_file": "assets/报价单模板-中国公司.docx",
     "company": "上海山海图新企业咨询有限公司",
-    "aliases": ["上海新企业", "上海山海图新企业", "上海新企业咨询", "shanghai_new", "shanghai new"],
+    "aliases": [
+      "上海新企业",
+      "上海山海图新企业",
+      "上海新企业咨询",
+      "shanghai_new",
+      "shanghai new"
+    ],
     "header_lines": [
       "上海山海图新企业咨询有限公司",
       "上海市青浦区虹桥LM世界中心L3-B栋 305A",
@@ -218,11 +346,20 @@
     ],
     "header_image": {
       "file": "页眉-SHM上海新企业.png",
-      "bbox_px": [137, 115, 3390, 447]
+      "bbox_px": [
+        137,
+        115,
+        3390,
+        447
+      ]
     },
     "vat_rate": 0.01,
     "currency": "RMB",
-    "allowed_currencies": ["RMB", "USD"],
+    "allowed_currencies": [
+      "RMB",
+      "USD"
+    ],
+    "swift_policy": "required",
     "bank_lines": [
       "账户名称：上海山海图新企业咨询有限公司",
       "Account Name: Shanghai Shanhaimap New Enterprise Consulting Co., Ltd.",
@@ -236,8 +373,14 @@
   },
   "singapore": {
     "template": "singapore",
+    "template_file": "assets/报价单模版-新加坡公司.docx",
     "company": "SHAN HAI MAP CONSULTANCY PTE.LTD",
-    "aliases": ["新加坡", "新加坡山海图", "SHAN HAI MAP CONSULTANCY", "singapore"],
+    "aliases": [
+      "新加坡",
+      "新加坡山海图",
+      "SHAN HAI MAP CONSULTANCY",
+      "singapore"
+    ],
     "header_lines": [
       "SHAN HAI MAP CONSULTANCY PTE.LTD",
       "1 North Bridge Road, #06-14 High Street Centre,",
@@ -247,7 +390,15 @@
     "header_company_align": "right",
     "vat_rate": 0.0,
     "currency": "SGD",
-    "allowed_currencies": ["SGD", "RMB", "USD"],
+    "allowed_currencies": [
+      "SGD",
+      "RMB",
+      "USD"
+    ],
+    "swift_policy": "required",
+    "bank_notes": [
+      "SGD 使用 SGD Current Account；RMB、USD 使用 Multi-currency Account。"
+    ],
     "bank_lines": [
       "Beneficiary Name: SHAN HAI MAP CONSULTANCY PTE.LTD",
       "Beneficiary Bank: Oversea-Chinese Banking Corporation Limited",
@@ -261,8 +412,22 @@
   },
   "deyin": {
     "template": "deyin",
+    "template_file": "assets/报价单模版-德音人力.docx",
     "company": "PT DEIN TALENT SOLUTIONS",
-    "aliases": ["德音人力", "德音", "德音人力资源", "德音人力服务", "deyin", "dein", "DEIN", "dein信头", "DEIN信头", "德音信头", "德音人力信头", "PT DEIN TALENT SOLUTIONS"],
+    "aliases": [
+      "德音人力",
+      "德音",
+      "德音人力资源",
+      "德音人力服务",
+      "deyin",
+      "dein",
+      "DEIN",
+      "dein信头",
+      "DEIN信头",
+      "德音信头",
+      "德音人力信头",
+      "PT DEIN TALENT SOLUTIONS"
+    ],
     "header_lines": [
       "PT DEIN TALENT SOLUTIONS",
       "OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5",
@@ -271,11 +436,23 @@
     ],
     "header_image": {
       "file": "页眉-德音人力.png",
-      "bbox_px": [119, 111, 3391, 433]
+      "bbox_px": [
+        119,
+        111,
+        3391,
+        433
+      ]
     },
     "vat_rate": 0.11,
     "currency": "IDR",
-    "allowed_currencies": ["IDR", "USD"],
+    "allowed_currencies": [
+      "IDR",
+      "USD"
+    ],
+    "swift_policy": "required",
+    "bank_notes": [
+      "IDR 与 USD 使用不同银行账户。"
+    ],
     "payment_terms": [
       "甲方应在收到发票后 5 个工作日内支付合同金额的 100%。"
     ],
@@ -305,8 +482,15 @@
   },
   "thailand": {
     "template": "thailand",
+    "template_file": "assets/报价单模板-泰国公司.docx",
     "company": "SHAN HAI MAP (THAILAND) CO., LTD.",
-    "aliases": ["泰国", "曼谷", "曼谷山海图", "SHAN HAI MAP (THAILAND)", "thailand"],
+    "aliases": [
+      "泰国",
+      "曼谷",
+      "曼谷山海图",
+      "SHAN HAI MAP (THAILAND)",
+      "thailand"
+    ],
     "header_lines": [
       "SHAN HAI MAP (THAILAND) CO., LTD.",
       "Thanapoom Tower, 25th floor Unit A2, 1550 New Petchaburi Rd, ",
@@ -317,7 +501,27 @@
     "vat_rate": 0.07,
     "withholding_tax_rate": 0.03,
     "currency": "THB",
-    "allowed_currencies": ["THB", "RMB", "USD"],
+    "allowed_currencies": [
+      "THB",
+      "RMB",
+      "USD"
+    ],
+    "swift_policy": "required",
+    "tax_note": "（以开发票时泰国现行税率为准）",
+    "summary_layout": {
+      "subtotal": [
+        1,
+        2,
+        2,
+        "left"
+      ],
+      "other": [
+        0,
+        3,
+        2,
+        "left"
+      ]
+    },
     "bank_lines": [
       "Beneficiary Name: SHAN HAI MAP (THAILAND) CO., LTD.",
       "Beneficiary Bank: Kasikorn PCL. Thailand, Central Rama 9 Branch (847)",
@@ -328,8 +532,15 @@
   },
   "vietnam": {
     "template": "vietnam",
+    "template_file": "assets/报价单模版-越南公司.docx",
     "company": "CÔNG TY TNHH SHANHAIMAP VIỆT NAM",
-    "aliases": ["越南", "越南山海图", "SHANHAIMAP VIET NAM", "SHANHAIMAP VIỆT NAM", "vietnam"],
+    "aliases": [
+      "越南",
+      "越南山海图",
+      "SHANHAIMAP VIET NAM",
+      "SHANHAIMAP VIỆT NAM",
+      "vietnam"
+    ],
     "header_lines": [
       "CÔNG TY TNHH SHANHAIMAP VIỆT NAM",
       "Tầng 6, Số 89 Phan Đình Phùng, Phường Phú Nhuận,TPHCM.",
@@ -339,7 +550,15 @@
     "header_company_align": "right",
     "vat_rate": 0.08,
     "currency": "VND",
-    "allowed_currencies": ["VND", "RMB", "USD"],
+    "allowed_currencies": [
+      "VND",
+      "RMB",
+      "USD"
+    ],
+    "swift_policy": "required",
+    "bank_notes": [
+      "VND 使用本币账户；USD、RMB 共用外币账户。"
+    ],
     "bank_lines": [
       "银行名称：Joint Stock Commercial Bank for Foreign Trade of Vietnam - Thang Long Branch",
       "账号名称：Cong ty TNHH Shanhaimap Viet Nam",
@@ -365,7 +584,7 @@
       "RMB": [
         "银行名称：Joint Stock Commercial Bank for Foreign Trade of Vietnam - Thang Long Branch",
         "账号名称：Cong ty TNHH Shanhaimap Viet Nam",
-        "银行账号：104 799 1540 (USD)",
+        "银行账号：104 799 1540",
         "国际银行代码 Swift Code：BFTVVNVX",
         "分行地址：Pvoil Phu Tho Building, No. 148 Hoang Quoc Viet, Nghia Tan Ward, Cau Giay District, Hanoi City"
       ]
@@ -373,17 +592,31 @@
   },
   "egypt": {
     "template": "egypt",
+    "template_file": "assets/报价单模版-埃及公司.docx",
     "company": "SHAN HAI MAP FOR CONSULTING CO",
-    "aliases": ["埃及", "埃及山海图", "SHAN HAI MAP FOR CONSULTING", "egypt"],
+    "aliases": [
+      "埃及",
+      "埃及山海图",
+      "SHAN HAI MAP FOR CONSULTING",
+      "egypt"
+    ],
     "header_lines": [
       "SHAN HAI MAP FOR CONSULTING CO",
       "埃及新开罗90号大街TOP90 1层134室",
       "Web: www.shanhaimap.com"
     ],
     "header_company_align": "right",
-    "vat_rate": 0.10,
+    "vat_rate": 0.1,
     "currency": "EGP",
-    "allowed_currencies": ["EGP", "RMB", "USD"],
+    "allowed_currencies": [
+      "EGP",
+      "RMB",
+      "USD"
+    ],
+    "swift_policy": "required",
+    "bank_notes": [
+      "EGP 使用本币账户；USD、RMB 共用外币账户。"
+    ],
     "bank_lines": [
       "Bank Name: Qatar National Bank (QNB) - 00037",
       "Bank Branch: 00177",
@@ -425,8 +658,15 @@
   },
   "malaysia": {
     "template": "malaysia",
+    "template_file": "assets/报价单模版-马来西亚公司.docx",
     "company": "SHANHAIMAP SDN. BHD.",
-    "aliases": ["马来西亚", "大马", "马来西亚山海图", "SHANHAIMAP SDN. BHD.", "malaysia"],
+    "aliases": [
+      "马来西亚",
+      "大马",
+      "马来西亚山海图",
+      "SHANHAIMAP SDN. BHD.",
+      "malaysia"
+    ],
     "header_lines": [
       "SHANHAIMAP SDN. BHD.",
       "Suite 16-03A & 05, Level 16, Wisma UOA II No. 21,",
@@ -437,7 +677,12 @@
     "tax_label": "销售与服务税",
     "vat_rate": 0.08,
     "currency": "MYR",
-    "allowed_currencies": ["MYR", "RMB", "USD"],
+    "allowed_currencies": [
+      "MYR",
+      "RMB",
+      "USD"
+    ],
+    "swift_policy": "required",
     "bank_lines": [
       "Account Name: SHANHAIMAP SDN. BHD.",
       "Account Number: 7011647369",

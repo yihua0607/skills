@@ -1,70 +1,89 @@
 # 实体银行信息对照
 
-> 本表仅供人读参考；SWIFT CODE 与银行信息以 `config/entities.json` 为准（两者不一致时以 entities.json 为准）。
+> 此文件由 `scripts/generate_bank_reference.py` 根据 `config/entities.json` 自动生成，请勿手工编辑。
 
-## SWIFT CODE 状态
+## jakarta
 
-| 实体 | SWIFT CODE | 状态 |
-|------|-----------|------|
-| jakarta (PT. SHAN HAI MAP) | CENAIDJA (IDR) / BNINIDJAXXX (USD) / ICBKIDJAXXX (RMB) | ✅ 已配置 |
-| sci (PT SHM CONSULTING INDONESIA / 山海图咨询印尼) | NISPIDJA | ✅ 已配置 |
-| beijing (北京山海图科技有限公司) | — | ➖ 无需配置（刘旭 2026-09-13 确认：北京不要 SWIFT CODE） |
-| xian (北京山海图科技有限公司西安分公司) | BKCHCNBJ620 | ✅ 已配置 |
-| shenzhen (北京山海图科技有限公司深圳分公司) | BKCHCNBJ45A | ✅ 已配置 |
-| shanghai (北京山海图科技有限公司上海分公司) | BKCHCNBJ300 | ✅ 已配置 |
-| shanghai_new (上海山海图新企业咨询有限公司) | BKCHCNBJ300 | ✅ 已配置 |
-| singapore (SHAN HAI MAP CONSULTANCY PTE.LTD) | OCBCSGSG | ✅ 已配置 |
-| deyin (PT DEIN TALENT SOLUTIONS) | CENAIDJAXXX / BNINIDJAXXX | ✅ 已配置 |
-| thailand (SHAN HAI MAP (THAILAND) CO., LTD.) | KASITHBK | ✅ 已配置 |
-| vietnam (CÔNG TY TNHH SHANHAIMAP VIỆT NAM) | BFTVVNVX | ✅ 已配置 |
-| egypt (SHAN HAI MAP FOR CONSULTING CO) | QNBAEGCXXXX | ✅ 已配置 |
-| malaysia (SHANHAIMAP SDN. BHD.) | OCBCMYKL | ✅ 已配置 |
+- 签约主体：PT. SHAN HAI MAP
+- 默认币种：IDR
+- 允许币种：IDR / RMB / USD
+- SWIFT 政策：required
 
-## 完整银行信息
+### 银行说明
 
-### jakarta
-按币种使用不同账户（`bank_lines_by_currency`）：
-- **IDR 账户**：
-  - 银行：BCA (KCP CENTRAL PARK)
-  - 户名：PT. SHAN HAI MAP
-  - 账号：5485225789
-  - SWIFT：CENAIDJA
-  - 分行：KCP CENTRAL PARK, Jl. Letjen S. Parman Komp. Podomoro, RT. 9/RW 5, Tj. Duren Selatan, Grogol Petamburan, Kota Jakarta Barat, DKI Jakarta, 11470.
-- **USD 账户**：
-  - 银行名称：BNI (BANK NEGARA INDONESIA)
-  - 账号名称：PT SHAN HAI MAP
-  - 银行账号：6060677669
-  - SWIFT：BNINIDJAXXX
-  - 分行名称：BNI APL TOWER Grogol petamburan Jakarta Barat
-- **RMB 账户**：
-  - 银行名称：ICBC (KCP CENTRAL PARK)
-  - 账号名称：PT.SHAN HAI MAP
-  - 银行账号：0120020400000811366
-  - SWIFT：ICBKIDJAXXX
-  - 分行名称：ICBC (CENTRAL PARK BRANCH)
-- ⚠️ 户名统一为 `PT. SHAN HAI MAP`（**带点**）：刘旭 2026-09-13 确认「雅加达公司无论什么币种，开户名称都是 PT. SHAN HAI MAP」。三个币种账户的**银行/账号/SWIFT 按币种不同**，只有户名写法一致。
-  注：`verify_quotation.py` 的 `normalize_company_name()` 对点号不敏感（三种写法都能过校验），所以户名写错不会被 verify 拦下——必须靠 `config/entities.json` 里的数据正确
+- IDR、USD、RMB 使用不同银行账户；账户名称统一为 PT. SHAN HAI MAP。
 
-### sci
-山海图咨询印尼主体，简称 SCI。**与雅加达（`jakarta`）是两家不同公司**，只是注册地址相同。
-- 公司名称: PT SHM CONSULTING INDONESIA
-- 公司地址: OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5, JL. LINGKAR LUAR BARAT BLOK A NO.1, JAKARTA BARAT 11740（与 `jakarta` 同一地址）
-- 账户名称: PT SHM CONSULTING INDONESIA
-- 开户银行: Bank OCBC Indonesia (PT Bank OCBC NISP Tbk)
-- 银行账号: 545800133641
-- SWIFT CODE: NISPIDJA
-- 分行地址: Jl. Prof.Dr.Satrio No 25, Jakarta Selatan 12940, Indonesia
-- ⚠️ **多币种账户**：IDR / USD / CNH 共用同一个账号 `545800133641`，因此只配 `bank_lines`，不配 `bank_lines_by_currency`（与 `jakarta`/`deyin` 按币种分账户不同）。
+### IDR 账户
 
-### beijing
+- 银行名称：BCA (KCP CENTRAL PARK)
+- 账号名称：PT. SHAN HAI MAP
+- 银行账号：5485225789
+- 国际银行代码 Swift Code：CENAIDJA
+- 分行名称：KCP CENTRAL PARK, Jl. Letjen S. Parman Komp. Podomoro, RT. 9/RW 5, Tj. Duren Selatan, Grogol Petamburan, Kota Jakarta Barat, DKI Jakarta, 11470.
+
+### USD 账户
+
+- 银行名称：BNI (BANK NEGARA INDONESIA)
+- 账号名称：PT. SHAN HAI MAP
+- 银行账号：6060677669
+- 国际银行代码 Swift Code：BNINIDJAXXX
+- 分行名称：BNI APL TOWER Grogol petamburan Jakarta Barat
+
+### RMB 账户
+
+- 银行名称：ICBC (KCP CENTRAL PARK)
+- 账号名称：PT. SHAN HAI MAP
+- 银行账号：0120020400000811366
+- 国际银行代码 Swift Code：ICBKIDJAXXX
+- 分行名称：ICBC (CENTRAL PARK BRANCH)
+
+## sci
+
+- 签约主体：PT SHM CONSULTING INDONESIA
+- 默认币种：IDR
+- 允许币种：IDR / RMB / USD
+- SWIFT 政策：required
+
+### 银行说明
+
+- IDR、USD、RMB 共用同一个多币种账户。
+
+### 通用账户
+
+- 银行名称：Bank OCBC Indonesia (PT Bank OCBC NISP Tbk)
+- 账号名称：PT SHM CONSULTING INDONESIA
+- 银行账号：545800133641
+- 国际银行代码 Swift Code：NISPIDJA
+- 分行地址：Jl. Prof.Dr.Satrio No 25, Jakarta Selatan 12940, Indonesia
+
+## beijing
+
+- 签约主体：北京山海图科技有限公司
+- 默认币种：RMB
+- 允许币种：RMB / USD
+- SWIFT 政策：not_required
+
+### 银行说明
+
+- 北京主体不使用 SWIFT CODE。
+
+### 通用账户
+
 - 账户名称：北京山海图科技有限公司
 - 税号：91110108080546395Q
 - 开户银行：华夏银行(北京学院路华夏银行支行)
 - 银行账号：10242000000049937
 - 地址：北京市海淀区西四环北路158号1幢一层3-65
-- ⚠️ 无 SWIFT CODE
 
-### xian
+## xian
+
+- 签约主体：北京山海图科技有限公司西安分公司
+- 默认币种：RMB
+- 允许币种：RMB / USD
+- SWIFT 政策：required
+
+### 通用账户
+
 - 账户名称：北京山海图科技有限公司西安分公司
 - 税号：91610131MAB11JW331
 - 开户行：中国银行西安高新技术开发区支行
@@ -73,7 +92,15 @@
 - 国际银行代码 SWIFT CODE：BKCHCNBJ620
 - 地址：西安市高新区科技路林凯国际大厦15层1501-01-03室
 
-### shenzhen
+## shenzhen
+
+- 签约主体：北京山海图科技有限公司深圳分公司
+- 默认币种：RMB
+- 允许币种：RMB / USD
+- SWIFT 政策：required
+
+### 通用账户
+
 - 账户名称：北京山海图科技有限公司深圳分公司
 - 税号：91440300MA5HXMAEXM
 - 开户行：中国银行股份有限公司深圳高新区支行
@@ -82,96 +109,191 @@
 - 国际银行代码 SWIFT CODE：BKCHCNBJ45A
 - 地址：深圳市南山区招商街道花果山社区南海大道1052号至卓飞高大厦(海翔广场)717
 
-### shanghai
+## shanghai
+
+- 签约主体：北京山海图科技有限公司上海分公司
+- 默认币种：RMB
+- 允许币种：RMB / USD
+- SWIFT 政策：required
+
+### 通用账户
+
 - 账户名称：北京山海图科技有限公司上海分公司
+- Account Name: Beijing Shanhaitu Technology Co., Ltd. Shanghai Branch
 - 税号：91310118MAEGFAM57M
-- 账号：4351 8873 3108
-- 开户银行：中国银行上海市虹桥会展中心支行
+- 账户号码：4351 8873 3108
+- 开户银行：中国银行上海市虹桥会展中心支行（Bank of China Shanghai Branch Hongqiao Exhibition And Convention Center Sub-Branch）
 - 行号：104290020130
 - SWIFT CODE：BKCHCNBJ300
 - 地址：上海市青浦区虹桥LM世界中心L3-B栋 305A
 
-### shanghai_new
+## shanghai_new
+
+- 签约主体：上海山海图新企业咨询有限公司
+- 默认币种：RMB
+- 允许币种：RMB / USD
+- SWIFT 政策：required
+
+### 通用账户
+
 - 账户名称：上海山海图新企业咨询有限公司
+- Account Name: Shanghai Shanhaimap New Enterprise Consulting Co., Ltd.
 - 税号：91310113MAEW51431Q
 - 账号：4520 8977 3373
-- 开户行：中国银行股份有限公司上海市虹桥会展中心支行
+- 开户行：中国银行股份有限公司上海市虹桥会展中心支行（Bank of China Shanghai Branch Hongqiao Exhibition And Convention Center Sub-Branch）
 - 行号：104290020130
 - SWIFT CODE：BKCHCNBJ300
 - 地址：上海市青浦区虹桥LM世界中心L3-B栋 305A
 
-### singapore
+## singapore
+
+- 签约主体：SHAN HAI MAP CONSULTANCY PTE.LTD
+- 默认币种：SGD
+- 允许币种：SGD / RMB / USD
+- SWIFT 政策：required
+
+### 银行说明
+
+- SGD 使用 SGD Current Account；RMB、USD 使用 Multi-currency Account。
+
+### 通用账户
+
 - Beneficiary Name: SHAN HAI MAP CONSULTANCY PTE.LTD
-- Beneficiary Bank: Oversea-Chinese Banking Corporation Limited (OCBC)
-- Bank Address: 63 Chulia Street, #10-00, OCBC Centre, Singapore 049514
-- SWIFT Code: OCBCSGSG
-- Bank Code: 7339
-- SGD Account No: 701714438001
-- Multi-Currency Account No (RMB/USD): 687482901201
-- 公司地址: 1 North Bridge Road, #06-14 High Street Centre, SINGAPORE 179094
+- Beneficiary Bank: Oversea-Chinese Banking Corporation Limited
+- Beneficiary Bank Address: 63 Chulia Street, #10-00, OCBC Centre Singapore 049514
+- Beneficiary Bank Swift Code: OCBCSGSG
+- OCBC Bank Code: 7339
+- OCBC Branch Code: First 3 digits of your account number
+- Multi-currency Account: 687482901201
+- SGD Current Account: 701714438001
 
-### deyin
-- 公司地址: OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5, JL. LINGKAR LUAR BARAT BLOK A NO.1, JAKARTA BARAT 11740
-- **IDR 账户**：
-  - 银行名称 Nama Bank：BCA (BANK CENTRAL ASIA)
-  - 银行账号 No. Rek：6802 044 409
-  - 国际银行代码 Swift Code：CENAIDJAXXX
-  - 账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS
-  - 分行名称 Nama Cabang：BCA KCU BINTARO
-- **USD 账户**：
-  - 银行名称 Nama Bank：BNI (BANK NEGARA INDONESIA)
-  - 银行账号 No. Rek：2051075234
-  - 国际银行代码 Swift Code：BNINIDJAXXX
-  - 账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS
-  - 分行名称 Nama Cabang：BNI APL TOWER Grogol petamburan Jakarta Barat
+## deyin
 
-### thailand
+- 签约主体：PT DEIN TALENT SOLUTIONS
+- 默认币种：IDR
+- 允许币种：IDR / USD
+- SWIFT 政策：required
+
+### 银行说明
+
+- IDR 与 USD 使用不同银行账户。
+
+### IDR 账户
+
+- 银行名称 Nama Bank：BCA (BANK CENTRAL ASIA)
+- 银行账号 No. Rek：6802 044 409
+- 国际银行代码 Swift Code：CENAIDJAXXX
+- 账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS
+- 分行名称 Nama Cabang：BCA KCU BINTARO
+
+### USD 账户
+
+- 银行名称 Nama Bank：BNI (BANK NEGARA INDONESIA)
+- 银行账号 No. Rek：2051075234
+- 国际银行代码 Swift Code：BNINIDJAXXX
+- 账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS
+- 分行名称 Nama Cabang：BNI APL TOWER Grogol petamburan Jakarta Barat
+
+## thailand
+
+- 签约主体：SHAN HAI MAP (THAILAND) CO., LTD.
+- 默认币种：THB
+- 允许币种：THB / RMB / USD
+- SWIFT 政策：required
+
+### 通用账户
+
 - Beneficiary Name: SHAN HAI MAP (THAILAND) CO., LTD.
 - Beneficiary Bank: Kasikorn PCL. Thailand, Central Rama 9 Branch (847)
 - Beneficiary Bank Address: 9/9 Central Plaza Tower, 5 Floor, Room 512-513, Rama9 rd Huaykhwang, HuayKwang BKK 10310
 - Beneficiary Bank Swift Code: KASITHBK
 - Account Number: 1931179981
-- 公司地址: Thanapoom Tower, 25th floor Unit A2, 1550 New Petchaburi Rd, Khwaeng Makkasan, Khet Ratchathewi, Bangkok 10400
 
-### vietnam
-- 公司名称: CÔNG TY TNHH SHANHAIMAP VIỆT NAM
-- 中文名: 山海图越南有限公司
-- **VND 账户**：
-  - 银行名称 Tên Ngân hàng：Ngân hàng TMCP Ngoại thương Việt Nam - Chi nhánh Thăng Long
-  - 账号名称 Chủ tài khoản：Cong ty TNHH Shanhaimap Viet Nam
-  - 银行账号 Tài khoản：104 799 1200 (VND)
-  - 国际银行代码 Mã ngân hàng quốc tế (SWIFT)：BFTVVNVX
-  - 分行地址 Địa chỉ：Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội
-- **USD / RMB 账户**（共用同一账号）：
-  - 银行名称 Tên Ngân hàng：Ngân hàng TMCP Ngoại thương Việt Nam - Chi nhánh Thăng Long
-  - 账号名称 Chủ tài khoản：Cong ty TNHH Shanhaimap Viet Nam
-  - 银行账号 Tài khoản：104 799 1540 (USD)
-  - 国际银行代码 Mã ngân hàng quốc tế (SWIFT)：BFTVVNVX
-  - 分行地址 Địa chỉ：Tòa Nhà Pvoil Phú Thọ, Số 148 Hoàng Quốc Việt, Phường Nghĩa Tân, Quận Cầu Giấy, Thành Phố Hà Nội
+## vietnam
 
-### egypt
-- 公司名称: SHAN HAI MAP FOR CONSULTING CO
-- 公司地址: 埃及新开罗90号大街TOP90 1层134室
-- **EGP 账户**：
-  - Bank Name: Qatar National Bank (QNB) - 00037
-  - Bank Branch: 00177
-  - SWIFT CODE: QNBAEGCXXXX
-  - Beneficiary Name: SHAN HAI MAP FOR CONSULTING CO
-  - Account Number: 20317533309
-  - IBAN: EG470037017708182031753330905
-  - Bank Address: Top 90 Mall, unit 133&134, S Teseen, New Cairo 1, Cairo Governorate, EGYPT
-- **USD / RMB 账户**（共用同一账号）：
-  - Bank Name: Qatar National Bank (QNB) - 00037
-  - Bank Branch: 00177
-  - SWIFT CODE: QNBAEGCXXXX
-  - Beneficiary Name: SHAN HAI MAP FOR CONSULTING CO
-  - Account Number: 20317533321
-  - IBAN: EG690037017708402031753332119
-  - Bank Address: Top 90 Mall, unit 133&134, S Teseen, New Cairo 1, Cairo Governorate, EGYPT
+- 签约主体：CÔNG TY TNHH SHANHAIMAP VIỆT NAM
+- 默认币种：VND
+- 允许币种：VND / RMB / USD
+- SWIFT 政策：required
 
-### malaysia
-- 公司名称: SHANHAIMAP SDN. BHD.
-- 公司地址: Suite 16-03A & 05, Level 16, Wisma UOA II No. 21, Jalan Pinang, 50450 Kuala Lumpur, Malaysia
+### 银行说明
+
+- VND 使用本币账户；USD、RMB 共用外币账户。
+
+### VND 账户
+
+- 银行名称：Joint Stock Commercial Bank for Foreign Trade of Vietnam - Thang Long Branch
+- 账号名称：Cong ty TNHH Shanhaimap Viet Nam
+- 银行账号：104 799 1200 (VND)
+- 国际银行代码 Swift Code：BFTVVNVX
+- 分行地址：Pvoil Phu Tho Building, No. 148 Hoang Quoc Viet, Nghia Tan Ward, Cau Giay District, Hanoi City
+
+### USD 账户
+
+- 银行名称：Joint Stock Commercial Bank for Foreign Trade of Vietnam - Thang Long Branch
+- 账号名称：Cong ty TNHH Shanhaimap Viet Nam
+- 银行账号：104 799 1540 (USD)
+- 国际银行代码 Swift Code：BFTVVNVX
+- 分行地址：Pvoil Phu Tho Building, No. 148 Hoang Quoc Viet, Nghia Tan Ward, Cau Giay District, Hanoi City
+
+### RMB 账户
+
+- 银行名称：Joint Stock Commercial Bank for Foreign Trade of Vietnam - Thang Long Branch
+- 账号名称：Cong ty TNHH Shanhaimap Viet Nam
+- 银行账号：104 799 1540
+- 国际银行代码 Swift Code：BFTVVNVX
+- 分行地址：Pvoil Phu Tho Building, No. 148 Hoang Quoc Viet, Nghia Tan Ward, Cau Giay District, Hanoi City
+
+## egypt
+
+- 签约主体：SHAN HAI MAP FOR CONSULTING CO
+- 默认币种：EGP
+- 允许币种：EGP / RMB / USD
+- SWIFT 政策：required
+
+### 银行说明
+
+- EGP 使用本币账户；USD、RMB 共用外币账户。
+
+### EGP 账户
+
+- Bank Name: Qatar National Bank (QNB) - 00037
+- Bank Branch: 00177
+- SWIFT CODE: QNBAEGCXXXX
+- Beneficiary Name: SHAN HAI MAP FOR CONSULTING CO
+- Account Number: 20317533309
+- IBAN: EG470037017708182031753330905
+- Bank Address: Top 90 Mall, unit 133&134, S Teseen, New Cairo 1, Cairo Governorate, EGYPT
+
+### USD 账户
+
+- Bank Name: Qatar National Bank (QNB) - 00037
+- Bank Branch: 00177
+- SWIFT CODE: QNBAEGCXXXX
+- Beneficiary Name: SHAN HAI MAP FOR CONSULTING CO
+- Account Number: 20317533321
+- IBAN: EG690037017708402031753332119
+- Bank Address: Top 90 Mall, unit 133&134, S Teseen, New Cairo 1, Cairo Governorate, EGYPT
+
+### RMB 账户
+
+- Bank Name: Qatar National Bank (QNB) - 00037
+- Bank Branch: 00177
+- SWIFT CODE: QNBAEGCXXXX
+- Beneficiary Name: SHAN HAI MAP FOR CONSULTING CO
+- Account Number: 20317533321
+- IBAN: EG690037017708402031753332119
+- Bank Address: Top 90 Mall, unit 133&134, S Teseen, New Cairo 1, Cairo Governorate, EGYPT
+
+## malaysia
+
+- 签约主体：SHANHAIMAP SDN. BHD.
+- 默认币种：MYR
+- 允许币种：MYR / RMB / USD
+- SWIFT 政策：required
+
+### 通用账户
+
 - Account Name: SHANHAIMAP SDN. BHD.
 - Account Number: 7011647369
 - Beneficiary Bank: OCBC Bank (Malaysia) Bhd

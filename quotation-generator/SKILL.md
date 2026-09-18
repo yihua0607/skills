@@ -1,6 +1,6 @@
 ---
 name: quotation-generator
-version: 1.17.1
+version: 2.2.1
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
@@ -21,7 +21,7 @@ last_updated: "2026-09-18"
 | 1 | 失败即中断 | 查询失败（API 层/服务层/空结果）→ 展示 API message 原文，不继续生成 |
 | 2 | 价格为整数总价 | 不接受单价；为空/面议时要求用户补充总价；API 返回"价格面议"需询问用户后填入；BPO/百分比定价服务例外（`price` 填 0，详见『修复与异常边界』） |
 | 3 | 优惠只扣税前小计 | 增值税 = (小计 − 优惠金额) × 税率；优惠 ≤ 小计 |
-| 4 | 服务名不带数量 | `services[].items[].name` 写基础服务名；数量写 `quantity` |
+| 4 | 服务名不带数量 | `services[].name` 写基础服务名；数量和单位分别写 `quantity`/`unit`，成稿合并显示（如 `3 家公司`） |
 | 5 | 汇率留档但不入报价单 | API 返回的 `rateToCny/rateToUsd` 随 `queried_services.json` 和 `_meta` 留档；客户可见报价单不写汇率说明 |
 | 6 | 公共不含项去重 | 多个/全部服务共同适用的费用不含项抽取到 `notes`；各服务 `exclude` 只留服务特有项 |
 | 7 | 价格不带货币符号 | 所有价格单元格（服务价格、小计、增值税、预扣税、含税总计）一律不加货币符号；币种由价格列头「价格 (币种名)」标注 |
@@ -55,34 +55,26 @@ last_updated: "2026-09-18"
 | SHAN HAI MAP FOR CONSULTING CO (埃及) | `egypt` | 10% | EGP | RMB, USD |
 | SHANHAIMAP SDN. BHD. (马来西亚) | `malaysia` | 8%（SST） | MYR | RMB, USD |
 
-完整银行账户、地址、税号等详见 `config/entities.json` 和 `references/entity-bank-info.md`。
+完整银行账户、地址、税号、SWIFT 政策与银行说明以 `config/entities.json` 为唯一数据源；`references/entity-bank-info.md` 由 `scripts/generate_bank_reference.py` 自动生成，仅供阅读。修改银行信息后必须重新生成，并运行 `python3 scripts/generate_bank_reference.py --check`。
 
-**主体别名识别**（用户说法 → `--entity`）。别名同时登记在 `config/entities.json` 各实体的 `aliases` 字段（脚本不读该字段，`--entity` 仍只接受实体 key；新增主体时记得一起补 `aliases`）：
+**主体别名识别**：用户说法 → `--entity` 一律跑解析器，**不要凭记忆映射**。
 
-| 用户可能说法 | `--entity` |
-|--------------|------------|
-| 雅加达 / 雅加达山海图 / PT. SHAN HAI MAP / SHM信头 / 印尼shanhaimap | `jakarta` |
-| **SCI / 山海图咨询印尼 / 山海图咨询 / 印尼咨询 / PT SHM CONSULTING INDONESIA** | `sci` |
-| **德音人力 / 德音 / 德音人力资源 / deyin / dein / DEIN / dein信头 / DEIN信头 / PT DEIN TALENT SOLUTIONS** | `deyin` |
-| 北京 / 北京山海图 | `beijing` |
-| 西安 / 西安分公司 | `xian` |
-| 深圳 / 深圳分公司 | `shenzhen` |
-| 上海 / 上海分公司 | `shanghai` |
-| 上海新企业 / 上海山海图新企业 | `shanghai_new` |
-| 新加坡 / SHAN HAI MAP CONSULTANCY | `singapore` |
-| 泰国 / 曼谷 | `thailand` |
-| 越南 / SHANHAIMAP VIỆT NAM | `vietnam` |
-| 埃及 / SHAN HAI MAP FOR CONSULTING | `egypt` |
-| 马来西亚 / 大马 / SHANHAIMAP SDN. BHD. | `malaysia` |
+```bash
+python3 scripts/resolve_entity.py '请用德音人力报价'
+```
 
-- 别名匹配**大小写不敏感**（`DEIN` = `dein` = `deyin`），中英文混写同样按上表识别。
+别名的唯一来源是 `config/entities.json` 各实体的 `aliases` 字段（现共 74 个，含中英文、信头写法、城市名）；SKILL.md 不再复制这份清单——复制过一次就漏抄了近一半。
+
+输出 `matched` 时用其中的 `entity`；`ambiguous` / `no_match` 必须向用户确认。解析顺序「整句精确匹配 → 排除被更具体别名包含的短匹配 → 剩余多主体判歧义」。`SCI` 是 `SHM CONSULTING INDONESIA` 的合法缩写，但只按独立英文词匹配，不会命中 `science`。`--entity` 只接受实体 key；新增主体时同步补 `aliases`。
+
+- 别名匹配**大小写不敏感**（`DEIN` = `dein` = `deyin`），中英文混写同样识别。
 - ⚠️ **出现「德音」二字或 `dein`/`deyin` 一律走 `deyin`**，不要误判成 `jakarta`：两者都是印尼主体、都能用 IDR，但公司名、页眉地址、银行账户完全不同（`deyin` = PT DEIN TALENT SOLUTIONS，BCA 6802 044 409）。
 - ⚠️ **印尼有三个主体，别混**：`jakarta`（PT. SHAN HAI MAP）、`sci`（PT SHM CONSULTING INDONESIA，山海图咨询印尼）、`deyin`（PT DEIN TALENT SOLUTIONS，德音人力）。三家都能用 IDR，但公司名、银行账户各不相同；`sci` 与 `jakarta` 甚至连注册地址都一样，只能靠公司名区分。用户只说「山海图印尼」时按 `jakarta`，说「SCI」「咨询印尼」时才走 `sci`。
 - 别名不覆盖「多主体/意图不明」的情形：同时提到两个主体、或只说「印尼」而未指明公司名时，仍须向用户确认。
 
 ⚠️ **马来西亚税金**：马来西亚主体没有增值税（VAT），而是**销售与服务税（SST，Sales & Service Tax）**。报价单汇总表税金行标签用「销售与服务税 8%」替代「增值税 8%」，税率仍走 `config/entities.json` 的 `vat_rate`（字段不变，仅标签不同，由 `tax_label` 控制）。
 
-新增签约主体只需在 `config/entities.json` 添加新 key 并包含 `_meta.required_entity_fields` 所列字段（`payment_terms` 可选，缺省回退 `_meta.payment_terms_default`）；`--entity` 的 choices 由脚本从 `entities.json` 自动加载，无需改任何脚本。
+新增签约主体只需在 `config/entities.json` 添加新 key 并满足 `scripts/quotation_common.py` 的 `REQUIRED_ENTITY_FIELDS`（`payment_terms` 可选，缺省回退 `_meta.payment_terms_default`）。`template_file` 直接填写 skill 内模板的相对路径；`--entity` 的 choices 与模板路径均从配置加载，无需修改脚本。
 
 **A4 打印**：build 会把模板的 `sectPr` 归一为 A4 纵向（11906×16838 DXA）+ 标准页边距（上下 679/1155、左右 1440/1133 DXA，页眉 227、页脚 227，即距纸张边缘 0.4cm），模板页面尺寸不合规时会强制纠正并在日志说明；verify 独立复核尺寸、方向与页边距。正文表格与页眉蓝线按设计略宽于文本栏（左右各溢出约 20pt），实测距纸张边缘仍 ≥6.8mm，在打印机可达范围内（一般 ≥5mm），属正常版式，不要为了"贴边"去改表格宽度。
 
@@ -102,7 +94,9 @@ last_updated: "2026-09-18"
 
 文字页眉的公司名称对齐方式：由可选字段 `header_company_align`（`right`/`center`，缺省 `center`）控制。公司名过长时居中会把左端推进左侧 logo（logo 浮动锚定在同一段落带内），这些主体一律右对齐——右对齐把公司名右端钉在右页边距上，从而让出 logo 的空间：`thailand`、`vietnam`、`egypt`、`singapore` 已设 `right`，其余主体居中。新增主体若公司名超过约 25 字符，先渲染确认不压 logo 再决定——实测 26 字符居中时距 logo 仅 0.2mm，已在碰撞边缘。页眉 Web 行下方不留空行、蓝线分隔线位置不变，均由 build 脚本自动处理，无需配置。
 
-⚠️ **SWIFT CODE 注意**：生成美元（USD）报价前，检查 `config/entities.json` 中该实体**所选币种对应**的银行信息（有 `bank_lines_by_currency` 时取对应币种，否则取 `bank_lines`）是否含 SWIFT CODE（现状：仅 beijing 没有，按刘旭 2026-09-13 确认北京不需要 SWIFT CODE，别再提示用户补全；xian/shenzhen/shanghai/shanghai_new 等均已配置，见 `references/entity-bank-info.md`）。若用户要求补全，向用户确认具体 SWIFT CODE 后更新 `config/entities.json`，不要凭记忆假设。
+文字页眉 logo 的垂直位置：由 `_meta.header_logo_defaults.shift_mm`（缺省 `1.0`，单位 mm）统一控制，实体可用可选字段 `header_logo_shift_mm` 覆盖，`0` = 保持模板原位。build 只把 logo 锚点的 `wp:positionV` 加上这个量，**蓝线一个 EMU 都不动**——蓝线落点决定正文首行能避开多少（页眉末段的高度就是这份余量），挪它会压住正文「公司名称：」。五套文字页眉模板的 logo 底边与蓝线之间原本留 3.52~3.53mm，下移后受 `MIN_LOGO_LINE_GAP_MM`（1.0mm）兜底，低于此值 build 会 warning、verify 会报错。净空按 PNG 的 alpha 边界算（`png_alpha_bottom_padding()`），不按 `wp:extent`——位图自带的透明留白不参与视觉。**图片页眉主体（`beijing`/`xian`/`shenzhen`/`shanghai`/`shanghai_new`/`jakarta`/`sci`/`deyin`）不读这两个字段**：它们的 logo 印在横幅图里，`header1.xml` 中没有独立的 logo 锚点，`header_logo_spec()` 对它们返回 `None`。调整下移量后跑 `tests/test_smoke.py` 即可验证成稿（下移量、蓝线未动、净空达标三项）。
+
+⚠️ **SWIFT CODE 注意**：生成美元（USD）报价前，按该实体**所选币种对应**的银行信息（有 `bank_lines_by_currency` 时取对应币种，否则取 `bank_lines`）确认是否含 SWIFT CODE。缺 SWIFT 时**以 `config/entities.json` 的 `swift_policy` 为准**：`not_required` = 有意不配，不要再提示补全；`required` = 配置缺口，向用户确认后补入。**不要凭记忆判断哪个主体缺 SWIFT**（两者是否一致由 `quotation_common.py` 强制校验）。现状见 `references/entity-bank-info.md`。
 
 标题、日期、客户、合同号、付款条件写入 `quote_meta`。
 
@@ -171,11 +165,13 @@ Checklist：
 python3 scripts/fetch_services.py '一般纳税人资格办理-2072286656513949697' '企业年度税务申报-2072286952426291202' '税务电子证书-2072287051462197250' > "$WORKDIR/queried_services.json"
 ```
 
+也可在一个参数中使用英文逗号分隔多个 aiCode。脚本会先拆分、去除首尾空白、逐项校验并按首次出现顺序去重；接口每次最多查询 20 个，超过 20 个时自动按 20 个一批分次请求，最后合并为一份 `queried_services.json`。输出中的 `batch_results` 留存每批请求范围、返回编码及错误信息；合并后会逐一核对请求与返回 aiCode，任何缺失、额外或重复结果都会中断生成。
+
 脚本输出服务名称、价格、币种、数量、汇率、Markdown 服务内容。完整结果必须保存为 `queried_services.json`；`人民币兑换服务币种汇率`/`美元兑换服务币种汇率` 是后续换币种/换主体/追加服务的权威汇率来源。生成 `quotation.json` 时，在 `_meta` 或等价字段记录查询文件、源币种、目标币种和使用汇率。
 
 `markdownify` 是可选的：装了服务内容 Markdown 更干净，没装脚本用内置兜底转换器，并在 **stderr** 打一行 `⚠️ markdownify not available, using fallback HTML cleaner`。因为走的是 stderr，`> "$WORKDIR/queried_services.json"` 拿到的 JSON 依然完整，**不需要任何额外处理**。想装就装（`pip install markdownify`，pip 不可用则 `uv pip install markdownify --system`）。
 
-⚠️ 只有自己把 stderr 也并进文件时才会污染 JSON（例如 `... > x.json 2>&1`）。这时按内容过滤警告行，**不要 `tail -n +2` 盲删首行**——正常 JSON 的第一行是 `{`，删掉它反而会把好文件弄坏，症状正好就是下面那条报错：
+⚠️ 只有自己把 stderr 也并进文件时才会污染 JSON（例如 `... > x.json 2>&1`）。这时按内容过滤警告行，**不要 `tail -n +2` 盲删首行**：
 
 ```bash
 python3 scripts/fetch_services.py '...' 2>&1 | grep -v '^⚠️' > "$WORKDIR/queried_services.json"
@@ -196,14 +192,7 @@ python3 scripts/fetch_services.py '...' 2>&1 | grep -v '^⚠️' > "$WORKDIR/que
 
 ### 实体默认
 
-用户明确提到北京/西安/深圳/上海/上海新企业/雅加达/新加坡/德音人力（德音、deyin、dein、DEIN）/泰国/越南/埃及/马来西亚时使用对应实体（完整别名见上方「主体别名识别」表）。用户未指定时：
-- 服务原币种为 IDR 且用户未要求人民币/美元报价，默认倾向 `jakarta`。
-- 服务原币种为 THB 且用户未要求人民币/美元报价，默认倾向 `thailand`。
-- 服务原币种为 SGD 且用户未指定主体，默认倾向 `singapore`。
-- 服务原币种为 VND 且用户未要求人民币/美元报价，默认倾向 `vietnam`。
-- 服务原币种为 EGP 且用户未要求人民币/美元报价，默认倾向 `egypt`。
-- 服务原币种为 MYR 且用户未要求人民币/美元报价，默认倾向 `malaysia`。
-- 服务原币种为 RMB/CNY 且未指定主体，默认倾向中国主体（按用户提到的城市选 beijing/xian/shenzhen/shanghai/shanghai_new）。
+用户提到主体名、城市或信头写法时，用 `resolve_entity.py` 解析出实体（别名唯一来源是 config 的 `aliases`，不要凭记忆映射）。用户未指定主体、也未要求人民币/美元报价时，按**服务原币种**选默认主体：IDR→`jakarta`、THB→`thailand`、SGD→`singapore`、VND→`vietnam`、EGP→`egypt`、MYR→`malaysia`；RMB/CNY→按用户提到的城市选 `beijing`/`xian`/`shenzhen`/`shanghai`/`shanghai_new`。
 - 客户要求人民币/美元付款时，不代表必须选择中国主体；`jakarta` 主体也可使用 RMB/USD 报价和收款。
 - 需要特定币种报价但未说明签约主体时，优先沿用当前/已选主体；没有当前主体时再向用户确认主体。
 - 多币种服务、追加到既有报价单、或主体/币种意图不明确时，必须确认。
@@ -229,14 +218,13 @@ python3 scripts/fetch_services.py '...' 2>&1 | grep -v '^⚠️' > "$WORKDIR/que
 换币种必须用脚本，不心算：
 
 ```bash
+# 批量：整批服务一起换算，源币种自动识别（首选）
 python3 scripts/convert_currency.py --query-result "$WORKDIR/queried_services.json" --to RMB --json-only
-python3 scripts/convert_currency.py --query-result "$WORKDIR/queried_services.json" --to USD --json-only
+# 单笔：按场景传对应汇率，取值规则见下方表格
 python3 scripts/convert_currency.py --amount 250000000 --from IDR --to RMB --rateToCny 2173.91 --json-only
-python3 scripts/convert_currency.py --amount 115000 --from RMB --to IDR --rateToCny 2173.91 --json-only
-python3 scripts/convert_currency.py --amount 30000000 --from IDR --to USD --rateToUsd 17875 --json-only
 ```
 
-⚠️ **本文所有示例里的汇率数字（`2173.91`、`17875`、`5.45`、`1.05`、`2250`、`4.85`、`4.75` 等）只是格式演示，不是可用汇率。**实际汇率一律取自 `queried_services.json` 的 `人民币兑换服务币种汇率`/`美元兑换服务币种汇率`；照抄示例数字会直接算错价格。
+⚠️ **本文示例里的汇率数字只是格式演示，不是可用汇率。**实际汇率一律取自 `queried_services.json` 的 `人民币兑换服务币种汇率`/`美元兑换服务币种汇率`；照抄示例数字会直接算错价格。
 
 `rateToCny` 表示 `1 CNY = N 服务币种`，`rateToUsd` 表示 `1 USD = N 服务币种`。修改已有报价单时优先使用原始 `queried_services.json` 或 `quotation.json` 留档汇率；没有留档汇率，必须让用户提供或确认汇率。
 
@@ -280,14 +268,14 @@ price:   13,333                            （直接写入 quotation.json）
 
 | API 内容 | 目标字段 | 规则 |
 |---------|----------|------|
-| 服务编码（API `服务编码`） | `services[].items[].code` | **必填，每一列服务都要有**。从 `queried_services.json` 的 `服务编码` 逐条抄入（如 `ID0117`），build 时服务名自动渲染为 `编码-服务名`（如 `ID0117-公司注册`），报价单所有表格的服务名都带这个编码。**禁止自行编造编码**；API 对每个查到的服务都返回 `服务编码`，取不到就重查，不要留空 |
-| 办理时间 | `services[].items[].days` | 提取数字 + 单位（**工作日**或**月**）；多个时间取最长；**填单次/每件办理时间，不乘数量**（如 3 个服务各 15 个工作日 → 填 `15个工作日`，不写 `15个工作日x3`） |
-| 基本信息/服务说明/服务概述 | `services[].items[].note` | 摘要 100-250 字；不足 100 字完整呈现（脚本仅在 <40 字时提示确认信息是否不足）；**若基本信息中包含金额相关描述（如罚款金额、收费标准、官方费用等），必须将金额信息总结写入备注，且其中的金额一律照抄 API 原文的数字与单位，不得换算、汇总或改写**；**若基本信息中包含带 `*` 的说明项（如 `*备注：`、`*注：`、`*注意：` 等），要将 `*` 标记的内容尽可能完整总结到备注中** |
-| 费用包含/服务包含 | `fee_details[].include` | 每条一项，保留原文 |
-| 费用不含/不包含 | `fee_details[].exclude` + `notes` | 公共不含项进 `notes`；服务特有项留 `exclude`。`notes` 只放不含项与通用说明，**不放办理时间免责声明**——该表没有办理时间列 |
-| 办理流程/服务流程 | `process_data[].process` | 每步一条，保留序号 |
-| 交付文件/交付材料 | `process_data[].deliverables` | 每项一条；数量 >1 时**编号写进 JSON**（`1. 2. 3.`，示例均为手工编号），build 只在检测到未编号时才兜底补号，别指望它替你编号 |
-| 所需资料/所需材料 | `doc_data[].docs` | 每项一条（**一个元素＝一个段落**，不要把多行内容塞进一条，否则渲染时换行会被压成空格、子项挤在一行里），保留子层级编号；**要用层级缩进就在行首写全角空格**（1 个＝1 级、最多 6 级），build 会把它转成段落左缩进 `w:ind`（每级 360 twips）并在末尾打印「所需资料及信息行缩进：N 行」。行首写半角空格或 NBSP 无效——`quotation_schema` 的 `item.strip()` 会把它们剥掉 |
+| 服务编码（API `服务编码`） | `services[].code` | **必填**，从 API 原样抄入，禁止编造；所有表格统一渲染为 `编码-服务名` |
+| 办理时间 | `services[].days` | 提取数字 + 单位；填单次/每件办理时间，不乘数量 |
+| 基本信息/服务说明/服务概述 | `services[].note` | 摘要 100-250 字；API 金额和 `*` 说明按原意保留 |
+| 费用包含/服务包含 | `services[].fees.include` | 每条一项，不能为空 |
+| 费用不含/不包含 | `services[].fees.exclude` + `notes` | 服务特有项留在服务内；公共项移到顶层 `notes` |
+| 办理流程/服务流程 | `services[].process` | 每步一条，保留序号 |
+| 交付文件/交付材料 | `services[].deliverables` | 每项一条，多项时在 JSON 中编号 |
+| 所需资料/所需材料 | `services[].documents` | 一个元素一个段落；行首全角空格表示层级，每级 360 twips，最多 6 级 |
 
 忽略 API 内容里的付款方式、退款/售后、发票相关。用户明确指定报价单付款条件时写入 `quote_meta.payment_terms`。
 
@@ -298,9 +286,9 @@ price:   13,333                            （直接写入 quotation.json）
 - `B.exclude = ["政府规费"]`
 - `notes` 统一写“以上服务报价不包括：文件翻译费用（如需）、资料快递费用（国际）。”
 
-**`notes` 里不写办理时间免责声明**：`notes` 渲染在「服务内容」表正下方，而该表只有 序号/服务内容/数量/价格/备注 五列，没有办理时间列——「上述办理时间不包括收集材料时间、检查资料时间、客户签字盖章反馈时间、客户修改或补充资料的时间和文件邮寄时间。」在这里指不到任何上文（办理时间在更靠后的流程表里）。**报错只说明位置不对，不代表这条要求被废弃**：这句话要表达的信息已由文末标准备注第 1 条完整覆盖——「以上办理时间为收集齐所需资料及信息开始的官方办理时间，法定节假日及办证政府机构休息日不算入办理时间」；客户准备材料、签字盖章反馈、文件邮寄都发生在「收集齐资料」之前，本就不计入办理时间。所以处理方式就是从 `notes` 删除：不要改写成别的措辞，也不必另找位置补写一遍。API 的每个服务「备注」段都带这句样板文，汇总基本信息时极易顺手带进 `notes`；`validate_data.py` 会直接报错拦下。
+**`notes` 里不写办理时间免责声明**：API 每个服务的「备注」段都带这句样板文，汇总基本信息时极易顺手带进 `notes`。**处理方式就是从 `notes` 删除**——不要改写成别的措辞，也不必另找位置补写一遍；这句话要表达的信息已由文末标准备注第 1 条完整覆盖，`validate_data.py` 会直接报错拦下。
 
-判定用的是「办理时间 + 近邻的不包括 + 样板文列举的时间项」三者同时命中，所以「办理时间不包括节假日」这类**正常业务说明不会被误判**（build 也不会剔除）。
+「办理时间不包括节假日」这类**正常业务说明不会被误判**（判定需「办理时间 + 近邻的不包括 + 样板文列举的时间项」三者同时命中，build 也不会剔除）。为什么 `notes` 放不下这条、为什么删掉不等于废弃，见 `references/edge-cases.md`「`notes` 里混进办理时间免责声明」。
 
 ## 数据文件
 
@@ -314,15 +302,12 @@ cp examples/sample_quotation.json "$WORKDIR/quotation.json"
 
 | 字段 | 说明 |
 |------|------|
-| `_meta` | 内部留档：实体、源币种、目标币种、查询文件、使用汇率等 |
+| `_meta` | 必含 `schema_version: 2`；另存实体、币种、查询文件、汇率等内部留档。只要任一服务填写了 `ai_code`，`query_result_file` 就必须提供；validate/build/verify 会相对 `quotation.json` 定位该文件并核对 aiCode、服务编码、名称、数量和单位 |
 | `quote_meta` | 标题、日期、客户、合同号、付款条件；**付款条件必须填非空数组**——留空 `[]` 会触发 validate error，不是静默回退实体默认值；不指定付款条件时从 `config/entities.json` 复制该实体 `payment_terms` 填入 |
-| `services` | 分组列表；每项含 `id/name/code/quantity/days/price/note`——**`code` 必填**（产品编码，展示时自动拼到服务名前，取自 `queried_services.json` 的 `服务编码`，不得编造）；`name` 和 `code` 分开放，`name` 不带数量、不带编码 |
+| `services` | 唯一服务数据源。每项含 `line_id/ai_code/code/name/category/quantity/unit/days/price/note/fees/process/deliverables/documents`；`line_id` 唯一，人工新增服务的 `ai_code` 可为 null，`quantity` 必须显式填写且不得由脚本默认，其他业务字段按 schema 必填 |
 | `discount_amount` | 整数；无优惠填 0；优惠 ≤ 小计 |
-| `withholding_tax` | 布尔（**顶层**字段，与 `discount_amount`/`notes` 同级，不要放进 `_meta`）；泰国主体扣预扣税时填 `true`，否则不填或填 `false`。缺失或误放 `_meta` 时 build 会静默按不扣税处理 |
-| `notes` | 通用备注；公共不含项在这里统一显示。**不得写办理时间免责声明**（「服务内容」表没有办理时间列，`validate_data.py` 报错拦下） |
-| `fee_details` | 每项含 `name/include/exclude/note`；`name` 必须匹配服务名 |
-| `process_data` | 每项含 `name/process/deliverables` |
-| `doc_data` | 每项含 `name/docs` |
+| `withholding_tax` | 布尔（**顶层**字段，与 `discount_amount`/`notes` 同级，不要放进 `_meta`）；泰国主体扣预扣税时填 `true`，否则不填或填 `false`。泰国主体缺失时 validate/build 会警告并按不扣税处理；误放 `_meta` 会因未知字段明确失败 |
+| `notes` | 通用备注；公共不含项在这里统一显示。**不得写办理时间免责声明**（见『整理服务内容』） |
 
 ## 预检 → 生成 → 验证
 
@@ -335,43 +320,46 @@ python3 scripts/verify_quotation.py --entity xian --input "$QUOTATION_DIR/报价
 
 validate error → 必须修复，warning → 判断后处理。`--entity` 必传。`--title-line1/2`、`--quote-date` 优先级：命令行 > quote_meta > 默认值。报价币种优先级：`_meta.target_currency` > entity 默认币种。verify 自动检查页眉/银行/签名、服务名覆盖、金额公式、字体、A4 打印安全（页面尺寸 + 方向 + 页边距），并在传入 `--data` 时对比 `_meta.applicable_entity` / `_meta.target_currency`。图片页眉的主体没有可核对的页眉文字，verify 会显式跳过「页眉公司名 vs 银行」与「页眉地址归属」，改核横幅是否在位、锚点与 `srcRect` 裁剪参数是否与配置一致、图片框有没有越过纸张上缘或正文栏左右界（日志里有说明，不是静默不检查）。目视补充：标题/客户/日期正确，表格无错位乱码。
 
+Schema v2 对顶层、`_meta`、`quote_meta`、服务和费用对象执行字段白名单校验；字段拼错会明确失败并尽可能提示正确字段名。相同非空 `category` 必须在 `services[]` 中连续出现，不能拆成多个区块。
+
 ## 修复与异常边界
 
 | 问题 | 处理 |
 |------|------|
-| verify 报页眉公司名与银行公司名不一致但只差一个 `.` | 正常现象（如 `Pte.Ltd` vs `Pte.Ltd.`、`PT. SHAN HAI MAP` vs `PT SHAN HAI MAP`）。verify 用 `normalize_company_name()`（去点号 + 归一化空白）比较，点号差异不再判为异常；真正不同的公司名仍报错 |
-| 服务内容表格「序号」列显示服务编码而非数字 | `build_quotation.py` 使用自增计数器（1, 2, 3...）生成序号，不依赖 `item['id']`；旧数据 `id` 填了服务编码也不影响显示 |
+| verify 报页眉公司名与银行公司名不一致但只差一个 `.` | 正常现象（`Pte.Ltd` vs `Pte.Ltd.`）。verify 用 `normalize_company_name()`（去点号 + 归一化空白）比较，点号差异不判异常；真正不同的公司名仍报错 |
+| 服务内容表格「序号」列显示异常 | `build_quotation.py` 使用 `services[]` 顺序生成 1、2、3……；`line_id` 只用于稳定标识服务，不作为客户可见序号 |
 | 页眉/银行/签名不一致 | 检查 `--entity` 和 `config/entities.json`；属于业务/数据问题，不提示联系 SKILL 开发者 |
-| 服务名覆盖缺失 | 补齐 `fee_details/process_data/doc_data` 中缺失的同名条目 |
-| validate 报 `services[i].items[j].code is required`，或成稿服务内容只有服务名没有编码 | 汇总时漏抄 `服务编码`。回到 `queried_services.json`，按 `服务名称` 找到对应 `服务编码` 填入 `services[].items[].code`（如 `ID0117`），**不要自己编号码**；填完重新预检。verify 会拿数据文件的原始服务名跟成稿逐字比对，成稿服务名 == 原始服务名即报「服务内容缺少服务编码」 |
+| validate 报 `services[i].code is required`，或成稿服务内容没有编码 | 回到 `queried_services.json` 抄入真实 `服务编码`，不要自行编造 |
 | 金额或币种异常 | 检查 `discount_amount`、服务整数总价、汇率和实体币种；重新运行预检 |
 | 公共不含项重复出现在 `exclude` | 从各服务 `exclude` 移除公共项，在 `notes` 中统一显示 |
-| validate 报 `notes[i] 是办理时间免责声明，必须删除` | API 服务「备注」段的样板文被带进了 `notes`。`notes` 渲染在「服务内容」表下，该表没有办理时间列，「上述办理时间」无所指；直接从 `notes` 删除该条（**不要改写成别的措辞，也不必另找位置补写**——文末标准备注第 1 条已覆盖该信息）。build 也会兜底剔除并告警 |
-| `convert_currency.py` 报 `Cannot read query result file` | 先看 `queried_services.json` 首行是不是 `{`。不是 → fetch 时把 stderr 并进了文件（`2>&1`），按『查询服务信息』章节重新 fetch 并过滤 `⚠️` 开头的行；`tail -n +2` 会连 JSON 首行一起删掉，别用。首行正常 → 文件没写成或 fetch 本身失败，重新 fetch |
+| validate 报 `notes[i] 是办理时间免责声明，必须删除` | `notes` 里混进了 API「备注」段的办理时间样板文。**从 `notes` 删除该条，不要改写成别的措辞**；见 `references/edge-cases.md`「`notes` 里混进办理时间免责声明」 |
+| `convert_currency.py` 报 `Cannot read query result file` | 先看 `queried_services.json` 首行是不是 `{`（多半是 stderr 混入）；**不要用 `tail -n +2` 盲删首行**。见 `references/edge-cases.md`「Cannot read query result file」 |
 | validate 报 `withholding_tax 仅支持…未配置` | 只有泰国主体支持预扣税，把 `withholding_tax` 改为 `false` 或删除该字段；见『泰国预扣税』 |
-| 服务名重复 `Duplicate service name` | 当多个 aiCode 返回相同 `服务名称` 时，用 aiCode 末三位区分（如 `公司注册-114`、`公司注册-818`）；同步更新 `fee_details/process_data/doc_data` 中所有 name 引用 |
+| 服务名重复 | 允许同名服务；用唯一 `line_id` 区分，每行独立保存完整业务数据 |
 | `build` 报 `Invalid quotation data` | 先跑 `validate_data.py` 定位字段并修正 |
 | `verify` 失败 | 除付款方式等客户最终处理内容外，优先修改 `quotation.json` 后重新 build；不要手改其他 `.docx` 内容 |
+| verify 报「word/document.xml 不是合法 XML」或「无法打开 .docx（不是有效的 zip 包）」 | **数据问题，不是脚本缺陷**：文本字段混进了 XML 非法字符（Word/PDF 粘贴带来的 NUL/ESC/BEL），或 .docx 没写完。build 写 `w:t` 前已统一过 `xml_safe_text()`，出现即说明文件被绕过 build 改过、或是旧版产物。剔除控制字符后重新 build；**不要按「联系 SKILL 开发者」处理** |
 | 用户质疑价格/计算公式 | 展示完整计算链路：API 总价 → 汇率 → 换算后总价 → 增值税 → 含税总计，每步附带来源值 |
-| 美元报价缺少 SWIFT CODE | 仅 beijing 无 SWIFT CODE，且系有意不配（2026-09-13 用户确认），客户问起就说明该主体不使用 SWIFT；其他主体若确有缺口 → 向用户确认具体 SWIFT 后补入 `config/entities.json`，参考 `references/entity-bank-info.md` |
-| 服务币种不在 8 币种内（如 HKD），或要把外币换成另一种外币 | 8 个币种（IDR/RMB/USD/SGD/THB/VND/EGP/MYR）脚本直接算；其他币种显式传汇率即可（`--rateToCny/--rateToUsd`）；**外币 → 外币（两侧都不是人民币/美元）API 没有汇率数据，必须先向用户索取**，再用 `--cross-rate N`（1 from = N to）；见 `references/edge-cases.md`「外币 → 外币」 |
-| 新加坡元（SGD）报价 | 服务币种即 SGD 时直接填价；RMB/USD → SGD 用 SGD 的汇率走脚本（`--from RMB --to SGD --rateToCny 5.45`）；IDR/THB 等 → SGD 属外币→外币，API 无汇率，须向用户索取后用 `--cross-rate N`；`_meta` 注明 |
-| `fee_details[].include` 不能为空 | validate 报 `include is required and must be a non-empty list` → API 未列费用包含项的服务，至少填 `"山海图服务费"` |
-| `quote_meta.payment_terms` 留空数组 | validate 报 `payment_terms must be a non-empty list when provided`（不会静默回退实体默认值）→ 从 `config/entities.json` 复制该实体 `payment_terms` 填入，或写用户明确指定的付款条件 |
+| 美元报价缺少 SWIFT CODE | 查该实体 `config/entities.json` 的 `swift_policy`：`not_required` = 有意不配，向客户说明该主体不使用 SWIFT 即可；`required` = 配置缺口，向用户确认具体 SWIFT 后补入配置。参考 `references/entity-bank-info.md` |
+| 服务币种不在 8 币种内（如 HKD），或要把外币换成另一种外币 | 其他币种显式传汇率即可；**外币 → 外币必须先向用户索取汇率**，见 `references/edge-cases.md`「外币 → 外币」 |
+| `convert_currency.py` 报「汇率 X 取值非法」 | 汇率必须是**正数**：`0` 会让除法抛 ArithmeticError 崩栈，负数不抛异常但会静默算出负金额，`NaN`/`Infinity`（API 偶尔回字符串 `"nan"`）会一路写进报价单。向用户确认该币种的实时汇率后重跑，**不得自己估一个正数顶上** |
+| 新加坡元（SGD）报价 | 服务币种即 SGD 时直接填价；RMB/USD → SGD 直接用 SGD 汇率；IDR/THB 等 → SGD 属外币→外币（见『汇率与换算』表）；`_meta` 注明 |
+| `services[].fees.include` 不能为空 | API 未列费用包含项时至少填 `"山海图服务费"` |
+| `quote_meta.payment_terms` 留空数组 | validate 报 `must be a non-empty list when provided`（**不会**静默回退实体默认值）→ 从 `config/entities.json` 复制该实体 `payment_terms` 填入，或写用户明确指定的付款条件 |
 | 用户提供分享链接而非 aiCode | 分享链接的 `sharingRecordId` 不是 aiCode，无法 resolve；见 `references/edge-cases.md`「分享链接而非 aiCode」 |
 | API 返回 "AI Code 无效" | aiCode 中服务名部分的空格必须与数据库完全一致（如 `JSHK 账户维护` 不能写成 `JSHK账户维护`）。若用户坚持 aiCode 正确，检查空格是否遗漏后再重试 |
 | 修改付款比例后 docx 仍显示旧比例 | build 默认从旧 `.docx` 保留付款方式。`quotation.json` 改了付款条件但 rebuild 后未生效 → 必须加 `--overwrite-payment-terms` 强制覆盖 |
-| 换算后价格与官网差 1 元 | `convert_currency.py` 用 **ROUND_HALF_UP（四舍五入）**，不是截断：18,400,000 ÷ 2,250 = **8,178**（1.16.2 之前的文档误写「截断得 8,177」，已导致 5 张历史单各少算 1 元，如 VND 80,000,000 ÷ 3,893.98 成稿写成 20,544、应为 20,545）。遇到差异先与用户确认采用哪个口径，**不要**自行改写已交付价格 |
-| 调整服务顺序后报价单未变化 | 仅改 `services[].items[]` 顺序不够，须同步重排 `fee_details`/`process_data`/`doc_data`，见 `references/reorder-services.md` |
+| 换算后价格与官网差 1 元 | 取整是 **ROUND_HALF_UP**、不是截断。先与用户确认采用哪个口径，**不要**自行改写已交付价格；见 `references/edge-cases.md`「换算后价格与官网差 1 元」 |
+| 调整服务顺序 | 直接重排 `services[]`；服务详情随对象一起移动，无需同步其他数组 |
 | 追加服务时复用已有查询数据 | 同一批次多个报价单共享部分 aiCode 时，可从已有 `queried_services.json` 提取目标服务，避免重复 fetch；从已转换价格列表中对应取值 |
 | BPO/百分比定价服务 | BPO 业务流程外包等按比例收费的服务，`price` 设为 0，费率结构在 `note` 和 `notes` 中说明（如"8%月用工总成本"），押金等附加费同样在备注说明。validate 会报 price 过小 warning，可忽略 |
-| 测试费作为独立行项 | 用户要求加测试费时，新增独立服务行项（如"样品测试费"），单独列金额，填写简略 `process/deliverables/docs`（如 `["样品送检"]`），`days` 填 `"-"` |
+| 测试费作为独立行项 | 用户要求加测试费时，新增独立服务行项（如“样品测试费”），单独列金额，填写简略 `process`、`deliverables`、`documents`（如 `["样品送检"]`），`days` 填 `"-"`；人工新增行的 `ai_code` 填 null |
 | 用户用「条」表示百万 | 「条」= juta = 百万印尼盾，如「120条」= Rp120,000,000。报价单按数字填，不保留「条」字；向用户展示时可直接换算展示 |
 | `rateToCny=1.0` 且 `服务币种=IDR` | 这是 API 数据标记错误：实际为人民币定价服务，系统误标为 IDR。不要按 IDR 换算，直接当 RMB 价格处理。**必须向用户展示此异常并确认报价币种**——用户可能选 RMB（直接用 API 价格）或 IDR（需用户提供真实汇率重新换算）。`_meta` 中注明此异常 |
 | `服务币种=IDR` 但 `rateToCny` 异常低 + 服务编码非 ID 前缀 | API 币种标记错误，按服务编码前缀判断真实币种；见 `references/edge-cases.md`「rateToCny 异常低」 |
 | API 服务内容 Markdown 格式不一致导致提取失败 | 用 `str.find()` 定位 + 截取，不用正则；见 `references/edge-cases.md`「Markdown 格式不一致」 |
-| `doc_data[].docs` 为空导致 validate 失败 | 补兜底 `or ["请咨询山海图获取详细资料清单"]`；见 `references/edge-cases.md`「docs 为空」 |
-| 「所需资料及信息」列子项挤在一行 / 看不到层级缩进 | ① 先拆行：一个数组元素只放一行（多行塞一条时，段落内换行会被压成空格）；② 缩进只在**行首写全角空格**（U+3000）才生效，1 个＝1 级；半角空格 / NBSP / U+3164 / U+2800 / U+200B 都无效（`quotation_schema` 的 `item.strip()` 剥掉空白，填充字符不产生位移）。build 会打印「所需资料及信息行缩进：N 行」，没有这行就说明一条都没标层级 |
+| `services[].documents` 为空导致 validate 失败 | 补兜底 `or ["请咨询山海图获取详细资料清单"]`；见 `references/edge-cases.md`「documents 为空」 |
+| 「所需资料及信息」列子项挤在一行 / 看不到层级缩进 | 要**一个元素一行**，且缩进只能在行首写**全角空格（U+3000）**，1 个＝1 级（半角空格/NBSP 等会被 strip 掉）。见 `references/edge-cases.md`「所需资料及信息列的拆行与层级缩进」 |
 
 业务/数据问题包括但不限于：数据填写错误、缺字段、金额不一致、实体选择错误、页眉公司名称和签约名称不一致、金额过大疑似选错币种、付款金额与合同金额不一致、付款条件/优惠/税率/签约主体等业务口径不明确。此类问题应修数据或向用户确认，不许提示联系 SKILL 开发者。
 
