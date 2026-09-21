@@ -15,6 +15,7 @@ Checks:
   5. A4 page size (sectPr)
   6. Amount internal consistency (subtotal, discount, VAT, total)
   7. Cross-check with input data (if --data provided)
+  8. Footer page-number fields (PAGE/NUMPAGES) live in the footer paragraph, not a text box
 """
 import argparse, zipfile, os, sys, re, json, tempfile, shutil
 from decimal import Decimal
@@ -632,6 +633,48 @@ def check_header_logo(header_root, spec, word_dir, template_anchor=None):
     return issues, warnings
 
 
+def check_footer_page_number(unpack_dir):
+    """页脚页码：PAGE / NUMPAGES 域必须在**页脚段落**里，不能画在文本框里。
+
+    Word/WPS 在「文本框」这种独立 story 里求 NUMPAGES 得到的是**当前页码**，
+    成稿会显示 `1 / 1`、`2 / 2`（刘旭 2026-09-19 实测；2026-09-18 那批是同一个成因），
+    `w:dirty` 与 settings.xml 的 updateFields 都救不了——求值本身就是错的。
+    修法见 admin skill 的 `scripts/fix-footer-page-number.py`（模板层已修，此项用于拦截回退）。
+    """
+    word_dir = os.path.join(unpack_dir, 'word')
+    if not os.path.isdir(word_dir):
+        return ['解包后没有 word/ 目录，无法检查页脚页码']
+
+    footers = sorted(os.path.join(word_dir, n) for n in os.listdir(word_dir)
+                     if re.match(r'footer\d*\.xml$', n))
+    if not footers:
+        return ['没有页脚（word/footer*.xml），页码域缺失']
+
+    issues = []
+    found = set()
+    for path in footers:
+        raw = open(path, encoding='utf-8').read()
+        if '<w:txbxContent' in raw or '<v:textbox' in raw:
+            issues.append(f'{os.path.basename(path)}: 页码画在文本框里，'
+                          'Word/WPS 会把总页数显示成当前页码（1/1、2/2）')
+        try:
+            root = ET.fromstring(raw)
+        except ET.ParseError as exc:
+            issues.append(f'{os.path.basename(path)} 不是合法 XML: {exc}')
+            continue
+        for para in root.findall(w('p')):          # 只认页脚顶层段落里的域
+            for instr in para.iter(w('instrText')):
+                text = (instr.text or '').strip()
+                name = text.split()[0] if text else ''
+                if name in ('PAGE', 'NUMPAGES'):
+                    found.add(name)
+    missing = sorted({'PAGE', 'NUMPAGES'} - found)
+    if missing:
+        issues.append(f'页脚段落里缺页码域: {", ".join(missing)}'
+                      '（必须是 PAGE + NUMPAGES 两个域）')
+    return issues
+
+
 def check_fonts(document_root):
     """Check that fonts are consistently FangSong."""
     non_fangsong = set()
@@ -1190,6 +1233,15 @@ def main():
         else:
             print(f"✅ 页面尺寸: A4 纵向 ({A4_PAGE_W}x{A4_PAGE_H} DXA)，"
                   f"页边距符合标准，可直接 A4 打印")
+
+        # ── 5b. 页脚页码域必须落在页脚段落里（文本框里求 NUMPAGES 得当前页码）──
+        footer_issues = check_footer_page_number(unpack_dir)
+        if footer_issues:
+            for fi in footer_issues:
+                print(f"❌ {fi}")
+                all_issues.append(fi)
+        else:
+            print("✅ 页脚页码: PAGE / NUMPAGES 域在页脚段落里（不在文本框内）")
 
         # ── 6. 备注不得出现办理时间免责声明（服务内容表没有办理时间列）──
         disclaimer_issues = check_process_time_disclaimer(para_texts)

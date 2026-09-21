@@ -1,11 +1,11 @@
 ---
 name: quotation-generator
-version: 2.2.1
+version: 2.2.2
 description: >
   山海图报价单生成器。新建：用户提供 aiCode → fetch → 生成 .docx。
   修改：用户未提供 aiCode → 基于既有 quotation.json 修改后重建。
   支持 13 签约主体、IDR/RMB/USD/SGD/THB/VND/EGP/MYR 八种报价币种。
-last_updated: "2026-09-18"
+last_updated: "2026-09-19"
 ---
 
 # 山海图报价单生成器
@@ -329,6 +329,7 @@ Schema v2 对顶层、`_meta`、`quote_meta`、服务和费用对象执行字段
 | verify 报页眉公司名与银行公司名不一致但只差一个 `.` | 正常现象（`Pte.Ltd` vs `Pte.Ltd.`）。verify 用 `normalize_company_name()`（去点号 + 归一化空白）比较，点号差异不判异常；真正不同的公司名仍报错 |
 | 服务内容表格「序号」列显示异常 | `build_quotation.py` 使用 `services[]` 顺序生成 1、2、3……；`line_id` 只用于稳定标识服务，不作为客户可见序号 |
 | 页眉/银行/签名不一致 | 检查 `--entity` 和 `config/entities.json`；属于业务/数据问题，不提示联系 SKILL 开发者 |
+| Word/WPS 里页脚总页数显示成当前页码（第 1 页 `1 / 1`、第 2 页 `2 / 2`） | 页码域被画在页脚**文本框**里：Word/WPS 对文本框这种独立 story 求 `NUMPAGES` 得当前页码，dirty/`updateFields` 都救不了。正解是把 `PAGE`+`NUMPAGES` 放进**页脚段落**（模板层已修）；`verify_quotation.py` 已加检查会直接报错。**不要再用「把总页数写成静态文本」的老办法**（每份成稿要事后重跑、重建即失效） |
 | validate 报 `services[i].code is required`，或成稿服务内容没有编码 | 回到 `queried_services.json` 抄入真实 `服务编码`，不要自行编造 |
 | 金额或币种异常 | 检查 `discount_amount`、服务整数总价、汇率和实体币种；重新运行预检 |
 | 公共不含项重复出现在 `exclude` | 从各服务 `exclude` 移除公共项，在 `notes` 中统一显示 |
