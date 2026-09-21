@@ -27,6 +27,7 @@ from scripts.verify_quotation import (
     normalize_company_name,
 )
 from scripts.generate_bank_reference import render_bank_reference
+from scripts.generate_entities_summary import render_entities_summary
 from scripts.quotation_common import load_entity_config_with_meta, validate_entity_configs
 
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
@@ -160,6 +161,41 @@ class TestBankInfoConfigIntegrity(unittest.TestCase):
         self.assertEqual(self.config['jakarta']['bank_lines_by_currency']['IDR'],
                          self.config['jakarta']['bank_lines'])
 
+    def test_slf_idr_and_usd_share_the_declared_bni_account(self):
+        slf = self.config['slf']
+        self.assertEqual(slf['allowed_currencies'], ['IDR', 'USD'])
+        self.assertEqual(slf['bank_lines_by_currency']['IDR'], slf['bank_lines'])
+        self.assertEqual(slf['bank_lines_by_currency']['USD'], slf['bank_lines'])
+        joined = '\n'.join(slf['bank_lines'])
+        self.assertIn('BNI Branch Central Park Mall', joined)
+        self.assertIn('Hukum SEA Firma', joined)
+        self.assertIn('1882660986', joined)
+        self.assertIn('BNINIDJAXXX', joined)
+
+    def test_stc_idr_and_usd_share_the_declared_bca_account(self):
+        stc = self.config['stc']
+        self.assertEqual(stc['allowed_currencies'], ['IDR', 'USD'])
+        self.assertEqual(stc['bank_lines_by_currency']['IDR'], stc['bank_lines'])
+        self.assertEqual(stc['bank_lines_by_currency']['USD'], stc['bank_lines'])
+        self.assertEqual(stc['withholding_tax_rate'], 0.02)
+        self.assertEqual(stc['withholding_tax_label'], 'PPH23')
+        self.assertTrue(stc['withholding_tax_required'])
+        joined = '\n'.join(stc['bank_lines'])
+        self.assertIn('BCA (KCP CENTRAL PARK)', joined)
+        self.assertIn('PT. SHM TAX CONSULTING', joined)
+        self.assertIn('5485483133', joined)
+        self.assertIn('CENAIDJA', joined)
+
+    def test_shanghai_new_uses_its_declared_bank_of_china_account(self):
+        joined = '\n'.join(self.config['shanghai_new']['bank_lines'])
+        self.assertIn('上海山海图新企业咨询有限公司', joined)
+        self.assertIn('91310113MAEW51431Q', joined)
+        self.assertIn('4520 8977 3373', joined)
+        self.assertIn('中国银行股份有限公司上海市虹桥会展中心支行', joined)
+        self.assertIn('104290020130', joined)
+        self.assertIn('BKCHCNBJ300', joined)
+        self.assertNotIn('687482901201', joined)
+
     def test_by_currency_keys_are_all_offered(self):
         for key, cfg in self.config.items():
             if key.startswith('_'):
@@ -170,15 +206,34 @@ class TestBankInfoConfigIntegrity(unittest.TestCase):
 
     def test_generated_reference_matches_entity_config(self):
         expected = render_bank_reference(self.config)
-        path = os.path.join(SKILL_ROOT, 'references', 'entity-bank-info.md')
+        path = os.path.join(SKILL_ROOT, 'docs', 'entity-bank-info.md')
         with open(path, encoding='utf-8') as fh:
             self.assertEqual(fh.read(), expected)
+
+    def test_generated_entity_summary_matches_entity_config(self):
+        expected = render_entities_summary(self.config)
+        path = os.path.join(SKILL_ROOT, 'docs', 'entities-summary.md')
+        with open(path, encoding='utf-8') as fh:
+            self.assertEqual(fh.read(), expected)
+
+    def test_entity_summary_contains_every_entity_and_ambiguous_alias(self):
+        rendered = render_entities_summary(self.config)
+        for key, cfg in self.config.items():
+            if key.startswith('_'):
+                continue
+            self.assertIn(f'`{key}`', rendered)
+            self.assertIn(cfg['company'], rendered)
+        for alias, candidates in self.config['_meta']['ambiguous_aliases'].items():
+            self.assertIn(alias, rendered)
+            for candidate in candidates:
+                self.assertIn(f'`{candidate}`', rendered)
 
     def test_config_meta_exposes_header_image_defaults(self):
         _, _, meta = load_entity_config_with_meta()
         self.assertEqual(meta['header_image_defaults']['ink_top_mm'], 6.0)
-        self.assertEqual(meta['header_image_defaults']['line_gap_mm'], 3.0)
+        self.assertEqual(meta['header_image_defaults']['line_gap_mm'], 1.0)
         self.assertEqual(meta['header_image_defaults']['body_top_mm'], 30.0)
+        self.assertEqual(meta['header_image_defaults']['crop_padding_px'], 20)
 
     def test_required_entity_fields_have_one_authoritative_source(self):
         self.assertNotIn('required_entity_fields', self.config['_meta'])

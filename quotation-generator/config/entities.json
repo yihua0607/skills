@@ -1,28 +1,30 @@
 {
   "_meta": {
     "alias_comment": "aliases：主体别名（用户口语/中英文叫法，匹配大小写及常见标点不敏感，由 scripts/resolve_entity.py 解析；--entity 仍只接受实体 key）。ambiguous_aliases 保存必须由用户确认的泛称。",
-    "_comment": "签约主体配置文件。新增实体必须满足 scripts/quotation_common.py 的 REQUIRED_ENTITY_FIELDS。payment_terms 缺省时回退 payment_terms_default（jakarta/deyin 用「收到发票后 100%」变体，其余主体共用默认）。universal_excludes 是常见公共费用不含项的种子示例，用于提示去重，不是完整白名单；实际应按多个服务共同项和业务语义抽取公共不含项到 notes。header_address_size_pt 可选：页眉公司地址过长、会换行时设地址字号（单位 pt，如 8），缺省沿用模板原字号。header_company_align 可选：页眉公司名称对齐方式（center/right），缺省 center；公司名过长、居中会压住左侧 logo 的主体（泰国/越南/埃及/新加坡）设 right。tax_label 可选：汇总表税金行标签（缺省「增值税」），马来西亚设「销售与服务税」（SST），税率仍走 vat_rate。header_image 可选：页眉改用整幅横幅图（见 _meta.header_image_defaults 与 SKILL.md『图片页眉』）。file 是 assets 下的图片文件名；bbox_px 是该图 alpha 边界在 PNG 里的像素坐标 [x0, y0, x1, y1]，build 据此裁掉透明边距。换图时必须重新测量，不能照抄。已配：beijing/xian/shenzhen/shanghai/shanghai_new/jakarta/sci/deyin。 header_logo_defaults 可选：文字页眉主体（非印尼/中国，即未配 header_image 的 5 家）的 logo 沿页眉末段顶端下移量（mm），0 表示保持模板原位；实体可用 header_logo_shift_mm 覆盖。图片页眉主体的 logo 印在横幅图里，没有独立锚点，不读该字段。",
+    "_comment": "签约主体配置文件。新增实体必须满足 scripts/quotation_common.py 的 REQUIRED_ENTITY_FIELDS。payment_terms 缺省时回退 payment_terms_default（jakarta/deyin 用「收到发票后 100%」变体，其余主体共用默认）。universal_excludes 是常见公共费用不含项的种子示例，用于提示去重，不是完整白名单；实际应按多个服务共同项和业务语义抽取公共不含项到 notes。所有主体强制使用图片页眉。header_image.file 是 assets 下的图片文件名；bbox_px 是该图 alpha 边界在 PNG 里的像素坐标 [x0, y0, x1, y1]，build 据此裁掉透明边距。换图时必须重新测量，不能照抄。tax_label 可选：汇总表税金行标签（缺省「增值税」），马来西亚设「销售与服务税」（SST），税率仍走 vat_rate。",
     "payment_terms_default": [
       "合同签订后支付合同金额的 70%，剩余 30% 在所有服务完成后 5 个工作日内支付。"
     ],
     "header_image_defaults": {
       "ink_top_mm": 6.0,
-      "line_gap_mm": 3.0,
-      "body_top_mm": 30.0
-    },
-    "header_logo_defaults": {
-      "shift_mm": 1.0
+      "line_gap_mm": 1.0,
+      "body_top_mm": 30.0,
+      "crop_padding_px": 20
     },
     "ambiguous_aliases": {
       "印尼": [
         "jakarta",
         "sci",
-        "deyin"
+        "deyin",
+        "slf",
+        "stc"
       ],
       "印度尼西亚": [
         "jakarta",
         "sci",
-        "deyin"
+        "deyin",
+        "slf",
+        "stc"
       ],
       "上海公司": [
         "shanghai",
@@ -43,17 +45,14 @@
       "PT. SHAN HAI MAP",
       "PT SHAN HAI MAP",
       "雅加达",
+      "雅加达公司",
       "雅加达山海图",
+      "山海图印尼",
+      "SHM印尼",
       "SHM信头",
       "印尼shanhaimap",
       "SHAN HAI MAP JAKARTA",
       "jakarta"
-    ],
-    "header_lines": [
-      "PT. SHAN HAI MAP",
-      "OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5",
-      "JL. LINGKAR LUAR BARAT BLOK A NO.1 JAKARTA BARAT 11740",
-      "Web: www.shanhaimap.com"
     ],
     "header_image": {
       "file": "页眉-SHM雅加达公司.png",
@@ -125,12 +124,6 @@
       "shm consulting",
       "sci"
     ],
-    "header_lines": [
-      "PT SHM CONSULTING INDONESIA",
-      "OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5",
-      "JL. LINGKAR LUAR BARAT BLOK A NO.1 JAKARTA BARAT 11740",
-      "Web: www.shanhaimap.com"
-    ],
     "vat_rate": 0.11,
     "currency": "IDR",
     "allowed_currencies": [
@@ -172,11 +165,6 @@
       "北京山海图科技有限公司",
       "beijing"
     ],
-    "header_lines": [
-      "北京山海图科技有限公司",
-      "北京市海淀区西四环北路158号1幢一层3-65",
-      "Web: www.shanhaimap.com"
-    ],
     "header_image": {
       "file": "页眉-SHM北京公司.png",
       "bbox_px": [
@@ -214,11 +202,6 @@
       "西安山海图",
       "xian"
     ],
-    "header_lines": [
-      "北京山海图科技有限公司西安分公司",
-      "西安市高新区科技路林凯国际大厦15层1501-01-03室",
-      "Web: www.shanhaimap.com"
-    ],
     "header_image": {
       "file": "页眉-SHM西安公司.png",
       "bbox_px": [
@@ -254,11 +237,6 @@
       "深圳分公司",
       "深圳山海图",
       "shenzhen"
-    ],
-    "header_lines": [
-      "北京山海图科技有限公司深圳分公司",
-      "深圳市南山区南海大道1052号海翔广场717",
-      "Web: www.shanhaimap.com"
     ],
     "header_image": {
       "file": "页眉-SHM深圳公司.png",
@@ -296,11 +274,6 @@
       "上海山海图",
       "shanghai"
     ],
-    "header_lines": [
-      "北京山海图科技有限公司上海分公司",
-      "上海市青浦区虹桥LM世界中心L3-B栋 305A",
-      "Web: www.shanhaimap.com"
-    ],
     "header_image": {
       "file": "页眉-SHM上海分公司.png",
       "bbox_px": [
@@ -336,13 +309,9 @@
       "上海新企业",
       "上海山海图新企业",
       "上海新企业咨询",
+      "上海咨询",
       "shanghai_new",
       "shanghai new"
-    ],
-    "header_lines": [
-      "上海山海图新企业咨询有限公司",
-      "上海市青浦区虹桥LM世界中心L3-B栋 305A",
-      "Web: www.shanhaimap.com"
     ],
     "header_image": {
       "file": "页眉-SHM上海新企业.png",
@@ -362,13 +331,11 @@
     "swift_policy": "required",
     "bank_lines": [
       "账户名称：上海山海图新企业咨询有限公司",
-      "Account Name: Shanghai Shanhaimap New Enterprise Consulting Co., Ltd.",
       "税号：91310113MAEW51431Q",
-      "账号：4520 8977 3373",
-      "开户行：中国银行股份有限公司上海市虹桥会展中心支行（Bank of China Shanghai Branch Hongqiao Exhibition And Convention Center Sub-Branch）",
+      "账户号码：4520 8977 3373",
+      "开户银行：中国银行股份有限公司上海市虹桥会展中心支行",
       "行号：104290020130",
-      "SWIFT CODE：BKCHCNBJ300",
-      "地址：上海市青浦区虹桥LM世界中心L3-B栋 305A"
+      "SWIFT CODE：BKCHCNBJ300"
     ]
   },
   "singapore": {
@@ -381,13 +348,10 @@
       "SHAN HAI MAP CONSULTANCY",
       "singapore"
     ],
-    "header_lines": [
-      "SHAN HAI MAP CONSULTANCY PTE.LTD",
-      "1 North Bridge Road, #06-14 High Street Centre,",
-      "SINGAPORE 179094",
-      "Web: www.shanhaimap.com"
-    ],
-    "header_company_align": "right",
+    "header_image": {
+      "file": "页眉-SHM新加坡公司.png",
+      "bbox_px": [137, 115, 3393, 447]
+    },
     "vat_rate": 0.0,
     "currency": "SGD",
     "allowed_currencies": [
@@ -428,14 +392,8 @@
       "德音人力信头",
       "PT DEIN TALENT SOLUTIONS"
     ],
-    "header_lines": [
-      "PT DEIN TALENT SOLUTIONS",
-      "OFFICE TOWER 3 CIPUTRA INTERNATIONAL LT.5",
-      "JL. LINGKAR LUAR BARAT BLOK A NO.1 JAKARTA BARAT 11740",
-      "Web: www.shanhaimap.com"
-    ],
     "header_image": {
-      "file": "页眉-德音人力.png",
+      "file": "页眉-DEIN德音人力.png",
       "bbox_px": [
         119,
         111,
@@ -480,6 +438,121 @@
       ]
     }
   },
+  "slf": {
+    "template": "deyin",
+    "template_file": "assets/报价单模版-德音人力.docx",
+    "company": "Hukum SEA Firma",
+    "aliases": [
+      "SLF",
+      "SLF律所",
+      "印尼律所",
+      "泛亚律所",
+      "泛亚律师事务所",
+      "SEA LAW FIRM",
+      "Hukum SEA Firma",
+      "slf"
+    ],
+    "header_image": {
+      "file": "页眉-SLF泛亚律所.png",
+      "bbox_px": [
+        109,
+        111,
+        3391,
+        433
+      ]
+    },
+    "vat_rate": 0.11,
+    "currency": "IDR",
+    "allowed_currencies": [
+      "IDR",
+      "USD"
+    ],
+    "swift_policy": "required",
+    "bank_notes": [
+      "IDR 与 USD 使用同一银行账户。"
+    ],
+    "bank_lines": [
+      "银行名称 Nama Bank：BNI Branch Central Park Mall",
+      "银行账号 No. Rek：1882660986",
+      "国际银行代码 Swift Code：BNINIDJAXXX",
+      "账号名称 Atas Nama：Hukum SEA Firma"
+    ],
+    "bank_lines_by_currency": {
+      "IDR": [
+        "银行名称 Nama Bank：BNI Branch Central Park Mall",
+        "银行账号 No. Rek：1882660986",
+        "国际银行代码 Swift Code：BNINIDJAXXX",
+        "账号名称 Atas Nama：Hukum SEA Firma"
+      ],
+      "USD": [
+        "银行名称 Nama Bank：BNI Branch Central Park Mall",
+        "银行账号 No. Rek：1882660986",
+        "国际银行代码 Swift Code：BNINIDJAXXX",
+        "账号名称 Atas Nama：Hukum SEA Firma"
+      ]
+    }
+  },
+  "stc": {
+    "template": "stc",
+    "template_file": "assets/报价单模版-STC思路财税.docx",
+    "company": "PT. SHM TAX CONSULTING",
+    "aliases": [
+      "STC",
+      "STC财税",
+      "丝路财税",
+      "思路财税",
+      "SHM TAX CONSULTING",
+      "PT SHM TAX CONSULTING",
+      "PT. SHM TAX CONSULTING",
+      "stc"
+    ],
+    "header_image": {
+      "file": "页眉-STC丝路财税.png",
+      "bbox_px": [
+        103,
+        111,
+        3391,
+        433
+      ]
+    },
+    "vat_rate": 0.11,
+    "withholding_tax_rate": 0.02,
+    "withholding_tax_label": "PPH23",
+    "withholding_tax_required": true,
+    "currency": "IDR",
+    "allowed_currencies": [
+      "IDR",
+      "USD"
+    ],
+    "swift_policy": "required",
+    "bank_notes": [
+      "IDR 与 USD 使用同一银行账户。",
+      "报价汇总按税前金额加 11% 增值税，再扣减 2% PPH23。"
+    ],
+    "bank_lines": [
+      "银行名称：BCA (KCP CENTRAL PARK)",
+      "账号名称：PT. SHM TAX CONSULTING",
+      "银行账号：5485483133",
+      "国际银行代码 Swift Code：CENAIDJA",
+      "分行名称：KCP CENTRAL PARK, Jl. Letjen S. Parman Komp. Podomoro, RT. 9/RW 5, Tj. Duren Selatan, Grogol Petamburan, Kota Jakarta Barat, DKI Jakarta, 11470."
+    ],
+    "bank_lines_by_currency": {
+      "IDR": [
+        "银行名称：BCA (KCP CENTRAL PARK)",
+        "账号名称：PT. SHM TAX CONSULTING",
+        "银行账号：5485483133",
+        "国际银行代码 Swift Code：CENAIDJA",
+        "分行名称：KCP CENTRAL PARK, Jl. Letjen S. Parman Komp. Podomoro, RT. 9/RW 5, Tj. Duren Selatan, Grogol Petamburan, Kota Jakarta Barat, DKI Jakarta, 11470."
+      ],
+      "USD": [
+        "银行名称：BCA (KCP CENTRAL PARK)",
+        "账号名称：PT. SHM TAX CONSULTING",
+        "银行账号：5485483133",
+        "国际银行代码 Swift Code：CENAIDJA",
+        "分行名称：KCP CENTRAL PARK, Jl. Letjen S. Parman Komp. Podomoro, RT. 9/RW 5, Tj. Duren Selatan, Grogol Petamburan, Kota Jakarta Barat, DKI Jakarta, 11470."
+      ]
+    }
+  },
   "thailand": {
     "template": "thailand",
     "template_file": "assets/报价单模板-泰国公司.docx",
@@ -491,13 +564,10 @@
       "SHAN HAI MAP (THAILAND)",
       "thailand"
     ],
-    "header_lines": [
-      "SHAN HAI MAP (THAILAND) CO., LTD.",
-      "Thanapoom Tower, 25th floor Unit A2, 1550 New Petchaburi Rd, ",
-      "Khwaeng Makkasan, Khet Ratchathewi, Bangkok 10400",
-      "Web: www.shanhaimap.com"
-    ],
-    "header_company_align": "right",
+    "header_image": {
+      "file": "页眉-SHM泰国公司.png",
+      "bbox_px": [137, 115, 3389, 447]
+    },
     "vat_rate": 0.07,
     "withholding_tax_rate": 0.03,
     "currency": "THB",
@@ -541,13 +611,10 @@
       "SHANHAIMAP VIỆT NAM",
       "vietnam"
     ],
-    "header_lines": [
-      "CÔNG TY TNHH SHANHAIMAP VIỆT NAM",
-      "Tầng 6, Số 89 Phan Đình Phùng, Phường Phú Nhuận,TPHCM.",
-      "越南胡志明市富润坊潘廷逢街 89 号 6 楼",
-      "Web: www.shanhaimap.com"
-    ],
-    "header_company_align": "right",
+    "header_image": {
+      "file": "页眉-SHM越南胡志明市公司.png",
+      "bbox_px": [137, 115, 3393, 447]
+    },
     "vat_rate": 0.08,
     "currency": "VND",
     "allowed_currencies": [
@@ -600,12 +667,10 @@
       "SHAN HAI MAP FOR CONSULTING",
       "egypt"
     ],
-    "header_lines": [
-      "SHAN HAI MAP FOR CONSULTING CO",
-      "埃及新开罗90号大街TOP90 1层134室",
-      "Web: www.shanhaimap.com"
-    ],
-    "header_company_align": "right",
+    "header_image": {
+      "file": "页眉-SHM埃及公司.png",
+      "bbox_px": [137, 112, 3393, 448]
+    },
     "vat_rate": 0.1,
     "currency": "EGP",
     "allowed_currencies": [
@@ -667,13 +732,10 @@
       "SHANHAIMAP SDN. BHD.",
       "malaysia"
     ],
-    "header_lines": [
-      "SHANHAIMAP SDN. BHD.",
-      "Suite 16-03A & 05, Level 16, Wisma UOA II No. 21,",
-      "Jalan Pinang, 50450 Kuala Lumpur, Malaysia",
-      "Web: www.shanhaimap.com"
-    ],
-    "header_address_size_pt": 8,
+    "header_image": {
+      "file": "页眉-SHM马来西亚公司.png",
+      "bbox_px": [137, 115, 3392, 447]
+    },
     "tax_label": "销售与服务税",
     "vat_rate": 0.08,
     "currency": "MYR",

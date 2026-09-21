@@ -11,7 +11,6 @@ import re
 import struct
 import sys
 import unicodedata
-import zlib
 from decimal import Decimal, ROUND_HALF_UP
 
 
@@ -66,7 +65,7 @@ _SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENTITY_CONFIG_PATH = os.path.join(_SKILL_DIR, 'config', 'entities.json')
 
 REQUIRED_ENTITY_FIELDS = (
-    'template', 'template_file', 'company', 'header_lines', 'vat_rate', 'currency',
+    'template', 'template_file', 'company', 'header_image', 'vat_rate', 'currency',
     'allowed_currencies', 'bank_lines', 'swift_policy',
 )
 
@@ -92,14 +91,13 @@ TWIPS_PER_MM = 1440 / 25.4            # 56.6929
 EMU_PER_MM = 36000
 
 # ---- 图片页眉 ---------------------------------------------------------------
-# 7 个主体（beijing / xian / shenzhen / shanghai / shanghai_new / jakarta / deyin）
-# 的页眉用整幅横幅图取代文字，蓝线保留。其余主体仍走文字页眉。
+# 所有主体的页眉均使用整幅横幅图，蓝线保留；header_image 是主体必填配置。
 #
 # 两个要点：
 #   1. 横幅是**浮动锚定**（wp:anchor + wrapNone），不是内联。内联时图片自带的透明边距
 #      照样占版面，页眉压不下去。
 #   2. 横幅与蓝线必须锚在**同一段**，两个偏移量都从该段顶端起算 —— 沿用模板原有的
-#      logo/蓝线不变式（见 SKILL.md 流程规则 #4）。
+#      logo/蓝线不变式（见 references/header-layout.md『OOXML 实现约束』）。
 #
 # 横幅一律按 PNG 的 alpha 边界**裁掉透明边距**（a:srcRect 裁，PNG 文件本身一个字节都不
 # 动），所以图片框 == 图墨迹：可见内容一个像素不变，框却不会再伸到纸张上缘之外、也不会
@@ -150,69 +148,14 @@ def read_png_size(path):
     return struct.unpack('>II', head[16:24])
 
 
-def png_alpha_bottom_padding(data):
-    """PNG 底部透明留白占其高度的比例，0.0~1.0。
-
-    Word 会把整张位图（含透明留白）缩放到锚点的 wp:extent，所以位图下方若有空行，
-    图墨迹的可见底边就落在 wp:extent 底边之上。凡是判断「图底到蓝线还有多少净空」的
-    地方，都必须按墨迹算，不能按图片框算。
-
-    只用标准库（模板自带的都是 8bit RGBA、非隔行 PNG），build 与测试都不必依赖图像库。
-    """
-    if data[:8] != b'\x89PNG\r\n\x1a\n':
-        raise ValueError('not a PNG')
-    pos, chunks, width, height = 8, [], None, None
-    while pos < len(data):
-        (length,) = struct.unpack('>I', data[pos:pos + 4])
-        ctype = data[pos + 4:pos + 8]
-        body = data[pos + 8:pos + 8 + length]
-        if ctype == b'IHDR':
-            width, height, depth, colour, _, _, interlace = struct.unpack('>IIBBBBB', body)
-            if (depth, colour, interlace) != (8, 6, 0):
-                raise ValueError(f'unsupported PNG: depth={depth} colour={colour}')
-        elif ctype == b'IDAT':
-            chunks.append(body)
-        elif ctype == b'IEND':
-            break
-        pos += 12 + length
-
-    raw = zlib.decompress(b''.join(chunks))
-    stride = width * 4
-    prev = bytearray(stride)
-    last_inked = -1
-    for y in range(height):
-        line = raw[y * (stride + 1):(y + 1) * (stride + 1)]
-        ftype, scan = line[0], bytearray(line[1:])
-        if ftype:  # undo the per-scanline PNG filter
-            for i in range(stride):
-                left = scan[i - 4] if i >= 4 else 0
-                up = prev[i]
-                upleft = prev[i - 4] if i >= 4 else 0
-                if ftype == 1:
-                    scan[i] = (scan[i] + left) & 0xFF
-                elif ftype == 2:
-                    scan[i] = (scan[i] + up) & 0xFF
-                elif ftype == 3:
-                    scan[i] = (scan[i] + (left + up) // 2) & 0xFF
-                elif ftype == 4:
-                    p = left + up - upleft
-                    pa, pb, pc = abs(p - left), abs(p - up), abs(p - upleft)
-                    pred = left if (pa <= pb and pa <= pc) else (up if pb <= pc else upleft)
-                    scan[i] = (scan[i] + pred) & 0xFF
-        if max(scan[3::4]) > 8:
-            last_inked = y
-        prev = scan
-    return 0.0 if last_inked < 0 else (height - 1 - last_inked) / height
-
-
 def header_image_spec(entity_cfg, defaults=None):
     """合并默认值、_meta.header_image_defaults 与实体的 header_image。
 
-    实体没配 header_image（仍是文字页眉）时返回 None。
+    每个主体都必须配置 header_image。
     """
     own = (entity_cfg or {}).get('header_image')
     if not own:
-        return None
+        raise ValueError('主体缺少必填的 header_image 配置')
     spec = dict(HEADER_IMAGE_DEFAULTS)
     if defaults:
         spec.update(defaults)
@@ -223,57 +166,28 @@ def header_image_spec(entity_cfg, defaults=None):
     return spec
 
 
-# ---- 文字页眉 logo 垂直位置 --------------------------------------------------
-# 文字页眉（singapore / thailand / vietnam / egypt / malaysia）的 logo 与蓝线都浮动
-# 锚定在页眉**末段**上，两者间距（蓝线偏移 − logo 偏移 − logo 可见高度）因此是模板
-# 常量：五套模板实测 3.52~3.53mm，彼此一致。原设计里 logo 偏上，与蓝线之间的留白比
-# 视觉需要的多，故统一把它下移 HEADER_LOGO_DEFAULTS['shift_mm']。
-#
-# **只动 logo，不动蓝线**：蓝线的落点决定正文首行能避开多少（页眉末段的高度就是这份
-# 余量），挪蓝线会压到正文「公司名称：」。下移量因此受限于 logo 底与蓝线之间的净空，
-# 由 MIN_LOGO_LINE_GAP_MM 兜底。
-#
-# 图片页眉（印尼/中国主体）不适用：logo 已经印在横幅图里，header1.xml 中没有独立的
-# logo 锚点，header_logo_spec() 对它们返回 None。
-HEADER_LOGO_DEFAULTS = {
-    'shift_mm': 1.0,   # logo 沿页眉末段顶端下移的距离；0 = 保持模板原位
-}
-# logo 底边与蓝线之间必须保留的最小净空；低于此值两者在视觉上粘连。
-MIN_LOGO_LINE_GAP_MM = 1.0
-
-
-def header_logo_spec(entity_cfg, defaults=None):
-    """文字页眉的 logo 下移量（mm）。
-
-    图片页眉主体返回 None —— 它们的 logo 在横幅图里，没有可独立调整的锚点。
-    实体可用 ``header_logo_shift_mm`` 覆盖默认值（0 = 保持模板原位）。
-    """
-    cfg = entity_cfg or {}
-    if cfg.get('header_image'):
-        return None
-    spec = dict(HEADER_LOGO_DEFAULTS)
-    if defaults:
-        spec.update(defaults)
-    override = cfg.get('header_logo_shift_mm')
-    if override is not None:
-        spec['shift_mm'] = override
-    return spec
-
-
 def header_image_geometry(spec, png_path):
     """算出横幅的锚点参数与裁剪比例。除标明的 mm 值外，一律是 EMU / twips / 千分之一百分比。
 
     锚点偏移量都从**页眉首段顶端**起算，所以先减掉名义落点；图墨迹与蓝线的漂移方向相反
     （图墨迹偏低、蓝线偏高），故分别加修正。
 
-    图片框 == 图墨迹：按 alpha 边界（``bbox_px``）裁掉透明边距后，横幅框顶正好落在
-    ``ink_top_mm`` 上、左右正好落在正文栏边界上，不会再伸到纸张或正文栏之外。
+    默认图片框 == 图墨迹：按 alpha 边界（``bbox_px``）裁掉透明边距。实体可用
+    ``crop_padding_px`` 在 alpha 边界四周保留等量原图留白；留白仍属于裁剪后的图片框，
+    框本身继续受纸张、正文栏和正文首行边界约束。
     """
     px_w, px_h = read_png_size(png_path)
     x0, y0, x1, y1 = spec['bbox_px']
     if not (0 <= x0 < x1 <= px_w and 0 <= y0 < y1 <= px_h):
         raise ValueError(f'header_image.bbox_px {spec["bbox_px"]} 超出 PNG 尺寸 '
                          f'{px_w}x{px_h}（{png_path}）')
+    padding = spec.get('crop_padding_px', 0)
+    if isinstance(padding, bool) or not isinstance(padding, int) or padding < 0:
+        raise ValueError('header_image.crop_padding_px 必须是非负整数')
+    x0 = max(0, x0 - padding)
+    y0 = max(0, y0 - padding)
+    x1 = min(px_w, x1 + padding)
+    y1 = min(px_h, y1 + padding)
 
     col_left_mm, col_w_mm = text_column_mm()
     ink_left_mm = spec.get('ink_left_mm') or col_left_mm

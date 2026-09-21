@@ -35,11 +35,7 @@ from scripts.quotation_common import (
     A4_MARGINS,
     header_image_spec,
     header_image_geometry,
-    header_logo_spec,
-    png_alpha_bottom_padding,
     MIN_PRINTABLE_INK_TOP_MM,
-    MIN_LOGO_LINE_GAP_MM,
-    EMU_PER_MM,
     is_process_time_disclaimer,
     xml_safe_text,
 )
@@ -198,9 +194,6 @@ def main():
     def w(tag):
         return f'{{{W}}}{tag}'
 
-    def paragraph_text(paragraph):
-        return ''.join((t.text or '') for t in paragraph.findall('.//' + w('t')))
-
     def _set_run_size(rpr, sz):
         """Set (or add) w:sz / w:szCs on an rPr element. ``sz`` is half-points."""
         for tag in (w('sz'), w('szCs')):
@@ -253,93 +246,59 @@ def main():
             pgMar.set(w(name), str(value))
         return original
 
-    def _set_paragraph_jc(paragraph, jc):
-        """Set (or add) w:jc on a paragraph's pPr, e.g. 'center' or 'right'."""
-        pPr = paragraph.find(w('pPr'))
-        if pPr is None:
-            pPr = ET.SubElement(paragraph, w('pPr'))
-        jc_el = pPr.find(w('jc'))
-        if jc_el is None:
-            jc_el = ET.SubElement(pPr, w('jc'))
-        jc_el.set(w('val'), jc)
-
-    def replace_paragraph_text(paragraph, value, sz=None):
-        """Replace text runs in a paragraph while preserving drawing/image runs.
-        Finds the first text run's rPr and uses it for the new text content.
-        Falls back to make_run(value, sz='24') if no text run rPr found.
-        When ``sz`` (half-point string, e.g. '16') is given, the run's font size
-        is overridden to that value — used to shrink over-long header addresses."""
-        pPr = paragraph.find(w('pPr'))
-        # Find the first TEXT run's rPr (w:r with w:t but no w:drawing)
-        orig_rpr = None
-        for run in paragraph.findall(w('r')):
-            if run.find(w('t')) is not None and run.find(w('drawing')) is None:
-                orig_rpr = run.find(w('rPr'))
-                break
-        # Remove all text runs (ones with w:t), preserve drawing runs and pPr
-        new_children = []
-        if pPr is not None:
-            new_children.append(pPr)
-        for child in list(paragraph):
-            if child.tag == w('pPr'):
-                continue
-            if child.tag == w('r') and child.find(w('t')) is not None and child.find(w('drawing')) is None:
-                continue  # Skip text runs
-            new_children.append(child)  # Preserve drawing runs and other elements
-        # Add a single text run with the new value
-        if orig_rpr is not None:
-            rpr_copy = ET.fromstring(ET.tostring(orig_rpr))
-            if sz is not None:
-                _set_run_size(rpr_copy, sz)
-            new_run = ET.Element(w('r'))
-            new_run.append(rpr_copy)
-            t = ET.SubElement(new_run, w('t'))
-            t.text = xml_safe_text(value)
-            new_children.append(new_run)
-        else:
-            new_children.append(make_run(value, sz=sz if sz is not None else '24'))
-        # Rebuild paragraph
-        paragraph.clear()
-        for child in new_children:
-            paragraph.append(child)
-        return True
-
     def _add_header_image_relationship(unpack_dir, img_src):
-        """把横幅图放进 word/media，并给 header1.xml.rels 加一条 image 关系，返回 rId。
+        """Replace every legacy header-image relationship with the banner image."""
+        rel_ns = 'http://schemas.openxmlformats.org/package/2006/relationships'
+        rel_tag = f'{{{rel_ns}}}Relationship'
+        image_type = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image'
+        ET.register_namespace('', rel_ns)
 
-        直接改 rels 文本而不是过 ElementTree，是为了原样保留模板 rels 的写法
-        （默认命名空间、属性顺序），避免 ElementTree 重排成 ns0:Relationship。
-        """
+        word_dir = os.path.join(unpack_dir, 'word')
         media_dir = os.path.join(unpack_dir, 'word', 'media')
         os.makedirs(media_dir, exist_ok=True)
-        shutil.copyfile(img_src, os.path.join(media_dir, 'header_banner.png'))
-
         rels_path = os.path.join(unpack_dir, 'word', '_rels', 'header1.xml.rels')
-        with open(rels_path, encoding='utf-8') as fh:
-            rels = fh.read()
-        used = [int(m) for m in re.findall(r'Id="rId(\d+)"', rels)]
+        if os.path.exists(rels_path):
+            rel_tree = ET.parse(rels_path)
+            rel_root = rel_tree.getroot()
+        else:
+            os.makedirs(os.path.dirname(rels_path), exist_ok=True)
+            rel_root = ET.Element(f'{{{rel_ns}}}Relationships')
+            rel_tree = ET.ElementTree(rel_root)
+
+        # 模板以前带独立 logo。页眉改为整幅横幅后，那些关系和媒体都是死资源；若不删除，
+        # 成稿虽然看不到旧 logo，zip 包里仍会残留 media/image1.png。
+        for rel in list(rel_root):
+            if rel.tag != rel_tag or rel.get('Type') != image_type:
+                continue
+            target = rel.get('Target') or ''
+            media_path = os.path.abspath(os.path.join(word_dir, target))
+            if media_path.startswith(os.path.abspath(media_dir) + os.sep) and os.path.isfile(media_path):
+                os.unlink(media_path)
+            rel_root.remove(rel)
+
+        used = [int(m.group(1)) for rel in rel_root
+                if (m := re.fullmatch(r'rId(\d+)', rel.get('Id') or ''))]
         rid = f'rId{max(used) + 1 if used else 1}'
-        rels = rels.replace(
-            '</Relationships>',
-            f'<Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/'
-            f'officeDocument/2006/relationships/image" Target="media/header_banner.png"/>'
-            '</Relationships>',
-        )
-        with open(rels_path, 'w', encoding='utf-8') as fh:
-            fh.write(rels)
+        ET.SubElement(rel_root, rel_tag, {
+            'Id': rid,
+            'Type': image_type,
+            'Target': 'media/header_banner.png',
+        })
+        rel_tree.write(rels_path, xml_declaration=True, encoding='UTF-8')
+        shutil.copyfile(img_src, os.path.join(media_dir, 'header_banner.png'))
         return rid
 
     def apply_header_image(unpack_dir, entity_key, cfg, spec):
         """页眉改用整幅横幅图，保留模板原有的蓝色分隔线。
 
         横幅与蓝线锚在**同一段**，两个偏移量都从该段顶端起算 —— 沿用模板原有的
-        logo/蓝线不变式（SKILL.md 流程规则 #4）。横幅用浮动锚定（wp:anchor +
+        logo/蓝线不变式（references/header-layout.md『OOXML 实现约束』）。横幅用浮动锚定（wp:anchor +
         wrapNone）而非内联：内联时图片自带的透明边距照样占版面，页眉压不下去。
         锚定之后再按 PNG 的 alpha 边界用 a:srcRect 裁掉透明边距（PNG 文件本身不动），
         图片框因此就是图墨迹本身 —— 既不会伸到纸张上缘之外，也不会越过正文栏。
 
         模板的蓝线形状原样搬运（含中国模板的 mc:AlternateContent 包装），只改它的
-        positionV 偏移 —— 粗细、颜色、虚线样式都与文字页眉主体完全一致。
+        positionV 偏移 —— 粗细、颜色、虚线样式沿用模板蓝线骨架。
         """
         header_path = os.path.join(unpack_dir, 'word', 'header1.xml')
         if not os.path.exists(header_path):
@@ -410,7 +369,7 @@ def main():
         for element in (banner, line_drawing):
             run = ET.SubElement(para, w('r'))
             # 两个 run 用同一套 rPr：行高参与该段总高计算，不一致会让正文下移
-            # （SKILL.md 流程规则 #4 的同一条约束）。
+            # （header-layout.md『OOXML 实现约束』的同一条约束）。
             _set_run_size(ET.SubElement(run, w('rPr')), '2')
             run.append(element)
 
@@ -422,154 +381,11 @@ def main():
               f"{spec['ink_top_mm']:.1f}~{geom['ink_bottom_mm']:.1f}mm，"
               f"蓝线 {geom['line_mm']:.1f}mm / 正文首行 {spec['body_top_mm']}mm）")
 
-    def apply_header_logo_shift(unpack_dir, entity_key, cfg, spec):
-        """把文字页眉的 logo 沿页眉末段顶端下移 spec['shift_mm']（mm）。
-
-        logo 与蓝线浮动锚定在**同一段**，两个偏移量都从该段顶端起算，所以只改 logo 的
-        wp:positionV 即可 —— 蓝线原样不动：蓝线落点决定正文首行能避开多少（末段的高度
-        就是这份余量），挪它会压到正文「公司名称：」。
-
-        下移后 logo 墨迹的可见底边与蓝线之间必须仍有净空，否则蓝线压在 logo 上。净空按
-        PNG 的 alpha 边界算，不按 wp:extent —— 位图自带的透明留白不参与视觉。"""
-        shift_mm = spec['shift_mm']
-        if not shift_mm:
-            return
-
-        header_path = os.path.join(unpack_dir, 'word', 'header1.xml')
-        if not os.path.exists(header_path):
-            print("⚠️  WARNING: word/header1.xml not found; cannot shift header logo.")
-            return
-
-        WP_NS, A_NS, R_NS = NS['wp'], NS['a'], NS['r']
-        tree = ET.parse(header_path)
-        root = tree.getroot()
-        logo = line = None
-        for anchor in root.iter(f'{{{WP_NS}}}anchor'):
-            if anchor.find(f'.//{{{A_NS}}}blip') is not None:
-                logo = anchor
-            else:
-                line = anchor
-        if logo is None:
-            print(f"⚠️  WARNING: {entity_key} 页眉里找不到 logo 锚点（含 a:blip 的 wp:anchor），"
-                  f"跳过 logo 下移。")
-            return
-
-        pos = logo.find(f'{{{WP_NS}}}positionV/{{{WP_NS}}}posOffset')
-        extent = logo.find(f'{{{WP_NS}}}extent')
-        if pos is None or pos.text is None or extent is None:
-            print(f"⚠️  WARNING: {entity_key} 页眉 logo 锚点缺少 positionV/posOffset 或 extent，"
-                  f"跳过 logo 下移。")
-            return
-
-        # 墨迹可见高度 = wp:extent 减掉位图底部的透明留白。
-        box_emu = int(extent.get('cy'))
-        ink_emu = box_emu
-        blip = logo.find(f'.//{{{A_NS}}}blip')
-        rid = blip.get(f'{{{R_NS}}}embed') if blip is not None else None
-        rels_path = os.path.join(unpack_dir, 'word', '_rels', 'header1.xml.rels')
-        if rid and os.path.exists(rels_path):
-            with open(rels_path, encoding='utf-8') as fh:
-                match = re.search(r'Id="%s"[^>]*Target="([^"]*)"' % re.escape(rid), fh.read())
-            if match:
-                media = os.path.join(unpack_dir, 'word', match.group(1).replace('../', ''))
-                if os.path.isfile(media):
-                    with open(media, 'rb') as fh:
-                        try:
-                            ink_emu = int(round(box_emu * (1 - png_alpha_bottom_padding(fh.read()))))
-                        except ValueError:
-                            pass
-
-        new_off = int(pos.text) + int(round(shift_mm * EMU_PER_MM))
-        gap_txt = ''
-        if line is not None:
-            line_pos = line.find(f'{{{WP_NS}}}positionV/{{{WP_NS}}}posOffset')
-            if line_pos is not None and line_pos.text is not None:
-                gap_mm = (int(line_pos.text) - (new_off + ink_emu)) / EMU_PER_MM
-                gap_txt = f"，logo 底距蓝线 {gap_mm:.2f}mm"
-                if gap_mm < MIN_LOGO_LINE_GAP_MM:
-                    print(f"⚠️  WARNING: {entity_key} 页眉 logo 下移 {shift_mm}mm 后距蓝线仅 "
-                          f"{gap_mm:.2f}mm (< {MIN_LOGO_LINE_GAP_MM}mm)，两者会视觉粘连；"
-                          f"请调小 config/entities.json 的 header_logo_shift_mm。")
-        pos.text = str(new_off)
-
-        tree.write(header_path, xml_declaration=True, encoding='UTF-8')
-        print(f"✅ 页眉 logo 下移 {shift_mm}mm{gap_txt}（蓝线位置不变）")
-
     def apply_header(unpack_dir, entity_key):
-        """Update the template header from entity-config ``header_lines``.
-
-        Replaces the entire text content of existing text paragraphs — preserving
-        logo/drawing runs, hyperlink fields, and decorative shapes — rather than
-        just the last w:t element, so it works correctly even with multi-run text.
-        Applied to every entity so the header text is driven solely by
-        config/entities.json ``header_lines``.
-
-        Entities configured with ``header_image`` skip all of that and get the
-        banner-image header instead — see apply_header_image above."""
+        """Replace the template header with the entity's required banner image."""
         cfg = ENTITY_CONFIG.get(entity_key, {})
         img_spec = header_image_spec(cfg, ENTITY_META.get('header_image_defaults'))
-        if img_spec:
-            apply_header_image(unpack_dir, entity_key, cfg, img_spec)
-            return
-        header_lines = cfg.get('header_lines')
-        if not header_lines:
-            print(f"⚠️  WARNING: No header override configured for entity={entity_key}; template header is unchanged.")
-            return
-
-        header_path = os.path.join(unpack_dir, 'word', 'header1.xml')
-        if not os.path.exists(header_path):
-            print("⚠️  WARNING: word/header1.xml not found; cannot update template header.")
-            return
-
-        tree = ET.parse(header_path)
-        root = tree.getroot()
-        paragraphs = [p for p in list(root) if p.tag == w('p')]
-        text_paragraphs = [p for p in paragraphs if paragraph_text(p).strip()]
-
-        header_addr_size = cfg.get('header_address_size_pt')
-        addr_sz = str(int(round(header_addr_size * 2))) if header_addr_size else None
-
-        lines_to_write = [l for l in header_lines if l]
-        for i, line in enumerate(lines_to_write):
-            # Company name is line 0, Web line is last — the address lines sit in
-            # between. Shrink an over-long header address to the configured size.
-            is_address = 0 < i < len(lines_to_write) - 1
-            sz_override = addr_sz if (is_address and addr_sz) else None
-            if i < len(text_paragraphs):
-                replace_paragraph_text(text_paragraphs[i], line, sz=sz_override)
-            else:
-                new_p = make_para([make_run(line, sz=sz_override or '24')], spacing_after=0, line='280')
-                root.append(new_p)
-                text_paragraphs.append(new_p)
-
-        surplus_start = len(lines_to_write)
-        # Clear text from surplus text paragraphs (only reachable if a template
-        # has more text paragraphs than header_lines), turning them empty.
-        for p in text_paragraphs[surplus_start:]:
-            for run in p.findall(w('r')):
-                if run.find(w('t')) is not None and run.find(w('drawing')) is None:
-                    p.remove(run)
-
-        # Company name alignment: Singapore & Egypt right-aligned, all others
-        # centered (the user's template layout rule).
-        company_align = cfg.get('header_company_align', 'center')
-        if company_align and text_paragraphs:
-            _set_paragraph_jc(text_paragraphs[0], company_align)
-
-        # Every template uses one compact layout: the text paragraphs are followed
-        # by exactly one paragraph carrying the floating blue separator line. That
-        # paragraph's own height is what keeps the body's first line clear of the
-        # line, and the line's anchor is paragraph-relative — so resizing, removing
-        # or adding paragraphs here moves the line onto the body. Only the header
-        # text above is ever rewritten.
-
-        tree.write(header_path, xml_declaration=True, encoding='UTF-8')
-        print(f"✅ Updated template header for {cfg['company']}")
-
-        # 文字段落的排版到此为止；logo 的垂直位置单独调整（图片页眉在上面就返回了）。
-        logo_spec = header_logo_spec(cfg, ENTITY_META.get('header_logo_defaults'))
-        if logo_spec:
-            apply_header_logo_shift(unpack_dir, entity_key, cfg, logo_spec)
+        apply_header_image(unpack_dir, entity_key, cfg, img_spec)
 
     def make_rpr(font=None, sz='24', bold=False, color=None, hint='eastAsia'):
         """Create a w:rPr element matching template pattern."""
@@ -964,7 +780,7 @@ def main():
         print(f"⚠️  WARNING: {warning}")
 
     # Withholding tax: enabled via quotation.json `withholding_tax: true`
-    # Only applied if entity config defines a withholding_tax_rate (currently thailand only)
+    # Only applied if entity config defines a withholding_tax_rate.
     WITHHOLDING_TAX_RATE = entity_cfg.get('withholding_tax_rate')
     WITHHOLDING_ENABLED = False
     if WITHHOLDING_TAX_RATE is not None:
@@ -978,7 +794,7 @@ def main():
         # 未配置 withholding_tax_rate 的主体写 true：以前这里什么都不说，报价单不出现预扣税行，
         # 直到 verify 比对 quotation.json 的 flag 才报错。明确喊出来，别让它拖到最后一关。
         print(f"⚠️  WARNING: quotation.json 顶层设置了 `withholding_tax: true`，但 --entity {entity} "
-              f"未配置 withholding_tax_rate（预扣税目前仅泰国主体支持），本次生成不会扣除预扣税。"
+              f"未配置 withholding_tax_rate，本次生成不会扣除预扣税。"
               f"请删除该字段或改为 false。")
 
     amounts = calculate_amounts(
@@ -1156,7 +972,8 @@ def main():
         tbl.append(summary_row('优惠金额', DISCOUNT_D, fmt='int'))
     tbl.append(summary_row(VAT_LABEL, VAT_D, fmt='vat', note=VAT_NOTE, label_sz=SZ_VAT_MAIN))
     if WITHHOLDING_ENABLED and WHT_D is not None:
-        wht_label = f"预扣税 {int(WITHHOLDING_TAX_RATE * 100)}%"
+        wht_name = entity_cfg.get('withholding_tax_label', '预扣税')
+        wht_label = f"{wht_name} {int(WITHHOLDING_TAX_RATE * 100)}%"
         tbl.append(summary_row(wht_label, -WHT_D, fmt='tax'))
     tbl.append(summary_row('含税总计', GRAND_TOTAL_D, fmt='total', highlight=True))
 

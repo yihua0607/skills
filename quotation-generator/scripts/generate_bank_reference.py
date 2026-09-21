@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate references/entity-bank-info.md from config/entities.json."""
+"""Generate docs/entity-bank-info.md from config/entities.json."""
 import argparse
 import json
 import os
@@ -7,7 +7,7 @@ import sys
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(SKILL_DIR, 'config', 'entities.json')
-OUTPUT_PATH = os.path.join(SKILL_DIR, 'references', 'entity-bank-info.md')
+OUTPUT_PATH = os.path.join(SKILL_DIR, 'docs', 'entity-bank-info.md')
 
 
 def render_bank_reference(raw):
@@ -67,10 +67,11 @@ def main():
         except FileNotFoundError:
             actual = ''
         if actual != expected:
-            print('❌ references/entity-bank-info.md is stale; run generate_bank_reference.py', file=sys.stderr)
+            print('❌ docs/entity-bank-info.md is stale; run generate_bank_reference.py', file=sys.stderr)
             return 1
         print('✅ 银行信息参考文档与 entities.json 一致')
         return 0
+    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     with open(OUTPUT_PATH, 'w', encoding='utf-8') as fh:
         fh.write(expected)
     print(f'✅ 已生成 {OUTPUT_PATH}')

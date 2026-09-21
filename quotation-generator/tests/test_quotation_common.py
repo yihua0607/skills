@@ -26,16 +26,29 @@ class TestQuotationCommon(unittest.TestCase):
     def test_resolve_entity_alias(self):
         self.assertEqual(resolve_entity_alias('请用德音人力报价')['entity'], 'deyin')
         self.assertEqual(resolve_entity_alias('SCI')['entity'], 'sci')
+        self.assertEqual(resolve_entity_alias('请用 SLF 报价')['entity'], 'slf')
+        self.assertEqual(resolve_entity_alias('泛亚律所')['entity'], 'slf')
+        self.assertEqual(resolve_entity_alias('请用 STC 报价')['entity'], 'stc')
+        self.assertEqual(resolve_entity_alias('STC财税')['entity'], 'stc')
+        self.assertEqual(resolve_entity_alias('丝路财税')['entity'], 'stc')
+        self.assertEqual(resolve_entity_alias('雅加达公司')['entity'], 'jakarta')
+        self.assertEqual(resolve_entity_alias('山海图印尼')['entity'], 'jakarta')
+        self.assertEqual(resolve_entity_alias('shm印尼')['entity'], 'jakarta')
+        self.assertEqual(resolve_entity_alias('上海咨询')['entity'], 'shanghai_new')
+        self.assertEqual(resolve_entity_alias('印尼律所')['entity'], 'slf')
+        self.assertEqual(resolve_entity_alias('slf律所')['entity'], 'slf')
+        self.assertEqual(resolve_entity_alias('德音')['entity'], 'deyin')
+        self.assertEqual(resolve_entity_alias('dein')['entity'], 'deyin')
 
     def test_resolve_entity_alias_refuses_ambiguous_country(self):
         result = resolve_entity_alias('印尼')
         self.assertEqual(result['status'], 'ambiguous')
-        self.assertEqual(set(result['candidates']), {'jakarta', 'sci', 'deyin'})
+        self.assertEqual(set(result['candidates']), {'jakarta', 'sci', 'deyin', 'slf', 'stc'})
 
     def test_resolve_entity_alias_finds_ambiguous_country_in_phrase(self):
         result = resolve_entity_alias('请用印尼主体报价')
         self.assertEqual(result['status'], 'ambiguous')
-        self.assertEqual(set(result['candidates']), {'jakarta', 'sci', 'deyin'})
+        self.assertEqual(set(result['candidates']), {'jakarta', 'sci', 'deyin', 'slf', 'stc'})
 
     def test_resolve_entity_alias_prefers_specific_nested_alias(self):
         result = resolve_entity_alias('请用上海新企业报价')

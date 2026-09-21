@@ -137,13 +137,11 @@
 ### 通用账户
 
 - 账户名称：上海山海图新企业咨询有限公司
-- Account Name: Shanghai Shanhaimap New Enterprise Consulting Co., Ltd.
 - 税号：91310113MAEW51431Q
-- 账号：4520 8977 3373
-- 开户行：中国银行股份有限公司上海市虹桥会展中心支行（Bank of China Shanghai Branch Hongqiao Exhibition And Convention Center Sub-Branch）
+- 账户号码：4520 8977 3373
+- 开户银行：中国银行股份有限公司上海市虹桥会展中心支行
 - 行号：104290020130
 - SWIFT CODE：BKCHCNBJ300
-- 地址：上海市青浦区虹桥LM世界中心L3-B栋 305A
 
 ## singapore
 
@@ -193,6 +191,59 @@
 - 国际银行代码 Swift Code：BNINIDJAXXX
 - 账号名称 Atas Nama：PT DEIN TALENT SOLUTIONS
 - 分行名称 Nama Cabang：BNI APL TOWER Grogol petamburan Jakarta Barat
+
+## slf
+
+- 签约主体：Hukum SEA Firma
+- 默认币种：IDR
+- 允许币种：IDR / USD
+- SWIFT 政策：required
+
+### 银行说明
+
+- IDR 与 USD 使用同一银行账户。
+
+### IDR 账户
+
+- 银行名称 Nama Bank：BNI Branch Central Park Mall
+- 银行账号 No. Rek：1882660986
+- 国际银行代码 Swift Code：BNINIDJAXXX
+- 账号名称 Atas Nama：Hukum SEA Firma
+
+### USD 账户
+
+- 银行名称 Nama Bank：BNI Branch Central Park Mall
+- 银行账号 No. Rek：1882660986
+- 国际银行代码 Swift Code：BNINIDJAXXX
+- 账号名称 Atas Nama：Hukum SEA Firma
+
+## stc
+
+- 签约主体：PT. SHM TAX CONSULTING
+- 默认币种：IDR
+- 允许币种：IDR / USD
+- SWIFT 政策：required
+
+### 银行说明
+
+- IDR 与 USD 使用同一银行账户。
+- 报价汇总按税前金额加 11% 增值税，再扣减 2% PPH23。
+
+### IDR 账户
+
+- 银行名称：BCA (KCP CENTRAL PARK)
+- 账号名称：PT. SHM TAX CONSULTING
+- 银行账号：5485483133
+- 国际银行代码 Swift Code：CENAIDJA
+- 分行名称：KCP CENTRAL PARK, Jl. Letjen S. Parman Komp. Podomoro, RT. 9/RW 5, Tj. Duren Selatan, Grogol Petamburan, Kota Jakarta Barat, DKI Jakarta, 11470.
+
+### USD 账户
+
+- 银行名称：BCA (KCP CENTRAL PARK)
+- 账号名称：PT. SHM TAX CONSULTING
+- 银行账号：5485483133
+- 国际银行代码 Swift Code：CENAIDJA
+- 分行名称：KCP CENTRAL PARK, Jl. Letjen S. Parman Komp. Podomoro, RT. 9/RW 5, Tj. Duren Selatan, Grogol Petamburan, Kota Jakarta Barat, DKI Jakarta, 11470.
 
 ## thailand
 

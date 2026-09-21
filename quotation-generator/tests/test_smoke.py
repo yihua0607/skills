@@ -37,62 +37,6 @@ def _docx_texts(docx_path, part='word/document.xml'):
     return [t.text.strip() for t in root.iter(f'{{{W}}}t') if t.text and t.text.strip()]
 
 
-def _png_alpha_bottom_padding(data):
-    """Fraction of a PNG's height that is transparent below its last inked row.
-
-    Word scales the whole bitmap — transparent slack included — to the anchor's
-    wp:extent, so a logo whose PNG has empty rows under the mark still draws its
-    visible bottom edge above the bottom of that box. Anything reasoning about the
-    gap between the mark and the blue separator has to use the ink, not the box.
-
-    Stdlib only (the templates ship 8-bit RGBA, non-interlaced PNGs), so the test
-    suite needs no imaging dependency.
-    """
-    if data[:8] != b'\x89PNG\r\n\x1a\n':
-        raise ValueError('not a PNG')
-    pos, chunks, width = 8, [], None
-    while pos < len(data):
-        (length,) = struct.unpack('>I', data[pos:pos + 4])
-        ctype = data[pos + 4:pos + 8]
-        body = data[pos + 8:pos + 8 + length]
-        if ctype == b'IHDR':
-            width, height, depth, colour, _, _, interlace = struct.unpack('>IIBBBBB', body)
-            if (depth, colour, interlace) != (8, 6, 0):
-                raise ValueError(f'unsupported PNG: depth={depth} colour={colour}')
-        elif ctype == b'IDAT':
-            chunks.append(body)
-        elif ctype == b'IEND':
-            break
-        pos += 12 + length
-
-    raw = zlib.decompress(b''.join(chunks))
-    stride = width * 4
-    prev = bytearray(stride)
-    last_inked = -1
-    for y in range(height):
-        line = raw[y * (stride + 1):(y + 1) * (stride + 1)]
-        ftype, scan = line[0], bytearray(line[1:])
-        if ftype:  # undo the per-scanline PNG filter
-            for i in range(stride):
-                left = scan[i - 4] if i >= 4 else 0
-                up = prev[i]
-                upleft = prev[i - 4] if i >= 4 else 0
-                if ftype == 1:
-                    scan[i] = (scan[i] + left) & 0xFF
-                elif ftype == 2:
-                    scan[i] = (scan[i] + up) & 0xFF
-                elif ftype == 3:
-                    scan[i] = (scan[i] + (left + up) // 2) & 0xFF
-                elif ftype == 4:
-                    p = left + up - upleft
-                    pa, pb, pc = abs(p - left), abs(p - up), abs(p - upleft)
-                    pred = left if (pa <= pb and pa <= pc) else (up if pb <= pc else upleft)
-                    scan[i] = (scan[i] + pred) & 0xFF
-        if max(scan[3::4]) > 8:
-            last_inked = y
-        prev = scan
-    return 0.0 if last_inked < 0 else (height - 1 - last_inked) / height
-
 
 def _png_alpha_bbox(data):
     """A banner PNG's ink bounding box as (x0, y0, x1, y1), x1/y1 exclusive.
@@ -242,25 +186,6 @@ def _drop_drawings_from_header(src_path, dst_path, keep_shape):
         for name, blob in parts.items():
             zf.writestr(name, blob)
 
-
-def _header_trailing_paragraph_count(docx_path):
-    """Count empty paragraphs following the last text paragraph in header1.xml.
-
-    Every *text* header ends with exactly one such paragraph, and it carries both
-    the blue separator line and the logo. Its height is what reserves room so the
-    body's first line stays clear of the line, so build must not change it.
-
-    Only meaningful for entities that still render a text header — the ones with
-    ``header_image`` get a single paragraph holding an anchored banner and carry
-    no text at all. See test_image_header_replaces_text_header_with_anchored_banner.
-    """
-    W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-    with zipfile.ZipFile(docx_path) as zf:
-        root = ET.fromstring(zf.read('word/header1.xml'))
-    paras = [p for p in root if p.tag == f'{{{W}}}p']
-    texts = [''.join(t.text or '' for t in p.iter(f'{{{W}}}t')).strip() for p in paras]
-    last = max(i for i, t in enumerate(texts) if t)
-    return len(paras) - last - 1
 
 
 def _assert_docx_valid(test_case, docx_path):
@@ -997,7 +922,7 @@ class TestQuotationSmoke(unittest.TestCase):
             self.assertIn('_meta.target_currency', out)
 
     def test_validate_rejects_withholding_tax_for_entity_without_rate(self):
-        """预扣税只有配了 withholding_tax_rate 的主体支持（当前仅 thailand）。
+        """预扣税只有配了 withholding_tax_rate 的主体支持。
 
         非泰国主体写 true 时 build 会静默按不扣税生成，verify 才报「expected in data but
         not found in document」——预检必须提前拦下，否则问题拖到最后一步才暴露。
@@ -1067,6 +992,60 @@ class TestQuotationSmoke(unittest.TestCase):
             all_text = ''.join(t.text or '' for t in root.iter(
                 '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t'))
             self.assertIn('预扣税 3%', all_text)
+
+    def test_stc_pph23_is_required_rendered_and_calculated_as_deduction(self):
+        """STC 固定扣 2% PPH23，并以负数行展示。"""
+        with tempfile.TemporaryDirectory(prefix='quotation-stc-pph23-') as tmpdir:
+            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
+            output_path = os.path.join(tmpdir, '报价单-STC-PPH23.docx')
+            with open(data_path, encoding='utf-8') as f:
+                data = json.load(f)
+            data['_meta']['applicable_entity'] = 'stc'
+            data['_meta']['target_currency'] = 'IDR'
+            data['services'][0]['price'] = 100000000
+            data['withholding_tax'] = True
+
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            rc, out, err = _run_script('validate_data.py', ['--entity', 'stc', '--data', data_path])
+            self.assertEqual(rc, 0, f"validate failed:\n{out}\n{err}")
+
+            rc, out, err = _run_script(
+                'build_quotation.py',
+                ['--entity', 'stc', '--data', data_path, '--output', output_path]
+            )
+            self.assertEqual(rc, 0, f"build failed:\n{out}\n{err}")
+
+            with zipfile.ZipFile(output_path) as zf:
+                root = ET.fromstring(zf.read('word/document.xml'))
+            all_text = ''.join(t.text or '' for t in root.iter(
+                '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t'))
+            self.assertIn('增值税 11%', all_text)
+            self.assertIn('PPH23 2%', all_text)
+            self.assertIn('-2,000,000', all_text)
+            self.assertIn('109,000,000', all_text)
+
+            rc, out, err = _run_script(
+                'verify_quotation.py',
+                ['--entity', 'stc', '--input', output_path, '--data', data_path]
+            )
+            self.assertEqual(rc, 0, f"verify failed:\n{out}\n{err}")
+
+    def test_stc_rejects_missing_required_pph23_flag(self):
+        with tempfile.TemporaryDirectory(prefix='quotation-stc-pph23-required-') as tmpdir:
+            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
+            with open(data_path, encoding='utf-8') as f:
+                data = json.load(f)
+            data['_meta']['applicable_entity'] = 'stc'
+            data['_meta']['target_currency'] = 'IDR'
+            data.pop('withholding_tax', None)
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            rc, out, err = _run_script('validate_data.py', ['--entity', 'stc', '--data', data_path])
+            self.assertNotEqual(rc, 0)
+            self.assertIn('PPH23 2%', out)
 
     def test_build_reports_payment_terms_source_for_new_output(self):
         """输出到新文件时，build 必须说清付款方式取自哪里，并提示旧单子上的手改不会被沿用。"""
@@ -1222,77 +1201,9 @@ class TestQuotationSmoke(unittest.TestCase):
 
             _assert_docx_valid(self, output_path)
 
-    def test_verify_accepts_header_address_that_differs_from_bank_branch(self):
-        """A registered office and its bank branch may sit in different cities.
 
-        Vietnam's registered office is in Ho Chi Minh City while the account is held
-        at a Hanoi branch, so verify must validate the header address against the
-        entity's own configured address instead of demanding equality with the bank
-        address.
-        """
-        with tempfile.TemporaryDirectory(prefix='quotation-vn-') as tmpdir:
-            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
-            with open(data_path, encoding='utf-8') as f:
-                data = json.load(f)
-            data['_meta']['applicable_entity'] = 'vietnam'
-            data['_meta']['target_currency'] = 'VND'
-            with open(data_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
-            output_path = os.path.join(tmpdir, '报价单-越南-测试.docx')
-            rc, out, err = _run_script(
-                'build_quotation.py',
-                ['--entity', 'vietnam', '--data', data_path, '--output', output_path]
-            )
-            self.assertEqual(rc, 0, f"build_quotation.py failed:\nstdout: {out}\nstderr: {err}")
-
-            rc, out, err = _run_script(
-                'verify_quotation.py',
-                ['--entity', 'vietnam', '--input', output_path, '--data', data_path]
-            )
-            self.assertNotIn(
-                '页眉地址与银行地址不一致', out,
-                "header address and bank branch address are allowed to differ")
-            self.assertEqual(rc, 0, f"verify_quotation.py failed:\nstdout: {out}\nstderr: {err}")
-            self.assertIn('验证通过', out)
-
-    def test_verify_rejects_header_address_from_another_entity(self):
-        """Tolerating a header/bank-branch difference must not disable the check.
-
-        The header address is now validated against the entity's own configured
-        address, so a header carrying some *other* entity's address still fails
-        verification.
-        """
-        # Uses a text-header entity on purpose: for the ones configured with
-        # ``header_image`` there is no header address text left to tamper with, and
-        # verify skips the ownership check there by design (see
-        # test_verify_skips_header_ownership_checks_for_image_headers).
-        with tempfile.TemporaryDirectory(prefix='quotation-tamper-') as tmpdir:
-            data_path, output_path = _build_for_entity(self, tmpdir, 'thailand')
-
-            # Swap thailand's header address for vietnam's, leaving everything else intact.
-            tampered_path = os.path.join(tmpdir, '报价单-泰国-篡改.docx')
-            _replace_docx_visible_text(
-                output_path, tampered_path,
-                'Thanapoom Tower, 25th floor Unit A2, 1550 New Petchaburi Rd, ',
-                'Tầng 6, Số 89 Phan Đình Phùng, Phường Phú Nhuận,TPHCM.',
-                part='word/header1.xml')
-
-            rc, out, err = _run_script(
-                'verify_quotation.py',
-                ['--entity', 'thailand', '--input', tampered_path, '--data', data_path]
-            )
-            self.assertNotEqual(
-                rc, 0, f"verify_quotation.py accepted a foreign header address:\n{out}")
-            self.assertIn('不属于本主体配置地址', out)
-
-    def test_verify_skips_header_ownership_checks_for_image_headers(self):
-        """图片页眉没有可核对的文字，verify 必须**显式**跳过那两项检查。
-
-        「显式跳过」和「因为取不到文字而顺带没跑」在输出上长得一样，但对以后维护的人
-        不是一回事：后者意味着页眉被改回文字版、或者横幅整个丢了，都没人会发现。所以
-        这里两头都要断言——跳过有说明，而图片页眉该有的自查照跑、丢了会拦下。
-        """
+    def test_verify_checks_image_headers_and_rejects_missing_banner(self):
+        """verify 必须检查图片页眉版式，并拦截横幅缺失。"""
         for entity in ('jakarta', 'xian'):
             with self.subTest(entity=entity):
                 with tempfile.TemporaryDirectory(prefix=f'quotation-imgchk-{entity}-') as tmpdir:
@@ -1306,8 +1217,6 @@ class TestQuotationSmoke(unittest.TestCase):
                         ['--entity', entity, '--input', output_path, '--data', data_path])
                     self.assertEqual(rc, 0,
                                      f"verify_quotation.py failed:\nstdout: {out}\nstderr: {err}")
-                    self.assertIn('跳过「页眉公司名 vs 银行」与「页眉地址归属」检查', out,
-                                  "verify 跳过了图片页眉的两项检查，却没有说明")
                     self.assertIn('页眉横幅图版式与配置一致', out,
                                   "verify 没有自查图片页眉的版式")
 
@@ -1321,229 +1230,39 @@ class TestQuotationSmoke(unittest.TestCase):
                         rc, 0, f"verify_quotation.py accepted a header with no banner:\n{out}")
                     self.assertIn('页眉里找不到横幅图', out)
 
-    def test_all_entity_templates_share_one_header_layout(self):
-        """Every entity template must use the same compact header layout.
-
-        Canonical layout: company-name paragraph, address line(s), the "Web:" line,
-        then exactly one trailing paragraph that carries the logo and the blue
-        separator line. No spacer paragraphs, and no template missing the separator.
-        """
+    def test_all_entity_templates_only_keep_the_blue_line_skeleton(self):
+        """Templates must contain no legacy text, standalone logo, or image relation."""
         sys.path.insert(0, os.path.join(SKILL_ROOT, 'scripts'))
         from build_quotation import TEMPLATES
 
         W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+        A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+        WPS = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape'
+        IMAGE_TYPE = ('http://schemas.openxmlformats.org/officeDocument/2006/'
+                      'relationships/image')
         for key, path in sorted(TEMPLATES.items()):
             with self.subTest(template=key):
                 with zipfile.ZipFile(path) as zf:
                     root = ET.fromstring(zf.read('word/header1.xml'))
+                    names = set(zf.namelist())
+                    rels = (ET.fromstring(zf.read('word/_rels/header1.xml.rels'))
+                            if 'word/_rels/header1.xml.rels' in names else None)
                 paras = [p for p in root if p.tag == f'{{{W}}}p']
                 texts = [''.join(t.text or '' for t in p.iter(f'{{{W}}}t')).strip() for p in paras]
-                last = max(i for i, t in enumerate(texts) if t)
-
-                self.assertTrue(
-                    texts[last].startswith('Web:'),
-                    f"{key}: last text paragraph should be the Web line, got {texts[last]!r}")
-                trailing = paras[last + 1:]
+                self.assertFalse(any(texts), f"{key}: 模板仍残留文字页眉 {texts}")
+                self.assertEqual(len(list(root.iter(f'{{{A}}}blip'))), 0,
+                                 f"{key}: 模板仍残留旧独立 logo 锚点")
                 self.assertEqual(
-                    len(trailing), 1,
-                    f"{key}: expected exactly 1 trailing paragraph after the Web line, "
-                    f"got {len(trailing)} — templates must all use the same layout")
-                self.assertIsNone(
-                    paras[last].find(f'.//{{{W}}}drawing'),
-                    f"{key}: separator must not be anchored inside the Web paragraph")
-                self.assertIsNotNone(
-                    trailing[0].find(f'.//{{{W}}}drawing'),
-                    f"{key}: trailing paragraph must carry the blue separator line")
-                spacing = trailing[0].find(f'{{{W}}}pPr/{{{W}}}spacing')
-                self.assertNotEqual(
-                    spacing.get(f'{{{W}}}line') if spacing is not None else None, '0',
-                    f"{key}: trailing paragraph must not be collapsed to zero height")
+                    sum(1 for d in root.iter(f'{{{W}}}drawing')
+                        if d.find(f'.//{{{WPS}}}wsp') is not None),
+                    1, f"{key}: 模板必须且只能保留一条蓝色分隔线")
+                self.assertFalse(
+                    rels is not None and any(rel.get('Type') == IMAGE_TYPE for rel in rels),
+                    f"{key}: header1.xml.rels 仍残留旧图片关系")
+                self.assertNotIn('word/media/image1.png', names,
+                                 f"{key}: zip 包仍残留旧 media/image1.png")
 
-    def test_logo_and_separator_share_one_anchor_paragraph(self):
-        """The logo and the blue separator must be anchored in the same paragraph.
 
-        Both anchors measure their offset from their own paragraph's top, so a shared
-        paragraph makes the clearance
-
-            line_y - logo_ink_bottom
-                = separator_offset - logo_offset - logo_ink_height
-
-        a constant of the template. While the logo hung off the header's first
-        paragraph and the line off its last, only the line's offset rode the header
-        text block — whose height is font-metric dependent — so on a machine without
-        微软雅黑 the two drifted together and the line ran into the logo.
-        """
-        sys.path.insert(0, os.path.join(SKILL_ROOT, 'scripts'))
-        from build_quotation import TEMPLATES
-
-        W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-        WP = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
-        A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
-        R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
-        EMU_PER_PT = 12700
-
-        for key, path in sorted(TEMPLATES.items()):
-            with self.subTest(template=key):
-                with zipfile.ZipFile(path) as zf:
-                    root = ET.fromstring(zf.read('word/header1.xml'))
-                    targets = {rel.get('Id'): rel.get('Target') for rel in ET.fromstring(
-                        zf.read('word/_rels/header1.xml.rels'))}
-                    logo_png = zf.read('word/' + targets[
-                        next(root.iter(f'{{{A}}}blip')).get(f'{{{R}}}embed')].lstrip('/'))
-                paras = [p for p in root if p.tag == f'{{{W}}}p']
-
-                logo = line = None
-                for anchor in root.iter(f'{{{WP}}}anchor'):
-                    if anchor.find(f'.//{{{A}}}blip') is not None:
-                        logo = anchor
-                    else:
-                        line = anchor
-                self.assertIsNotNone(logo, f"{key}: header has no logo anchor")
-                self.assertIsNotNone(line, f"{key}: header has no separator anchor")
-
-                def owning_paragraph(anchor):
-                    for index, para in enumerate(paras):
-                        if any(a is anchor for a in para.iter(f'{{{WP}}}anchor')):
-                            return index
-                    return None
-
-                self.assertEqual(
-                    owning_paragraph(logo), owning_paragraph(line),
-                    f"{key}: logo and separator are anchored in different paragraphs, "
-                    f"so their clearance rides the header text block's height and "
-                    f"changes with the CJK font")
-
-                def offset(anchor):
-                    return int(anchor.find(f'{{{WP}}}positionV/{{{WP}}}posOffset').text)
-
-                # Clearance to the mark's visible bottom edge, not to the bitmap box:
-                # the box is what the offsets position, the ink is what a reader sees.
-                box = int(logo.find(f'{{{WP}}}extent').get('cy'))
-                ink = box * (1 - _png_alpha_bottom_padding(logo_png))
-                clearance = offset(line) - offset(logo) - ink
-                self.assertGreater(
-                    clearance, 0,
-                    f"{key}: the separator sits {clearance / EMU_PER_PT:.2f}pt below the "
-                    f"logo's bottom edge — the blue line is overlapping the logo")
-
-    def test_trailing_header_paragraph_takes_its_height_from_its_mark(self):
-        """No run in the header's trailing paragraph may declare a font size.
-
-        That paragraph's height is the room the body gets below the blue line, and a
-        paragraph's line height follows the largest font among its runs — even for a
-        run holding nothing but a floating drawing. Carrying the logo into that
-        paragraph therefore also carried the size that run needed where it used to
-        live (w:sz 40/44 = 20/22pt, against a mark that declares none), which drops
-        the body by roughly 11pt on every page. Only the mark sets the height here;
-        the logo's size comes from wp:extent.
-        """
-        sys.path.insert(0, os.path.join(SKILL_ROOT, 'scripts'))
-        from build_quotation import TEMPLATES
-
-        W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-        for key, path in sorted(TEMPLATES.items()):
-            with self.subTest(template=key):
-                with zipfile.ZipFile(path) as zf:
-                    root = ET.fromstring(zf.read('word/header1.xml'))
-                last = [p for p in root if p.tag == f'{{{W}}}p'][-1]
-                for run in last.findall(f'{{{W}}}r'):
-                    size = run.find(f'{{{W}}}rPr/{{{W}}}sz')
-                    self.assertIsNone(
-                        size,
-                        f"{key}: a run in the trailing header paragraph declares "
-                        f"sz={size.get(f'{{{W}}}val') if size is not None else None}, so it "
-                        f"now sets that paragraph's line height and pushes the body "
-                        f"down the page")
-
-    def test_text_header_logo_is_shifted_down_by_the_configured_amount(self):
-        """文字页眉的 logo 必须在成稿里下移 entities.json 配置的量，且不撞上蓝线。
-
-        下移发生在 build 里、不在模板里，所以只能量成稿：模板原位 + 配置下移量应当等于
-        成稿的 logo 偏移，蓝线则一个 EMU 都不能动（蓝线落点决定正文首行能避开多少）。
-
-        只查文字页眉：图片页眉主体（印尼/中国）的页眉整段换成横幅，成稿里的锚点位置由
-        header_image 的几何参数算出来、与模板无关，拿模板比值没有意义（横幅本身由
-        test_image_header_replaces_text_header_with_anchored_banner 覆盖）。这里对它们
-        只核一件事——配置不许给它们配上 logo 下移，因为横幅里没有可独立调整的 logo。
-        """
-        sys.path.insert(0, os.path.join(SKILL_ROOT, 'scripts'))
-        from build_quotation import TEMPLATES
-        from quotation_common import (
-            header_logo_spec, load_entity_config_with_meta, MIN_LOGO_LINE_GAP_MM)
-
-        WP = '{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}'
-        A = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
-        R = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
-        EMU_PER_MM = 36000
-
-        entity_config, _, entity_meta = load_entity_config_with_meta()
-        shifted = image_entities = 0
-        with tempfile.TemporaryDirectory(prefix='quotation-logo-') as tmpdir:
-            for entity, template in sorted(TEMPLATES.items()):
-                spec = header_logo_spec(entity_config[entity],
-                                        entity_meta.get('header_logo_defaults'))
-                with self.subTest(entity=entity):
-                    if spec is None:
-                        # 图片页眉：header_logo_spec 必须说不适用，否则 build 会去找一个
-                        # 不存在的 logo 锚点，或误挪横幅。
-                        self.assertTrue(
-                            entity_config[entity].get('header_image'),
-                            f"{entity}: 既没配 header_image 又拿不到 logo 下移配置，"
-                            f"文字页眉会被漏掉")
-                        image_entities += 1
-                        continue
-
-                    with zipfile.ZipFile(template) as zf:
-                        tpl_root = ET.fromstring(zf.read('word/header1.xml'))
-                    tpl_logo = tpl_line = None
-                    for anchor in tpl_root.iter(WP + 'anchor'):
-                        if anchor.find('.//' + A + 'blip') is not None:
-                            tpl_logo = anchor
-                        else:
-                            tpl_line = anchor
-                    if tpl_logo is None:
-                        self.skipTest(f"{entity}: 模板页眉没有独立的 logo 锚点")
-                    tpl_v = int(tpl_logo.find(WP + 'positionV/' + WP + 'posOffset').text)
-                    tpl_line_v = int(tpl_line.find(WP + 'positionV/' + WP + 'posOffset').text)
-
-                    _, docx = _build_for_entity(self, tmpdir, entity)
-                    with zipfile.ZipFile(docx) as zf:
-                        root = ET.fromstring(zf.read('word/header1.xml'))
-                        targets = {rel.get('Id'): rel.get('Target') for rel in ET.fromstring(
-                            zf.read('word/_rels/header1.xml.rels'))}
-                        logo_png = zf.read('word/' + targets[
-                            next(root.iter(A + 'blip')).get(R + 'embed')].lstrip('/'))
-                    logo = line = None
-                    for anchor in root.iter(WP + 'anchor'):
-                        if anchor.find('.//' + A + 'blip') is not None:
-                            logo = anchor
-                        else:
-                            line = anchor
-
-                    got_v = int(logo.find(WP + 'positionV/' + WP + 'posOffset').text)
-                    got_line_v = int(line.find(WP + 'positionV/' + WP + 'posOffset').text)
-                    self.assertEqual(
-                        got_line_v, tpl_line_v,
-                        f"{entity}: 蓝线位置被挪动了（{got_line_v} != 模板 {tpl_line_v}）——"
-                        f"蓝线落点决定正文首行能避开多少，只能动 logo")
-
-                    expected = tpl_v + int(round(spec['shift_mm'] * EMU_PER_MM))
-                    self.assertEqual(
-                        got_v, expected,
-                        f"{entity}: logo 垂直偏移 {got_v} != 模板原位 {tpl_v} + "
-                        f"配置下移 {spec['shift_mm']}mm ({expected})")
-
-                    box = int(logo.find(WP + 'extent').get('cy'))
-                    ink = box * (1 - _png_alpha_bottom_padding(logo_png))
-                    clearance = (got_line_v - got_v - ink) / EMU_PER_MM
-                    self.assertGreaterEqual(
-                        clearance, MIN_LOGO_LINE_GAP_MM,
-                        f"{entity}: logo 下移后距蓝线仅 {clearance:.2f}mm "
-                        f"(< {MIN_LOGO_LINE_GAP_MM}mm)，两者会视觉粘连")
-                    if spec['shift_mm']:
-                        shifted += 1
-        self.assertGreater(shifted, 0, "没有任何文字页眉主体实际下移了 logo")
-        self.assertGreater(image_entities, 0, "没有主体走图片页眉，分支没被覆盖")
 
     def test_build_normalizes_non_a4_template_to_a4(self):
         """A drifted (non-A4) template must still yield an A4-printable quotation.
@@ -1634,86 +1353,19 @@ class TestQuotationSmoke(unittest.TestCase):
                 rc, 0, f"verify accepted a drifted right margin:\n{out}")
             self.assertIn("Page margin 'right'", out)
 
-    def test_long_company_names_are_right_aligned(self):
-        """Company names too long to center must be right-aligned in the header.
-
-        Centering one of these runs its left end into the floating logo, which is
-        anchored in the same paragraph band. Right-aligning pins the name's right
-        edge to the right margin, which keeps it clear of the logo. Thailand was
-        the last entity still centered (and the only one actually colliding).
-        """
+    def test_all_current_entities_use_image_headers(self):
+        """当前所有主体均应使用图片页眉，旧文字对齐配置不应残留。"""
         sys.path.insert(0, os.path.join(SKILL_ROOT, 'scripts'))
         from quotation_common import load_entity_config
 
         entity_config, _ = load_entity_config()
-        for entity in ('thailand', 'vietnam', 'egypt', 'singapore'):
+        for entity, cfg in entity_config.items():
             with self.subTest(entity=entity):
-                self.assertEqual(
-                    entity_config[entity].get('header_company_align'), 'right',
-                    f"{entity}: company name is long enough to collide with the logo, "
-                    f"so it must be configured right-aligned")
+                self.assertIn('header_image', cfg, f"{entity}: 未配置图片页眉")
+                self.assertNotIn('header_lines', cfg, f"{entity}: 残留文字页眉内容")
+                self.assertNotIn('header_company_align', cfg, f"{entity}: 残留文字页眉对齐配置")
+                self.assertNotIn('header_address_size_pt', cfg, f"{entity}: 残留文字页眉字号配置")
 
-        with tempfile.TemporaryDirectory(prefix='quotation-align-') as tmpdir:
-            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
-            with open(data_path, encoding='utf-8') as f:
-                data = json.load(f)
-            data['_meta']['applicable_entity'] = 'thailand'
-            data['_meta']['target_currency'] = 'THB'
-            with open(data_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
-            output_path = os.path.join(tmpdir, '报价单-泰国-对齐.docx')
-            rc, out, err = _run_script(
-                'build_quotation.py',
-                ['--entity', 'thailand', '--data', data_path, '--output', output_path]
-            )
-            self.assertEqual(rc, 0, f"build_quotation.py failed:\nstdout: {out}\nstderr: {err}")
-
-            W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-            with zipfile.ZipFile(output_path) as zf:
-                root = ET.fromstring(zf.read('word/header1.xml'))
-            paras = [p for p in root if p.tag == f'{{{W}}}p']
-            company_para = next(
-                p for p in paras
-                if ''.join(t.text or '' for t in p.iter(f'{{{W}}}t')).strip())
-            jc = company_para.find(f'{{{W}}}pPr/{{{W}}}jc')
-            self.assertIsNotNone(jc, "company name paragraph carries no jc")
-            self.assertEqual(jc.get(f'{{{W}}}val'), 'right',
-                             "built thailand header must right-align the company name")
-
-    def test_build_preserves_header_layout(self):
-        """build_quotation.py must leave a text header's geometry intact.
-
-        The separator's floating anchor sits a fixed offset below its paragraph, so
-        editing the paragraph's height or dropping it moves the blue line off its
-        intended position — onto the body's first line ("公司名称：") or the logo
-        anchored in that same paragraph.
-
-        Entities configured with ``header_image`` are out of scope here: build
-        replaces their header wholesale, and the layout that must hold for them is
-        asserted in test_image_header_replaces_text_header_with_anchored_banner.
-
-        Note the ``china`` template has no case below: every entity that uses it
-        (beijing/xian/shenzhen/shanghai/shanghai_new) is an image header now, so
-        build never renders its text header. The template file itself is still
-        covered by test_all_entity_templates_share_one_header_layout.
-        """
-        cases = [
-            ('thailand', '报价单模板-泰国公司.docx'),
-            ('singapore', '报价单模版-新加坡公司.docx'),
-            ('egypt', '报价单模版-埃及公司.docx'),
-            ('malaysia', '报价单模版-马来西亚公司.docx'),
-        ]
-        for entity, template_name in cases:
-            with self.subTest(entity=entity):
-                template = os.path.join(SKILL_ROOT, 'assets', template_name)
-                with tempfile.TemporaryDirectory(prefix='quotation-header-') as tmpdir:
-                    _, output_path = _build_for_entity(self, tmpdir, entity)
-                    self.assertEqual(
-                        _header_trailing_paragraph_count(output_path),
-                        _header_trailing_paragraph_count(template),
-                        f"{entity}: build changed the header's trailing paragraphs, "
-                        f"so the blue line no longer sits where the template puts it")
 
     def test_image_header_replaces_text_header_with_anchored_banner(self):
         """每个配了 header_image 的主体，页眉必须是一幅锚定的横幅图。
@@ -1773,8 +1425,20 @@ class TestQuotationSmoke(unittest.TestCase):
                     with zipfile.ZipFile(output_path) as zf:
                         doc_root = ET.fromstring(zf.read('word/document.xml'))
                         header_root = ET.fromstring(zf.read('word/header1.xml'))
-                        targets = {rel.get('Id'): rel.get('Target') for rel in ET.fromstring(
-                            zf.read('word/_rels/header1.xml.rels'))}
+                        rel_root = ET.fromstring(zf.read('word/_rels/header1.xml.rels'))
+                        targets = {rel.get('Id'): rel.get('Target') for rel in rel_root}
+                        package_names = set(zf.namelist())
+
+                    image_type = ('http://schemas.openxmlformats.org/officeDocument/2006/'
+                                  'relationships/image')
+                    image_targets = [rel.get('Target') for rel in rel_root
+                                     if rel.get('Type') == image_type]
+                    self.assertEqual(
+                        image_targets, ['media/header_banner.png'],
+                        f"{entity}: 成稿页眉仍残留旧图片关系 {image_targets}")
+                    self.assertNotIn(
+                        'word/media/image1.png', package_names,
+                        f"{entity}: 成稿 zip 包仍残留旧独立 logo media/image1.png")
 
                     pg_mar = doc_root.find(f'.//{{{W}}}sectPr/{{{W}}}pgMar')
                     self.assertEqual(pg_mar.get(f'{{{W}}}header'), '227',

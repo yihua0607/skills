@@ -95,17 +95,24 @@ def validate_quotation_data(data, entity_key, entity_config, universal_excludes=
                 f'_meta.target_currency ({currency}) is not allowed for --entity ({entity_key}); '
                 f'allowed: {", ".join(allowed_currencies)}')
 
-    # ── 预扣税只支持配了 withholding_tax_rate 的主体（当前仅 thailand）──
+    # ── 预扣税只支持配了 withholding_tax_rate 的主体 ──
     # 未配置的主体写 true 时，build 会静默按不扣税生成（报价单不会出现预扣税行），
     # 但 verify 拿 quotation.json 的 flag 比对成稿，必然报「expected in data but not
     # found in document」——问题会拖到最后一关才暴露，所以在这里直接拦下。
     wht_rate = entity_cfg.get('withholding_tax_rate')
     wht_flag = data.get('withholding_tax')
+    wht_required = bool(entity_cfg.get('withholding_tax_required', False))
     if wht_rate is None and wht_flag is True:
         errors.append(
             f'withholding_tax 仅支持已配置 withholding_tax_rate 的签约主体，--entity {entity_key} '
             f'未配置。请删除该字段或改为 false；保留 true 会被 build 静默忽略，'
             f'并在 verify 阶段报「Withholding tax expected in data but not found in document」')
+    elif wht_rate is not None and wht_required and wht_flag is not True:
+        errors.append(
+            f'--entity {entity_key} 的预扣税为必扣项（'
+            f'{entity_cfg.get("withholding_tax_label", "预扣税")} '
+            f'{vat_percent_label(Decimal(str(wht_rate)))}），quotation.json 顶层 '
+            f'withholding_tax 必须设置为 true')
     elif wht_rate is not None and 'withholding_tax' not in data:
         warnings.append(
             f'--entity {entity_key} 支持预扣税（{vat_percent_label(Decimal(str(wht_rate)))}），但 quotation.json 缺少顶层 '

@@ -39,12 +39,8 @@ from scripts.quotation_common import (
     is_process_time_disclaimer,
     header_image_spec,
     header_image_geometry,
-    header_logo_spec,
-    png_alpha_bottom_padding,
     text_column_mm,
     MIN_PRINTABLE_INK_TOP_MM,
-    MIN_LOGO_LINE_GAP_MM,
-    EMU_PER_MM,
 )
 from scripts.quotation_schema import validate_and_normalize_data
 
@@ -324,7 +320,7 @@ def extract_signature_company(tables, entity_config):
     return None
 
 
-def extract_service_names_from_table(tables, tax_label='增值税'):
+def extract_service_names_from_table(tables, tax_label='增值税', withholding_tax_label='预扣税'):
     """Extract service names from the service content table (first table)."""
     names = []
     if not tables:
@@ -349,7 +345,8 @@ def extract_service_names_from_table(tables, tax_label='增值税'):
             # Strip quantity suffix for comparison: "公司注册×2" → "公司注册"
             base_name = re.sub(r'\s*[x×]\d+$', '', name_text)
             # Skip summary rows like "小计", "优惠金额", "增值税 11%", "含税总计", "预扣税"
-            summary_prefixes = ('服务内容', '小计', '优惠金额', tax_label, '含税总计', '预扣税')
+            summary_prefixes = ('服务内容', '小计', '优惠金额', tax_label,
+                                '含税总计', '预扣税', withholding_tax_label)
             if base_name and not any(base_name.startswith(p) for p in summary_prefixes):
                 names.append(base_name)
     return names
@@ -425,45 +422,6 @@ def extract_fee_section_names(paragraph_texts):
             if fee_match:
                 names.append(fee_match.group(1).strip())
     return names
-
-
-def extract_header_info(header_root):
-    """Extract company name and address from header XML."""
-    texts = extract_paragraph_texts(header_root)
-    non_empty = [text for _, text in texts if text.strip()]
-    company = non_empty[0] if len(non_empty) >= 1 else None
-    address = non_empty[1] if len(non_empty) >= 2 else None
-    return company, address
-
-
-def check_address_similarity(addr1, addr2):
-    """Check if two addresses are consistent, allowing for province prefix differences."""
-    if not addr1 or not addr2:
-        return False, "One or both addresses are empty"
-    if addr1 == addr2:
-        return True, "Exact match"
-    core1 = re.sub(r'^.{2,6}(省|市)', '', addr1)
-    core2 = re.sub(r'^.{2,6}(省|市)', '', addr2)
-    if core1 == core2:
-        return True, (
-            f"Core address matches (prefix difference: "
-            f"'{addr1}' vs '{addr2}')")
-    if addr1.endswith(core2) or addr2.endswith(core1):
-        return True, (
-            f"Similar addresses (superset: "
-            f"'{addr1}' vs '{addr2}')")
-    return False, f"Addresses differ: '{addr1}' vs '{addr2}'"
-
-
-def configured_header_addresses(entity_cfg):
-    """The address lines an entity's header is expected to carry.
-
-    `header_lines` is ordered [company name, address line(s)..., 'Web: ...'];
-    the company name and the Web line are not addresses.
-    """
-    lines = [ln.strip() for ln in (entity_cfg or {}).get('header_lines') or []
-             if ln and ln.strip()]
-    return [ln for ln in lines[1:] if not ln.startswith('Web:')]
 
 
 def check_header_image(header_root, spec, png_path):
@@ -545,92 +503,6 @@ def check_header_image(header_root, spec, png_path):
         issues.append(f"页眉横幅图片框底缘 {geom['ink_bottom_mm']:.2f}mm 压过正文首行 "
                       f"{spec['body_top_mm']:.2f}mm")
     return issues, []
-
-
-def _header_logo_anchors(header_root):
-    """返回页眉里的 (logo 锚点, 蓝线锚点)，取不到的那个为 None。"""
-    logo = line = None
-    for anchor in header_root.iter(WP + 'anchor'):
-        if anchor.find('.//' + A_NS + 'blip') is not None:
-            logo = anchor
-        else:
-            line = anchor
-    return logo, line
-
-
-def _header_logo_png(word_dir, logo_anchor):
-    """按 header1.xml.rels 把 logo 锚点引用的位图读出来；找不到返回 None。"""
-    R_NS = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
-    blip = logo_anchor.find('.//' + A_NS + 'blip')
-    rels_path = os.path.join(word_dir, '_rels', 'header1.xml.rels')
-    if blip is None or not os.path.exists(rels_path):
-        return None
-    rid = blip.get(R_NS + 'embed')
-    if not rid:
-        return None
-    with open(rels_path, encoding='utf-8') as fh:
-        match = re.search(r'Id="%s"[^>]*Target="([^"]*)"' % re.escape(rid), fh.read())
-    if not match:
-        return None
-    target = os.path.join(word_dir, match.group(1).replace('../', ''))
-    if not os.path.isfile(target):
-        return None
-    with open(target, 'rb') as fh:
-        return fh.read()
-
-
-def check_header_logo(header_root, spec, word_dir, template_anchor=None):
-    """文字页眉的 logo 垂直位置自查，返回 (issues, warnings)。
-
-    与横幅自查同理，核的是「版式有没有被改坏」而不是内容：logo 锚点在不在、下移量是否
-    等于 entities.json 里算出来的值、蓝线有没有被动过、logo 墨迹底边与蓝线之间是否还留
-    着净空。净空按 PNG 的 alpha 边界算——位图自带的透明留白不参与视觉。
-
-    ``template_anchor`` 传模板 header1.xml 里 logo 锚点的原始 posOffset，用来核对下移量
-    确实是「模板原位 + 配置值」；拿不到模板时跳过这一项，其余检查照做。
-    """
-    issues, warnings = [], []
-    shift_emu = int(round(spec['shift_mm'] * EMU_PER_MM))
-
-    logo, line = _header_logo_anchors(header_root)
-    if logo is None:
-        issues.append("文字页眉里找不到 logo 锚点（含 a:blip 的 wp:anchor）")
-        return issues, warnings
-    if line is None:
-        issues.append("文字页眉里找不到蓝色分隔线")
-        return issues, warnings
-
-    pos_v = logo.find(WP + 'positionV/' + WP + 'posOffset')
-    extent = logo.find(WP + 'extent')
-    line_v = line.find(WP + 'positionV/' + WP + 'posOffset')
-    if pos_v is None or extent is None or line_v is None:
-        issues.append("logo/蓝线锚点结构不完整（缺 posOffset 或 extent）")
-        return issues, warnings
-
-    # logo 与蓝线必须锚在同一段：两个偏移量都从该段顶端起算，间距才是模板常量。
-    if template_anchor is not None and int(pos_v.text) != template_anchor + shift_emu:
-        issues.append(f"页眉 logo 垂直偏移 = {pos_v.text}，按模板原位 {template_anchor} + "
-                      f"配置下移 {spec['shift_mm']}mm 应为 {template_anchor + shift_emu}"
-                      f"（页眉版式与配置不符）")
-
-    # 墨迹可见高度 = wp:extent 减掉位图底部的透明留白。
-    box_emu = int(extent.get('cy'))
-    ink_emu = box_emu
-    png = _header_logo_png(word_dir, logo)
-    if png:
-        try:
-            ink_emu = int(round(box_emu * (1 - png_alpha_bottom_padding(png))))
-        except ValueError as exc:
-            warnings.append(f"无法按 alpha 边界量 logo 可见高度（{exc}），净空按图片框估算")
-
-    clearance_mm = (int(line_v.text) - (int(pos_v.text) + ink_emu)) / EMU_PER_MM
-    if clearance_mm <= 0:
-        issues.append(f"页眉 logo 墨迹底边越过蓝线 {abs(clearance_mm):.2f}mm —— 蓝线压在 logo 上")
-    elif clearance_mm < MIN_LOGO_LINE_GAP_MM:
-        warnings.append(f"页眉 logo 底边距蓝线仅 {clearance_mm:.2f}mm "
-                        f"(< {MIN_LOGO_LINE_GAP_MM}mm)，两者视觉上会粘连")
-
-    return issues, warnings
 
 
 def check_footer_page_number(unpack_dir):
@@ -740,7 +612,7 @@ def check_process_time_disclaimer(paragraph_texts):
     ]
 
 
-def extract_summary_amounts(tables, currency, tax_label='增值税'):
+def extract_summary_amounts(tables, currency, tax_label='增值税', withholding_tax_label='预扣税'):
     """Extract subtotal, discount, VAT, and total from the service content table."""
     amounts = {}
     for tbl in tables:
@@ -770,7 +642,8 @@ def extract_summary_amounts(tables, currency, tax_label='增值税'):
                 rate_match = re.search(r'(\d+(?:\.\d+)?)%', label_lower)
                 if rate_match:
                     amounts['vat_rate'] = Decimal(rate_match.group(1)) / Decimal('100')
-            elif '预扣税' in label_lower and parsed is not None:
+            elif (('预扣税' in label_lower or withholding_tax_label in label_lower)
+                  and parsed is not None):
                 amounts['withholding_tax'] = parsed
                 rate_match = re.search(r'(\d+(?:\.\d+)?)%', label_lower)
                 if rate_match:
@@ -997,8 +870,11 @@ def main():
 
         # 税金行标签（马来西亚用「销售与服务税」SST，其余「增值税」）
         tax_label = '增值税'
+        withholding_tax_label = '预扣税'
         if detected_entity and detected_entity in entity_config:
             tax_label = entity_config[detected_entity].get('tax_label', '增值税')
+            withholding_tax_label = entity_config[detected_entity].get(
+                'withholding_tax_label', '预扣税')
 
         entity_checks = [
             ('命令行主体', cli_entity),
@@ -1018,90 +894,35 @@ def main():
             print(f"❌ 文档币种 '{doc_currency}' 与数据目标币种 '{expected_currency}' 不一致")
             all_issues.append(f"文档币种 '{doc_currency}' ≠ 数据目标币种 '{expected_currency}'")
 
-        # ── 1. Header vs bank info consistency ──
+        # ── 1. Image header geometry ──
         header_xml_path = os.path.join(unpack_dir, 'word', 'header1.xml')
-        header_company = None
-        header_address = None
-
-        # 配了 header_image 的主体，页眉是一整幅位图：公司名和地址都印在图里，XML 里
-        # 没有对应文字，人工也改不动。所以「页眉公司名 vs 银行」「页眉地址归属」这两项
-        # 对它天然不适用，显式跳过并说明，而不是等 extract_header_info 取不到文字后
-        # 静默不检查——那样页眉万一被改回文字、或横幅整个丢了，都不会有人发现。
         img_spec = header_image_spec(entity_config.get(detected_entity or '', {}),
                                      entity_meta.get('header_image_defaults'))
-        if img_spec:
-            print(f"页眉形式: 横幅图 {img_spec['file']}")
-            print("ℹ️  页眉公司名/地址均在图内、XML 中无可核对文字，"
-                  "跳过「页眉公司名 vs 银行」与「页眉地址归属」检查")
-            if not os.path.exists(header_xml_path):
-                print("❌ header1.xml 不存在，图片页眉没有生效")
-                all_issues.append("header1.xml 不存在，图片页眉没有生效")
+        print(f"页眉形式: 横幅图 {img_spec['file']}")
+        if not os.path.exists(header_xml_path):
+            print("❌ header1.xml 不存在，图片页眉没有生效")
+            all_issues.append("header1.xml 不存在，图片页眉没有生效")
+        else:
+            img_path = os.path.join(SKILL_DIR, 'assets', img_spec['file'])
+            if not os.path.exists(img_path):
+                print(f"❌ 页眉图片不存在：{img_path}")
+                all_issues.append(
+                    f"页眉图片不存在：{img_path}（检查 config/entities.json 的 "
+                    f"header_image.file）")
             else:
-                img_path = os.path.join(SKILL_DIR, 'assets', img_spec['file'])
-                if not os.path.exists(img_path):
-                    print(f"❌ 页眉图片不存在：{img_path}")
-                    all_issues.append(
-                        f"页眉图片不存在：{img_path}（检查 config/entities.json 的 "
-                        f"header_image.file）")
-                else:
-                    img_issues, _ = check_header_image(
-                        ET.parse(header_xml_path).getroot(), img_spec, img_path)
-                    for issue in img_issues:
-                        print(f"❌ {issue}")
-                        all_issues.append(issue)
-                    if not img_issues:
-                        geom = header_image_geometry(img_spec, img_path)
-                        print(f"✅ 页眉横幅图版式与配置一致，且未越界"
-                              f"（图片框 {geom['ink_left_mm']:.1f}~"
-                              f"{geom['ink_left_mm'] + geom['ink_w_mm']:.1f}mm × "
-                              f"{img_spec['ink_top_mm']:.1f}~{geom['ink_bottom_mm']:.1f}mm / "
-                              f"蓝线 {geom['line_mm']:.1f}mm / "
-                              f"正文首行 {img_spec['body_top_mm']}mm）")
-        elif os.path.exists(header_xml_path):
-            header_tree = ET.parse(header_xml_path)
-            header_root = header_tree.getroot()
-            header_company, header_address = extract_header_info(header_root)
-            print(f"页眉公司名: {header_company}")
-            print(f"页眉地址: {header_address}")
-
-            logo_spec = header_logo_spec(entity_config.get(detected_entity or '', {}),
-                                         entity_meta.get('header_logo_defaults'))
-            if logo_spec:
-                # 模板里 logo 的原始偏移是「下移量」的基准，从模板现读，不从配置反推——
-                # 配置只说移动了多少，改成什么样由模板原始版式决定。
-                template_anchor = None
-                tpl_rel = entity_config.get(detected_entity or '', {}).get('template_file')
-                if tpl_rel:
-                    tpl_path = os.path.join(SKILL_DIR, tpl_rel)
-                    if os.path.isfile(tpl_path):
-                        try:
-                            with zipfile.ZipFile(tpl_path) as zf:
-                                tpl_root = ET.fromstring(zf.read('word/header1.xml'))
-                            tpl_logo, _ = _header_logo_anchors(tpl_root)
-                            if tpl_logo is not None:
-                                tpl_v = tpl_logo.find(WP + 'positionV/' + WP + 'posOffset')
-                                if tpl_v is not None:
-                                    template_anchor = int(tpl_v.text)
-                        except (KeyError, ET.ParseError, ValueError):
-                            template_anchor = None
-                if template_anchor is None:
-                    all_warnings.append("读不到模板里 logo 的原始偏移，"
-                                        "跳过「下移量 = 模板原位 + 配置值」核对")
-
-                logo_issues, logo_warnings = check_header_logo(
-                    header_root, logo_spec,
-                    os.path.join(unpack_dir, 'word'), template_anchor)
-                for issue in logo_issues:
+                img_issues, _ = check_header_image(
+                    ET.parse(header_xml_path).getroot(), img_spec, img_path)
+                for issue in img_issues:
                     print(f"❌ {issue}")
                     all_issues.append(issue)
-                for warning in logo_warnings:
-                    print(f"⚠️  {warning}")
-                    all_warnings.append(warning)
-                if not logo_issues:
-                    print(f"✅ 页眉 logo 版式与配置一致（模板原位下移 {logo_spec['shift_mm']}mm）")
-        else:
-            print("⚠️  header1.xml 不存在，跳过页眉与银行信息一致性检查")
-            all_warnings.append("header1.xml 不存在，无法核对页眉与银行信息")
+                if not img_issues:
+                    geom = header_image_geometry(img_spec, img_path)
+                    print(f"✅ 页眉横幅图版式与配置一致，且未越界"
+                          f"（图片框 {geom['ink_left_mm']:.1f}~"
+                          f"{geom['ink_left_mm'] + geom['ink_w_mm']:.1f}mm × "
+                          f"{img_spec['ink_top_mm']:.1f}~{geom['ink_bottom_mm']:.1f}mm / "
+                          f"蓝线 {geom['line_mm']:.1f}mm / "
+                          f"正文首行 {img_spec['body_top_mm']}mm）")
 
         bank_lines = find_bank_info_section(para_texts)
         bank_company = extract_company_from_bank(bank_lines)
@@ -1117,46 +938,6 @@ def main():
                 all_issues.append(f"银行公司名 '{bank_company}' ≠ 配置 '{cfg_company}' (entity={detected_entity})")
             elif cfg_company:
                 print(f"✅ 银行公司名与配置一致 (entity={detected_entity})")
-
-        # Check company name
-        if header_company and bank_company:
-            if company_names_match(header_company, bank_company):
-                print("✅ 页眉公司名与银行信息一致")
-            elif header_company in bank_company or bank_company in header_company:
-                print(f"⚠️  页眉公司名 '{header_company}' 与银行 '{bank_company}' 相似但非完全一致")
-                all_warnings.append(
-                    f"页眉公司名 '{header_company}' vs 银行 '{bank_company}' - 非完全一致")
-            else:
-                print(f"❌ 页眉公司名 '{header_company}' 与银行 '{bank_company}' 不一致")
-                all_issues.append(
-                    f"页眉公司名 '{header_company}' ≠ 银行 '{bank_company}'")
-
-        # The header carries the entity's registered office; the bank section carries
-        # the account-holding branch. Those legitimately differ - Vietnam is registered
-        # in Ho Chi Minh City but banks in Hanoi - so equality between the two is NOT
-        # required. What must hold is that the header address is the one configured for
-        # the entity we detected, which is what ties the header to the right entity.
-        if header_address:
-            configured = configured_header_addresses(entity_config.get(detected_entity or '', {}))
-            if not configured:
-                print("⚠️  配置中没有可核对的页眉地址，跳过页眉地址归属检查")
-                all_warnings.append(
-                    f"配置中无可核对的页眉地址，无法核对页眉地址归属 (entity={detected_entity})")
-            else:
-                match = next(
-                    (msg for ok, msg in
-                     (check_address_similarity(header_address, addr) for addr in configured)
-                     if ok), None)
-                if match:
-                    print(f"✅ 页眉地址与本主体配置一致 (entity={detected_entity}): {match}")
-                else:
-                    print(f"❌ 页眉地址 '{header_address}' 不属于本主体配置地址 {configured}")
-                    all_issues.append(
-                        f"页眉地址 '{header_address}' ∉ 配置地址 {configured} "
-                        f"(entity={detected_entity})")
-
-            if bank_address and bank_address != header_address:
-                print("ℹ️  页眉地址与开户行地址不同（注册地与开户行可不同城），不作为问题")
 
         # ── 2. Signature company vs bank company ──
         sig_company = extract_signature_company(tables, entity_config)
@@ -1176,7 +957,8 @@ def main():
             all_issues.append("未在签名区域找到签名公司名")
 
         # ── 3. Service name coverage ──
-        doc_service_names = extract_service_names_from_table(tables, tax_label)
+        doc_service_names = extract_service_names_from_table(
+            tables, tax_label, withholding_tax_label)
         if doc_service_names:
             print(f"文档中的服务名: {', '.join(doc_service_names)}")
             service_set = set(doc_service_names)
@@ -1253,7 +1035,8 @@ def main():
             print("✅ 备注检查: 无办理时间免责声明")
 
         # ── 7. Amount extraction & verification ──
-        amounts = extract_summary_amounts(tables, currency, tax_label)
+        amounts = extract_summary_amounts(
+            tables, currency, tax_label, withholding_tax_label)
 
         if amounts:
             print(f"金额: 小计={amounts.get('subtotal')} "
