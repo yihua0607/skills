@@ -120,6 +120,8 @@ python3 scripts/verify_quotation.py --entity xian --input "$QUOTATION_DIR/报价
 
 - 必须依次执行 validate → build → verify，不得跳过；validate error 必须修复，warning 根据业务判断。
 - `--entity` 必传；目标币种优先级为 `_meta.target_currency` > 主体默认币种。
+- **签名栏「报价人」**：默认取「当前使用者」——在**企业微信会话**里生成时填该使用者的通讯录姓名，**不在企业微信环境**（命令行/CI 等）则留空；取不到姓名也留空（绝不把 userid 印到客户可见文档上）。build 会打印一行 `报价人：…（来源）`。
+  **用户可改**：用户说「报价人写 XXX」时，把姓名写进 `quote_meta.quoter_name`（**持久生效，后续改单/换主体重出仍是该姓名**）；一次性指定可用 `--quoter <姓名>`（优先级最高），环境变量 `HERMES_QUOTER_NAME` 次之。`quote_meta.quoter_name` 显式写空串 = 该单强制不写报价人。取值优先级：`--quoter` > `quote_meta.quoter_name` > `HERMES_QUOTER_NAME` > 企微会话姓名 > 空。
 - verify 必须检查页眉、蓝线、银行、签名、服务覆盖、金额公式、字体、A4 和页脚。
 - 目视复核图片内公司名/地址、标题、客户、日期、表格和分页。
 

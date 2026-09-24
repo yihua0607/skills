@@ -17,6 +17,9 @@ META_FIELDS = {
 QUOTE_META_FIELDS = {
     'title_line1', 'title_line2', 'quote_date', 'customer_name', 'contact_name',
     'contact_info', 'contract_no', 'payment_terms',
+    # 签名栏「报价人」覆盖值：不填 = 用默认（企微会话取使用者姓名，其他环境留空）；
+    # 填了就用它；显式填空串 = 强制留空（见 scripts/quoter_name.py）
+    'quoter_name',
 }
 SERVICE_FIELDS = {
     'line_id', 'ai_code', 'code', 'name', 'category', 'quantity', 'unit', 'days',
@@ -297,7 +300,7 @@ def validate_and_normalize_data(data, data_path=None):
         raw_meta = {}
     reject_unknown_fields(raw_meta, QUOTE_META_FIELDS, 'quote_meta', errors)
     quote_meta = {}
-    for key in ('title_line1', 'title_line2', 'quote_date', 'customer_name', 'contact_name', 'contact_info', 'contract_no'):
+    for key in ('title_line1', 'title_line2', 'quote_date', 'customer_name', 'contact_name', 'contact_info', 'contract_no', 'quoter_name'):
         value = raw_meta.get(key)
         if value is not None:
             if not isinstance(value, str):

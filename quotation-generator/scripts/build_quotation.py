@@ -40,6 +40,7 @@ from scripts.quotation_common import (
     xml_safe_text,
 )
 from scripts.sync_payment_terms import extract_payment_terms, check_payment_terms_reasonableness
+from scripts.quoter_name import resolve as resolve_quoter, UNSET as QUOTER_UNSET
 
 # Skill root directory (where SKILL.md lives)
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -129,6 +130,8 @@ def main():
                         help='Existing .docx whose visible payment terms should be preserved for this rebuild')
     parser.add_argument('--overwrite-payment-terms', action='store_true',
                         help='Use quotation.json/entity payment terms even when rebuilding over an existing .docx')
+    parser.add_argument('--quoter', default=None,
+                        help='Signature "报价人" name; default: current WeCom user\'s name in a WeCom session, else empty')
     args = parser.parse_args()
 
     entity = args.entity
@@ -145,6 +148,12 @@ def main():
         sys.exit(2)
     for warning in quotation_data['warnings']:
         print(f'⚠️  WARNING: {warning}')
+
+    # 签名栏「报价人」：默认 = 企微会话使用者姓名（其他环境留空）；
+    # 允许覆盖：--quoter > quote_meta.quoter_name（可持久，改单重出仍生效）> HERMES_QUOTER_NAME
+    quoter_name, quoter_src = resolve_quoter(
+        args.quoter, quotation_data['quote_meta'].get('quoter_name', QUOTER_UNSET))
+    print(f"报价人：{quoter_name or '（留空）'}（{quoter_src}）")
 
     try:
         TEMPLATE = template_path_for_entity(entity_cfg)
@@ -1192,7 +1201,8 @@ def main():
 
     # Row 1
     sig_row1 = ET.Element(w('tr'))
-    for text in ['报价人：', '同意报价人：']:
+    quoter_label = f'报价人：{quoter_name}' if quoter_name else '报价人：'
+    for text in [quoter_label, '同意报价人：']:
         tc = ET.Element(w('tc'))
         tcPr = ET.SubElement(tc, w('tcPr'))
         tcW = ET.SubElement(tcPr, w('tcW'))
