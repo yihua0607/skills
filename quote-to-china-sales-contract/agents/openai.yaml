@@ -1,0 +1,6 @@
+interface:
+  display_name: "中国公司印尼服务合同"
+  short_description: "为中国签约主体生成印尼服务合同并同步报价单信息"
+  default_prompt: "使用 $quote-to-china-sales-contract 根据报价单为中国公司生成一份印尼服务合同。"
+policy:
+  allow_implicit_invocation: true
