@@ -17,6 +17,7 @@ description: >
 - **不改生成脚本**：执行报价任务不得修改 build/validate/verify/fetch；业务问题改数据或向用户确认。
 - **付款方式只提醒**：脚本只 warning 明显异常，不替用户决定付款条件。
 - **重复 aiCode 不累加**：相同 aiCode 默认去重，用户明确要求多一行时才新增独立行项。
+- **合同编号只使用英文大写字母**：`quote_meta.contract_no` 写入前统一把英文字母转换为大写；成稿中的合同号运行格式必须包含 Word 的全大写属性，使后续手工输入的小写字母也以大写显示。合同编号中的数字、斜杠、连字符等非字母字符保持原样。
 
 ## 签约主体
 
@@ -103,6 +104,7 @@ stdout 必须原样存为 `queried_services.json`（不得混入 stderr），它
 
 - `_meta`：至少包含 `schema_version: 2`；记录主体、币种、查询文件和汇率。只要服务有 `ai_code`，就必须配置 `query_result_file`。
 - `quote_meta`：标题、日期、客户、合同号和非空付款条件。
+- `quote_meta.contract_no`：允许为空；非空时英文字母统一规范为大写，生成结果不得出现小写英文字母。
 - `services`：唯一服务数据源；`line_id` 唯一，`quantity` 必须显式填写。
 - `discount_amount`：整数，无优惠填 0，不得超过小计。
 - `withholding_tax`：顶层布尔字段；泰国按确认结果填写，STC 必须为 `true`。
@@ -123,6 +125,7 @@ python3 scripts/verify_quotation.py --entity xian --input "$QUOTATION_DIR/报价
 - **签名栏「报价人」**：默认取「当前使用者」——在**企业微信会话**里生成时填该使用者的通讯录姓名，**不在企业微信环境**（命令行/CI 等）则留空；取不到姓名也留空（绝不把 userid 印到客户可见文档上）。build 会打印一行 `报价人：…（来源）`。
   **用户可改**：用户说「报价人写 XXX」时，把姓名写进 `quote_meta.quoter_name`（**持久生效，后续改单/换主体重出仍是该姓名**）；一次性指定可用 `--quoter <姓名>`（优先级最高），环境变量 `HERMES_QUOTER_NAME` 次之。`quote_meta.quoter_name` 显式写空串 = 该单强制不写报价人。取值优先级：`--quoter` > `quote_meta.quoter_name` > `HERMES_QUOTER_NAME` > 企微会话姓名 > 空。
 - verify 必须检查页眉、蓝线、银行、签名、服务覆盖、金额公式、字体、A4 和页脚。
+- verify 还必须检查合同号的可见文本不含英文小写字母，并确认合同号文本运行包含 `w:caps` 全大写格式。
 - 目视复核图片内公司名/地址、标题、客户、日期、表格和分页。
 
 企业微信网关执行时读取 [references/wecom-workflow.md](references/wecom-workflow.md)。业务或数据问题应修正 `quotation.json` / `entities.json` 或向用户确认，不提示联系开发者。只有有效数据仍稳定触发脚本异常、配置与成稿矛盾且无法交付时，才报告脚本缺陷。不得绕过校验。

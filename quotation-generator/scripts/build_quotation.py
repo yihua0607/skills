@@ -493,14 +493,25 @@ def main():
 
         return p
 
-    def make_info_line(label, value):
+    def make_info_line(label, value, value_all_caps=False):
         """Make a header info line matching template — unified pattern with space-padded label + colon + value."""
         r1 = ET.Element(w('r'))
         r1.append(make_rpr(FONT_NAME, SZ_BODY))
         t1 = ET.SubElement(r1, w('t'))
         t1.text = xml_safe_text(label)
         r2 = ET.Element(w('r'))
-        r2.append(make_rpr(FONT_NAME, SZ_BODY))
+        value_rpr = make_rpr(FONT_NAME, SZ_BODY)
+        if value_all_caps:
+            # ECMA-376 rPr order: caps follows rFonts/b/bCs and precedes color/sz.
+            caps = ET.Element(w('caps'))
+            color = value_rpr.find(w('color'))
+            size = value_rpr.find(w('sz'))
+            anchor = color if color is not None else size
+            if anchor is None:
+                value_rpr.append(caps)
+            else:
+                value_rpr.insert(list(value_rpr).index(anchor), caps)
+        r2.append(value_rpr)
         t2 = ET.SubElement(r2, w('t'))
         t2.text = xml_safe_text(value)
         return make_para([r1, r2], spacing_after=0, line='280')
@@ -872,7 +883,9 @@ def main():
     else:
         QUOTE_DATE = f"{date.today().year}年{date.today().month}月{date.today().day}日"
     body_children.append(make_info_line(pad_label('报价日期') + '：', QUOTE_DATE))
-    body_children.append(make_info_line(pad_label('合同号') + '：', quote_meta.get('contract_no', '')))
+    body_children.append(make_info_line(
+        pad_label('合同号') + '：', quote_meta.get('contract_no', '').upper(), value_all_caps=True
+    ))
 
     # 2. Title: CLI override → quote_meta → defaults
     title_line1 = args.title_line1 or quote_meta.get('title_line1') or '报价单'

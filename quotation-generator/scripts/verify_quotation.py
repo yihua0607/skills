@@ -839,6 +839,25 @@ def main():
         doc_body = doc_root.find(w('body'))
         para_texts = extract_paragraph_texts(doc_root)
         tables = doc_body.findall('.//' + w('tbl')) if doc_body is not None else []
+
+        # Contract number must remain visually uppercase, including later manual edits.
+        contract_paras = [(p, text) for p, text in para_texts if '合同号' in text]
+        if not contract_paras:
+            all_issues.append('未找到合同号字段')
+            print('❌ 未找到合同号字段')
+        else:
+            contract_p, contract_text = contract_paras[0]
+            contract_value = contract_text.split('：', 1)[-1].strip()
+            if re.search(r'[a-z]', contract_value):
+                all_issues.append(f"合同号含英文小写字母: {contract_value}")
+                print(f"❌ 合同号含英文小写字母: {contract_value}")
+            runs = contract_p.findall('.//' + w('r'))
+            value_runs = runs[-1:]  # builder emits label run, then value run (possibly empty)
+            if not value_runs or value_runs[0].find('./' + w('rPr') + '/' + w('caps')) is None:
+                all_issues.append('合同号文本未设置 Word 全大写格式 w:caps')
+                print('❌ 合同号文本未设置 Word 全大写格式 w:caps')
+            else:
+                print('✅ 合同号为英文大写并设置 w:caps')
         actual_entity = detect_entity(para_texts, entity_config)
         cli_entity = args.entity
         meta_entity = None

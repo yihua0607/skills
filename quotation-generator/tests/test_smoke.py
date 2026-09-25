@@ -254,6 +254,37 @@ def _tamper_page_margin(src_path, dst_path, name, value):
 
 
 class TestQuotationSmoke(unittest.TestCase):
+    def test_contract_number_is_uppercase_and_has_caps_format(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_path = _copy_example(tmpdir, 'minimal_quotation.json')
+            with open(data_path, encoding='utf-8') as handle:
+                data = json.load(handle)
+            data['quote_meta']['contract_no'] = 'shm/ii/s8888-a'
+            with open(data_path, 'w', encoding='utf-8') as handle:
+                json.dump(data, handle, ensure_ascii=False, indent=2)
+            output_path = os.path.join(tmpdir, 'uppercase-contract-number.docx')
+            rc, out, err = _run_script('build_quotation.py', [
+                '--entity', data['_meta']['applicable_entity'],
+                '--data', data_path,
+                '--output', output_path,
+            ])
+            self.assertEqual(rc, 0, f"build failed:\n{out}\n{err}")
+            with zipfile.ZipFile(output_path) as zf:
+                root = ET.fromstring(zf.read('word/document.xml'))
+            W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+            contract_para = next(
+                p for p in root.iter(f'{{{W}}}p')
+                if '合同号' in ''.join((t.text or '') for t in p.iter(f'{{{W}}}t'))
+            )
+            runs = list(contract_para.iter(f'{{{W}}}r'))
+            value_run = next(
+                r for r in runs
+                if 'SHM/II/S8888-A' in ''.join((t.text or '') for t in r.iter(f'{{{W}}}t'))
+            )
+            self.assertIsNotNone(value_run.find(
+                f'./{{{W}}}rPr/{{{W}}}caps'
+            ))
+
 
     def test_jakarta_end_to_end(self):
         """Smoke test using the Jakarta sample (IDR, 11% VAT)."""

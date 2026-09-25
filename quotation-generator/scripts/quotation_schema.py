@@ -307,6 +307,10 @@ def validate_and_normalize_data(data, data_path=None):
                 errors.append(f'quote_meta.{key} must be text when provided')
             else:
                 quote_meta[key] = value.strip()
+    # Contract numbers are a synchronized identifier shared with contracts.
+    # Canonicalize ASCII letters to uppercase while preserving digits and separators.
+    if 'contract_no' in quote_meta:
+        quote_meta['contract_no'] = quote_meta['contract_no'].upper()
     payment_terms = raw_meta.get('payment_terms')
     normalized_terms = None
     if payment_terms is not None:

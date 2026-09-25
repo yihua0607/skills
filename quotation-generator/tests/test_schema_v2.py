@@ -27,6 +27,11 @@ class TestSchemaV2(unittest.TestCase):
         self.assertIn('documents', service)
         self.assertNotIn('fee_details', normalized)
 
+    def test_contract_number_is_canonicalized_to_uppercase(self):
+        self.data['quote_meta']['contract_no'] = 'shm/ii/s8888-a'
+        normalized = validate_and_normalize_data(self.data)
+        self.assertEqual(normalized['quote_meta']['contract_no'], 'SHM/II/S8888-A')
+
     def test_old_parallel_collections_do_not_satisfy_missing_service_fields(self):
         broken = copy.deepcopy(self.data)
         service = broken['services'][0]
