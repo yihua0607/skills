@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from contract_common import extract_quotation_fields, identify_entity, split_contact
+from contract_common import extract_quotation_fields, resolve_party_snapshot, split_contact
 
 
 def main() -> None:
@@ -13,12 +13,12 @@ def main() -> None:
     parser.add_argument("quotation")
     args = parser.parse_args()
     quotation = Path(args.quotation).resolve()
-    entity, cfg = identify_entity(quotation)
+    party_b = resolve_party_snapshot(quotation)
     fields = extract_quotation_fields(quotation)
     contact_email_or_wechat, contact_phone = split_contact(fields["contact_info"])
     print(json.dumps({
-        "entity": entity,
-        "party_b": {"company": cfg["company"], **cfg["contract"]},
+        "entity": party_b["entity"],
+        "party_b": party_b,
         "party_a": {
             "customer_name": fields["customer_name"],
             "representative": fields["contact_name"],

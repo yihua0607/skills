@@ -1,0 +1,169 @@
+{
+  "schemaVersion": "1.2",
+  "description": "合同乙方主体配置。匹配规则、代表人、职务、邮箱、地址、争议解决默认值的单一事实来源。",
+  "fixedAddresses": {
+    "ID_JAKARTA": "Office Tower 3 - Ciputra International Lt. 5, Jl. Lingkar Luar Barat Blok A No. 1, Kel. Rawa Buaya, Kec. Cengkareng, Jakarta Barat, DKI Jakarta, Indonesia 11740"
+  },
+  "quotationEntityBindings": {
+    "beijing": {
+      "party": "北京山海图科技有限公司",
+      "headerName": "北京山海图科技有限公司",
+      "headerAddress": "北京市海淀区西四环北路158号1幢3层3-65"
+    },
+    "xian": {
+      "party": "北京山海图科技有限公司",
+      "headerName": "北京山海图科技有限公司西安分公司",
+      "headerAddress": "陕西省西安市高新区科技路林凯国际大厦15层1501-01-03室"
+    },
+    "shenzhen": {
+      "party": "北京山海图科技有限公司",
+      "headerName": "北京山海图科技有限公司深圳分公司",
+      "headerAddress": "深圳市南山区招商街道南海大道1048号海翔广场717室"
+    },
+    "shanghai": {
+      "party": "北京山海图科技有限公司",
+      "headerName": "北京山海图科技有限公司上海分公司",
+      "headerAddress": "上海市青浦区虹桥LM世界中心L3-B栋305A"
+    },
+    "shanghai_new": {
+      "party": "上海山海图新企业咨询有限公司",
+      "headerName": "上海山海图新企业咨询有限公司",
+      "headerAddress": "上海市青浦区虹桥LM世界中心L3-B栋305A"
+    },
+    "jakarta": {
+      "party": "PT. SHAN HAI MAP",
+      "headerName": "PT. SHAN HAI MAP"
+    },
+    "sci": {
+      "party": "PT SHM CONSULTING INDONESIA",
+      "headerName": "PT SHM CONSULTING INDONESIA"
+    },
+    "deyin": {
+      "party": "PT DEIN TALENT SOLUTIONS",
+      "headerName": "PT DEIN TALENT SOLUTIONS"
+    },
+    "slf": {
+      "party": "SEA LAW FIRM",
+      "headerName": "SEA LAW FIRM"
+    },
+    "stc": {
+      "party": "PT. SHM TAX CONSULTING",
+      "headerName": "PT. SHM TAX CONSULTING"
+    }
+  },
+  "parties": [
+    {
+      "name": "北京山海图科技有限公司",
+      "matchType": "exact_or_branch",
+      "country": "CN",
+      "address": { "source": "header" },
+      "representative": "张平",
+      "title": "总经理",
+      "email": "zhangping@shanhaimap.com",
+      "notes": "中国分公司规则：名称以本主体开头且明确含'分公司'"
+    },
+    {
+      "name": "上海山海图新企业咨询有限公司",
+      "matchType": "exact",
+      "country": "CN",
+      "address": { "source": "header" },
+      "representative": "卢少博",
+      "title": "总经理",
+      "email": "sccot@shanhaimap.com"
+    },
+    {
+      "name": "PT. SHAN HAI MAP",
+      "matchType": "normalized",
+      "country": "ID",
+      "address": { "source": "fixed", "ref": "ID_JAKARTA" },
+      "representative": "Roger Hong Sye Phearn",
+      "title": "Director",
+      "email": "roger@shanhaimap.com",
+      "notes": "允许句点与大小写排版差异"
+    },
+    {
+      "name": "PT SHM CONSULTING INDONESIA",
+      "matchType": "normalized",
+      "country": "ID",
+      "address": { "source": "fixed", "ref": "ID_JAKARTA" },
+      "representative": "Roger Hong Sye Phearn",
+      "title": "Director",
+      "email": "roger@shanhaimap.com",
+      "notes": "允许句点与大小写排版差异"
+    },
+    {
+      "name": "PT DEIN TALENT SOLUTIONS",
+      "matchType": "normalized",
+      "country": "ID",
+      "address": { "source": "fixed", "ref": "ID_JAKARTA" },
+      "representative": "Roger Hong Sye Phearn",
+      "title": "Director",
+      "email": "roger@shanhaimap.com",
+      "notes": "允许句点与大小写排版差异"
+    },
+    {
+      "name": "PT. SHM TAX CONSULTING",
+      "matchType": "normalized",
+      "country": "ID",
+      "address": { "source": "fixed", "ref": "ID_JAKARTA" },
+      "representative": "Yorick Koh",
+      "title": "Director",
+      "email": "yorick@shanhaimap.com",
+      "notes": "允许句点与大小写排版差异"
+    },
+    {
+      "name": "SEA LAW FIRM",
+      "matchType": "alias_group",
+      "country": "ID",
+      "aliases": ["FIRMA HUKUM SEA", "Hukum SEA Firma"],
+      "address": { "source": "fixed", "ref": "ID_JAKARTA" },
+      "representative": "Nadifa Assegaf",
+      "title": "Partner/ 合伙人",
+      "email": "nadifa@lawfirmsea.com",
+      "notes": "三种名称视为同一规则组"
+    }
+  ],
+  "disputeDefaults": {
+    "CN": {
+      "上海": {
+        "location": "中国上海",
+        "institution": "上海仲裁委员会（SHAC）"
+      },
+      "default": {
+        "location": null,
+        "institution": null,
+        "note": "沿用模板默认，除非用户另有明确要求"
+      }
+    },
+    "ID": {
+      "default": {
+        "law": "印度尼西亚共和国法律",
+        "language": "中文",
+        "institution": "印尼国家仲裁委员会（BANI）",
+        "location": "印度尼西亚雅加达",
+        "localized": {
+          "law": {
+            "id": "Negara Republik Indonesia",
+            "cn": "印度尼西亚共和国法律",
+            "en": "Republic of Indonesia"
+          },
+          "language": {
+            "id": "Mandarin",
+            "cn": "中文",
+            "en": "Chinese"
+          },
+          "institution": {
+            "id": "Badan Arbitrase Nasional Indonesia (BANI)",
+            "cn": "印尼国家仲裁委员会（BANI）",
+            "en": "Indonesian National Arbitration Board (BANI)"
+          },
+          "location": {
+            "id": "Jakarta, Indonesia",
+            "cn": "印度尼西亚雅加达",
+            "en": "Jakarta, Indonesia"
+          }
+        }
+      }
+    }
+  }
+}
