@@ -1,16 +1,10 @@
-# 乙方代表人和邮箱规则
+# 乙方主体规则
 
-按报价单页眉中显示的法定公司全称匹配：
-
-| 报价主体 | 代表人 | 电子邮箱 |
-|---|---|---|
-| 北京山海图科技有限公司 | 张平 | zhangping@shanhaimap.com |
-| 北京山海图科技有限公司的任何分公司（公司名称以“北京山海图科技有限公司”开头并明确含“分公司”） | 张平 | zhangping@shanhaimap.com |
-| 上海山海图新企业咨询有限公司 | 卢少博 | sccot@shanhaimap.com |
+乙方合同数据的唯一配置源是报价单 Skill 的 `config/entities.json`。中国签约主体必须配置 `contract.address`、`contract.representative`、`contract.title`、`contract.email`、`contract.dispute_place` 和 `contract.arbitration`。
 
 匹配规则：
 
-- 公司名称和地址原样取自报价单页眉；本表只补充代表人和邮箱。
-- “北京山海图科技有限公司及其分公司”包含例如“北京山海图科技有限公司深圳分公司”，但不得把其他相似名称或关联公司纳入。
+- `scripts/extract_quotation.py` 通过报价单内页眉图片与统一配置中的 `header_image.file` 做 SHA-256 匹配，得到唯一主体；不得按文件名、正文公司名或相似名称推断。
+- 公司名称读取主体配置的 `company`；地址、代表人、职务、邮箱和争议解决读取同一主体的 `contract` 对象。
 - 邮箱写入普通文本，不保留 `mailto:` 包装。
-- 未命中任何一行时停止生成并请用户提供代表人和邮箱；不得类推。
+- 页眉图片未命中、命中多个主体或 `contract` 字段缺失时停止生成并提示维护统一配置；不得类推。
