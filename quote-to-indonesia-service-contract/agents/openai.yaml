@@ -1,0 +1,6 @@
+interface:
+  display_name: "报价单生成印尼服务合同"
+  short_description: "按乙方国家自动生成中文版或三语版印尼服务合同"
+  default_prompt: "使用 $quote-to-indonesia-service-contract 根据报价单生成印尼服务合同，并自动选择中国主体中文版或印尼主体三语版。"
+policy:
+  allow_implicit_invocation: true
