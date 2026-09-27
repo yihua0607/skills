@@ -10,7 +10,10 @@ from pathlib import Path
 
 from lxml import etree
 
-from contract_common import NS, controls_by_tag, extract_quotation_fields, qn, resolve_party_snapshot
+from contract_common import (
+    NS, PARTY_B_FONT_ATTRS, PARTY_B_FONT_SIZE, PARTY_B_HOME_TAGS,
+    controls_by_tag, extract_quotation_fields, qn, resolve_party_snapshot,
+)
 
 
 def control_text(control) -> str:
@@ -54,6 +57,28 @@ def main() -> None:
                     issues.append(f"乙方锁定字段错误地标为可编辑: {tag}")
         if actual_lock_tags != expected_lock_tags:
             issues.append(f"乙方七处锁定字段不正确: {sorted(actual_lock_tags)}")
+
+        for tag in PARTY_B_HOME_TAGS:
+            control = controls.get(tag)
+            if control is None:
+                continue
+            rprs = control.xpath("w:sdtPr/w:rPr | .//w:sdtContent//w:rPr", namespaces=NS)
+            if not rprs:
+                issues.append(f"首页乙方字段缺少字体设置: {tag}")
+                continue
+            for rpr in rprs:
+                fonts = rpr.find("w:rFonts", NS)
+                font_values = {
+                    script: fonts.get(qn(script)) if fonts is not None else None
+                    for script in PARTY_B_FONT_ATTRS
+                }
+                size = rpr.find("w:sz", NS)
+                size_cs = rpr.find("w:szCs", NS)
+                if font_values != PARTY_B_FONT_ATTRS or size is None or size_cs is None \
+                        or size.get(qn("val")) != PARTY_B_FONT_SIZE \
+                        or size_cs.get(qn("val")) != PARTY_B_FONT_SIZE:
+                    issues.append(f"首页乙方字段字体或字号不统一: {tag}")
+                    break
 
         expected_values = {
             "山海图单位名称": expected["company"], "地址": expected["address"],

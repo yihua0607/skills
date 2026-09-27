@@ -5,13 +5,17 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from lxml import etree
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from contract_common import NS, controls_by_tag, extract_quotation_fields, resolve_party_snapshot, split_contact
+from contract_common import (
+    NS, PARTY_B_FONT_ATTRS, PARTY_B_FONT_SIZE, PARTY_B_HOME_TAGS,
+    controls_by_tag, extract_quotation_fields, identify_entity, qn, resolve_party_snapshot, split_contact,
+)
 
 
 COMMON_TAGS = {
@@ -84,6 +88,11 @@ class ContractSkillTests(unittest.TestCase):
         slf = resolve_party_snapshot(ROOT / "tests/fixtures/slf-quotation.docx")
         self.assertEqual(slf["company"], "SEA LAW FIRM")
 
+    def test_exact_header_hash_precedes_header_text(self):
+        with patch("contract_common._header_text", side_effect=AssertionError("不应先读取页眉文字")):
+            entity, _ = identify_entity(ROOT / "tests/fixtures/xian-quotation.docx")
+        self.assertEqual(entity, "xian")
+
     def test_chinese_and_trilingual_end_to_end(self):
         for fixture in ("xian-quotation.docx", "slf-quotation.docx"):
             quotation = ROOT / "tests/fixtures" / fixture
@@ -101,6 +110,19 @@ class ContractSkillTests(unittest.TestCase):
                 self.assertEqual(verify.returncode, 0, verify.stdout + verify.stderr)
                 qfields = extract_quotation_fields(quotation)
                 controls = controls_by_tag(document_root(output))
+                for tag in PARTY_B_HOME_TAGS:
+                    rprs = controls[tag].xpath("w:sdtPr/w:rPr | .//w:sdtContent//w:rPr", namespaces=NS)
+                    self.assertTrue(rprs, tag)
+                    for rpr in rprs:
+                        fonts = rpr.find("w:rFonts", NS)
+                        self.assertIsNotNone(fonts, tag)
+                        self.assertEqual(
+                            {script: fonts.get(qn(script)) for script in PARTY_B_FONT_ATTRS},
+                            PARTY_B_FONT_ATTRS,
+                            tag,
+                        )
+                        self.assertEqual(rpr.find("w:sz", NS).get(qn("val")), PARTY_B_FONT_SIZE, tag)
+                        self.assertEqual(rpr.find("w:szCs", NS).get(qn("val")), PARTY_B_FONT_SIZE, tag)
                 for tag, value in {
                     "party_a_signature_name": qfields["customer_name"],
                     "party_a_signature_rep": qfields["contact_name"],

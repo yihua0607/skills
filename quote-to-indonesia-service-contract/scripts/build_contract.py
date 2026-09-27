@@ -11,7 +11,10 @@ from zoneinfo import ZoneInfo
 
 from lxml import etree
 
-from contract_common import NS, R, controls_by_tag, extract_quotation_fields, qn, resolve_party_snapshot, split_contact
+from contract_common import (
+    NS, R, PARTY_B_FONT_ATTRS, PARTY_B_FONT_SIZE, PARTY_B_HOME_TAGS,
+    controls_by_tag, extract_quotation_fields, qn, resolve_party_snapshot, split_contact,
+)
 from merge_quotation import merge
 
 
@@ -77,6 +80,27 @@ def _lock(sdt) -> None:
     if lock is None:
         lock = etree.SubElement(props, qn("lock"))
     lock.set(qn("val"), "sdtContentLocked")
+
+
+def _set_party_b_typography(sdt) -> None:
+    props = sdt.find("w:sdtPr", NS)
+    control_rpr = props.find("w:rPr", NS)
+    if control_rpr is None:
+        control_rpr = etree.Element(qn("rPr"))
+        props.insert(0, control_rpr)
+    for rpr in [control_rpr, *sdt.xpath(".//w:sdtContent//w:rPr", namespaces=NS)]:
+        fonts = rpr.find("w:rFonts", NS)
+        if fonts is None:
+            fonts = etree.Element(qn("rFonts"))
+            rpr.insert(0, fonts)
+        fonts.attrib.clear()
+        for script, font in PARTY_B_FONT_ATTRS.items():
+            fonts.set(qn(script), font)
+        for element_name in ("sz", "szCs"):
+            element = rpr.find(f"w:{element_name}", NS)
+            if element is None:
+                element = etree.SubElement(rpr, qn(element_name))
+            element.set(qn("val"), PARTY_B_FONT_SIZE)
 
 
 def _unlock(sdt) -> None:
@@ -281,6 +305,7 @@ def build(template: Path, quotation: Path, output: Path, sign_date: str) -> None
         for tag in ("sales_name", "sales_email", "sales_wechat"): _set_text(controls[tag], "")
         for tag, key in PARTY_A_TAGS.items(): _set_text(controls[tag], party_a[key])
         for tag, key in PARTY_B_TAGS.items(): _set_text(controls[tag], party_b[key]); _lock(controls[tag])
+        for tag in PARTY_B_HOME_TAGS: _set_party_b_typography(controls[tag])
         if party_b["dispute_place"]:
             _set_text(controls["dispute_place"], party_b["dispute_place"])
         if party_b["arbitration"]:
@@ -383,6 +408,7 @@ def build_trilingual(template: Path, quotation: Path, output: Path, sign_date: s
         for tag in ("sales_name", "sales_email", "sales_wechat"): _set_text(controls[tag], "")
         for tag, key in PARTY_A_TAGS.items(): _set_text(controls[tag], party_a[key])
         for tag, key in PARTY_B_TAGS.items(): _set_text(controls[tag], str(party_b[key])); _lock(controls[tag])
+        for tag in PARTY_B_HOME_TAGS: _set_party_b_typography(controls[tag])
         _set_text(controls["termination_completed"], "☑")
         _set_text(controls["termination_date_enabled"], "☐")
         _set_text(controls["termination_early"], "☑")

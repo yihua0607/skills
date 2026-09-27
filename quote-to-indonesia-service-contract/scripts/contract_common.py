@@ -13,6 +13,16 @@ W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 NS = {"w": W, "r": R}
 
+PARTY_B_HOME_TAGS = (
+    "山海图单位名称", "地址", "山海图授权代表人",
+    "山海图授权代表人的职务", "party_b_email",
+)
+PARTY_B_FONT_ATTRS = {
+    "ascii": "Arial Unicode MS", "hAnsi": "Arial Unicode MS",
+    "cs": "Arial Unicode MS", "eastAsia": "Arial Unicode MS",
+}
+PARTY_B_FONT_SIZE = "24"  # OOXML half-points: 12 pt
+
 
 def qn(local: str) -> str:
     return f"{{{W}}}{local}"
@@ -92,18 +102,12 @@ def identify_entity(quotation: Path) -> tuple[str, dict]:
     if not eligible:
         raise ValueError("报价主体桥接配置为空；请检查 parties.json → quotationEntityBindings。")
 
-    visible_name = _visible_name_from_header(_header_text(quotation), party_config)
-    if visible_name:
-        for key, binding in bindings.items():
-            if key in eligible and _normalized(binding["headerName"]) == _normalized(visible_name):
-                return key, eligible[key]
-
-    configured_hashes: dict[str, tuple[str, dict]] = {}
+    configured_hashes: dict[str, list[tuple[str, dict]]] = {}
     configured_images: list[tuple[str, dict, bytes]] = []
     for key, cfg in eligible.items():
         image = quotation_skill_root() / "assets" / cfg["header_image"]["file"]
         data = image.read_bytes()
-        configured_hashes[_sha256(data)] = (key, cfg)
+        configured_hashes.setdefault(_sha256(data), []).append((key, cfg))
         configured_images.append((key, cfg, data))
 
     quote_images: list[bytes] = []
@@ -111,10 +115,16 @@ def identify_entity(quotation: Path) -> tuple[str, dict]:
         for name in zf.namelist():
             if name.startswith("word/media/"):
                 data = zf.read(name)
-                exact = configured_hashes.get(_sha256(data))
-                if exact:
-                    return exact
+                exact = configured_hashes.get(_sha256(data), [])
+                if len(exact) == 1:
+                    return exact[0]
                 quote_images.append(data)
+
+    visible_name = _visible_name_from_header(_header_text(quotation), party_config)
+    if visible_name:
+        for key, binding in bindings.items():
+            if key in eligible and _normalized(binding["headerName"]) == _normalized(visible_name):
+                return key, eligible[key]
 
     scored: list[tuple[float, str, dict]] = []
     for quote_image in quote_images:
@@ -128,7 +138,7 @@ def identify_entity(quotation: Path) -> tuple[str, dict]:
         runner_up = scored[1][0] if len(scored) > 1 else 999.0
         if best[0] <= 4.0 and runner_up - best[0] >= 1.0:
             return best[1], best[2]
-    raise ValueError("无法从可见页眉文本或页眉图片可靠识别签约主体；请用户确认页眉主体。")
+    raise ValueError("无法通过页眉图片哈希、页眉文字或图片相似度可靠识别签约主体；需视觉读取页眉后确认。")
 
 
 def _party_by_canonical_name(config: dict, name: str) -> dict:

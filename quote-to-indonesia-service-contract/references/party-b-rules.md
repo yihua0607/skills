@@ -4,9 +4,10 @@
 
 ## 识别顺序
 
-1. 优先读取报价单页眉中的可见公司名称，并与 `quotationEntityBindings[].headerName` 匹配。
-2. 页眉只有徽标或名称不可提取时，使用 `entities.json` 中该报价主体的页眉图片 SHA-256 指纹。
-3. 仅在前两步未命中时使用保守的感知图片相似度；必须唯一命中且低于阈值，否则停止并请用户确认。
+1. 先计算 DOCX 内图片的 SHA-256，与 `entities.json` 配置的页眉图片精确匹配；唯一命中即确定主体，不读取或渲染页眉。
+2. 哈希未命中时，从页眉 XML 提取可见公司名称，与 `quotationEntityBindings[].headerName` 匹配；此步骤也不使用视觉能力。
+3. 前两步未命中时，使用保守的感知图片相似度；必须唯一命中且低于阈值。
+4. 脚本仍无法判断时，只渲染或截取页眉并用视觉能力读取公司名称，不读取整页；视觉结果仍须匹配受支持主体，否则停止并请用户确认。
 
 不得根据文件名、币种、服务地点、收款方或客户名称推断报价主体。
 
@@ -28,27 +29,7 @@
 
 ## normalized 归一化算法
 
-`matchType: normalized` 的匹配按以下确定性算法执行，不得靠语感判断：
-
-1. 输入：报价单页眉公司名 `s1` 与 parties.json 条目 `name`（或 `aliases` 元素）`s2`。
-2. 对两者分别做归一化：
-   - 去除所有 ASCII 句点 `.`、全角句点 `．`、空白字符（含空格、制表符、不间断空格）。
-   - 全部字符转为小写（Unicode case folding）。
-3. 归一化结果字符串**严格相等**即视为命中，否则不命中。
-
-合同名称使用 `quotationEntityBindings[].headerName`，它是当前受支持报价主体的可见标准名称；法定主体字段取所绑定的 `parties[]` 条目。
-
-示例（以 `PT. SHAN HAI MAP` 条目为例）：
-
-| 报价单页眉文本 | 归一化结果 | 命中 |
-|---|---|---|
-| `PT. SHAN HAI MAP` | `ptshanhaimap` | ✅ |
-| `PT SHAN HAI MAP` | `ptshanhaimap` | ✅ |
-| `P.T. SHAN HAI MAP` | `ptshanhaimap` | ✅ |
-| `PT.SHANHAIMAP` | `ptshanhaimap` | ✅ |
-| `pt shan hai map` | `ptshanhaimap` | ✅ |
-| `PT SHAN HAI MAPS` | `ptshanhamaps` | ❌ |
-| `PT SHANMAI MAP` | `ptshanmaimap` | ❌ |
+分别去除报价单页眉公司名与 `parties.json` 名称（或别名）中的 ASCII/全角句点和全部空白，再执行 Unicode case folding；结果严格相等才命中。合同名称使用所命中 `quotationEntityBindings[].headerName`，其他乙方字段取其绑定的 `parties[]` 条目。
 
 ## 代表人、职务和邮箱
 
@@ -57,9 +38,3 @@
 - 邮箱写为普通文本，不保留 `mailto:` 包装。
 - 同一 `party` 条目内的 representative / title / email 必须整体命中，不得跨条目混用。
 - 未命中任何条目时停止生成，请用户提供代表人、职务和邮箱，不得从相似名称类推。
-
-## 特殊规则
-
-- 中国分公司规则只适用于 `matchType: exact_or_branch` 条目；名称必须以该条目的 `name` 开头且明确含"分公司"。
-- 印尼主体名称允许匹配同一法定主体的句点和大小写排版差异。
-- `SEA LAW FIRM` / `FIRMA HUKUM SEA` / `Hukum SEA Firma` 属于同一 `alias_group`；当前报价主体标准名称为 `SEA LAW FIRM`。

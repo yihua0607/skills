@@ -59,8 +59,7 @@
       "address": { "source": "header" },
       "representative": "张平",
       "title": "总经理",
-      "email": "zhangping@shanhaimap.com",
-      "notes": "中国分公司规则：名称以本主体开头且明确含'分公司'"
+      "email": "zhangping@shanhaimap.com"
     },
     {
       "name": "上海山海图新企业咨询有限公司",
@@ -78,8 +77,7 @@
       "address": { "source": "fixed", "ref": "ID_JAKARTA" },
       "representative": "Roger Hong Sye Phearn",
       "title": "Director",
-      "email": "roger@shanhaimap.com",
-      "notes": "允许句点与大小写排版差异"
+      "email": "roger@shanhaimap.com"
     },
     {
       "name": "PT SHM CONSULTING INDONESIA",
@@ -88,8 +86,7 @@
       "address": { "source": "fixed", "ref": "ID_JAKARTA" },
       "representative": "Roger Hong Sye Phearn",
       "title": "Director",
-      "email": "roger@shanhaimap.com",
-      "notes": "允许句点与大小写排版差异"
+      "email": "roger@shanhaimap.com"
     },
     {
       "name": "PT DEIN TALENT SOLUTIONS",
@@ -98,8 +95,7 @@
       "address": { "source": "fixed", "ref": "ID_JAKARTA" },
       "representative": "Roger Hong Sye Phearn",
       "title": "Director",
-      "email": "roger@shanhaimap.com",
-      "notes": "允许句点与大小写排版差异"
+      "email": "roger@shanhaimap.com"
     },
     {
       "name": "PT. SHM TAX CONSULTING",
@@ -108,8 +104,7 @@
       "address": { "source": "fixed", "ref": "ID_JAKARTA" },
       "representative": "Yorick Koh",
       "title": "Director",
-      "email": "yorick@shanhaimap.com",
-      "notes": "允许句点与大小写排版差异"
+      "email": "yorick@shanhaimap.com"
     },
     {
       "name": "SEA LAW FIRM",
@@ -119,8 +114,7 @@
       "address": { "source": "fixed", "ref": "ID_JAKARTA" },
       "representative": "Nadifa Assegaf",
       "title": "Partner/ 合伙人",
-      "email": "nadifa@lawfirmsea.com",
-      "notes": "三种名称视为同一规则组"
+      "email": "nadifa@lawfirmsea.com"
     }
   ],
   "disputeDefaults": {
