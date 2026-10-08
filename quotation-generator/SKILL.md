@@ -96,6 +96,8 @@ stdout 必须原样存为 `queried_services.json`（不得混入 stderr），它
 | 交付文件 | `deliverables` | 每项一条，多项编号 |
 | 所需材料 | `documents` | 一个元素一个段落；全角空格表示层级 |
 
+**印尼语数字单位**：`rb`/`ribu` = 千、`jt`/`juta` = 百万、**`M`/`miliar` = 10 亿**。官网写「10 M 印尼盾」时，中文必须写「**100 亿印尼盾（10 miliar）**」——不得写成「1000 万」（把 `M` 当 million 会差 100 倍）。详见 [references/edge-cases.md](references/edge-cases.md)。
+
 忽略 API 中的付款、退款/售后和发票条款。`notes` 不得包含「上述办理时间不包括收集材料……」样板免责声明；直接删除，不要改写。详细原因见 [references/edge-cases.md](references/edge-cases.md)。
 
 ## 数据文件
