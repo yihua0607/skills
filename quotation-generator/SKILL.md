@@ -61,6 +61,8 @@ python3 scripts/resolve_entity.py '请用德音人力报价'
 python3 scripts/fetch_services.py '一般纳税人资格办理-2072286656513949697' > "$WORKDIR/queried_services.json"
 ```
 
+**每次出单（新建、改单、重出）都必须当场重新调用 `fetch_services.py` 拉取涉及的全部服务——官网内容经常更新，`queried_services.json` 只在「同一单、同一次会话（24 小时内）」内复用；跨单、跨天、或从别处（他人目录、历史单目录）拷来的查询结果一律不得使用**，否则报价单会印出过期内容（旧价格、旧资料清单、旧办理时间）。`check_service_content.py` 会校验查询结果的拉取时间，超过 24 小时直接判失败。
+
 stdout 必须原样存为 `queried_services.json`（不得混入 stderr），它是服务内容、原币种和汇率的权威来源。aiCode 必须是完整的 `服务名-19位数字编码`，只给 19 位编码时先向用户补服务名；多个 aiCode 可分参数或用英文逗号传入。
 
 **失败即中断**：API 顶层失败、任一服务失败、空结果或详情不足时，展示原始错误并停止，不得只用成功项继续。价格面议不是 fetch 失败，向用户补总价后继续。aiCode 校验、分享链接、stderr 污染等排查见 [references/fetch-errors.md](references/fetch-errors.md)。
@@ -83,6 +85,8 @@ stdout 必须原样存为 `queried_services.json`（不得混入 stderr），它
 
 ## 整理服务数据
 
+**铁律（2026-10-21）：服务内容唯一来源是本次 `fetch_services.py` 返回的「服务内容」——禁止复用历史 `quotation.json` 里的服务块，也不得用非本次拉取的 `queried_services.json`。** 官网内容**经常更新**，旧数据可能已被截断、丢层级、价格/办理时间已变（真实事故：同一服务，同事单的所需资料每项都少几条，客户按单准备会漏件）。历史单只允许参考**版式**，价格与内容一律以本次接口为准，`documents` / `deliverables` / `process` / `fees` / `note` 必须按本次内容重建；建完必须跑 `check_service_content.py` 逐条核对（见下节）。
+
 | API 内容 | 字段 | 规则 |
 |----------|------|------|
 | 服务编码 | `code` | 必填，从 API 原样抄入，禁止编造 |
@@ -96,7 +100,7 @@ stdout 必须原样存为 `queried_services.json`（不得混入 stderr），它
 | 交付文件 | `deliverables` | 每项一条，多项编号 |
 | 所需材料 | `documents` | 一个元素一个段落；全角空格表示层级 |
 
-**印尼语数字单位**：`rb`/`ribu` = 千、`jt`/`juta` = 百万、**`M`/`miliar` = 10 亿**。官网写「10 M 印尼盾」时，中文必须写「**100 亿印尼盾（10 miliar）**」——不得写成「1000 万」（把 `M` 当 million 会差 100 倍）。**仅印尼盾 IDR 语境适用**（`10M USD`/`10M RMB` 不按此处理）；**复用历史单服务块时极易漏改**，粘贴后必须自行改写并搜 `10 M 印尼盾`/`10M 印尼盾`/`1000万印尼盾` 复核。详见 [references/edge-cases.md](references/edge-cases.md)。
+**印尼语数字单位**：`rb`/`ribu` = 千、`jt`/`juta` = 百万、**`M`/`miliar` = 10 亿**。官网写「10 M 印尼盾」时，中文必须写「**100 亿印尼盾（10 miliar）**」——不得写成「1000 万」（把 `M` 当 million 会差 100 倍）。**仅印尼盾 IDR 语境适用**（`10M USD`/`10M RMB` 不按此处理）；按上面铁律重建内容后仍要搜 `10 M 印尼盾`/`10M 印尼盾`/`1000万印尼盾` 三种写法复核。详见 [references/edge-cases.md](references/edge-cases.md)。
 
 忽略 API 中的付款、退款/售后和发票条款。`notes` 不得包含「上述办理时间不包括收集材料……」样板免责声明；直接删除，不要改写。详细原因见 [references/edge-cases.md](references/edge-cases.md)。
 
@@ -118,11 +122,13 @@ Schema v2 会检查字段白名单、必填项和分类连续性；字段拼错�
 
 ```bash
 python3 scripts/validate_data.py --entity xian --data "$WORKDIR/quotation.json"
+python3 scripts/check_service_content.py --data "$WORKDIR/quotation.json"      # 强制：与本次接口内容逐条核对
 python3 scripts/build_quotation.py --entity xian --data "$WORKDIR/quotation.json" --output "$QUOTATION_DIR/报价单.docx"
 python3 scripts/verify_quotation.py --entity xian --input "$QUOTATION_DIR/报价单.docx" --data "$WORKDIR/quotation.json"
 ```
 
-- 必须依次执行 validate → build → verify，不得跳过；validate error 必须修复，warning 根据业务判断。
+- 必须依次执行 validate → **check_service_content** → build → verify，不得跳过；validate error 必须修复，warning 根据业务判断。
+- `check_service_content.py` 把 `quotation.json` 的所需资料 / 交付文件 / 办理时间 / 费用项 与本次 `query_result_file` 里的服务内容逐条归一化比对：**所需资料或交付文件缺条/多条 → 退出码 1，禁止出单**，必须回到本次内容补齐（不得照抄旧块）；费用项差异与办理时间差异按提示处理（通用项允许移到底部备注）。`--strict` 可让费用项差异也阻断。
 - `--entity` 必传；目标币种优先级为 `_meta.target_currency` > 主体默认币种。
 - **签名栏「报价人」**：默认取「当前使用者」——在**企业微信会话**里生成时填该使用者的通讯录姓名，**不在企业微信环境**（命令行/CI 等）则留空；取不到姓名也留空（绝不把 userid 印到客户可见文档上）。build 会打印一行 `报价人：…（来源）`。
   **用户可改**：用户说「报价人写 XXX」时，把姓名写进 `quote_meta.quoter_name`（**持久生效，后续改单/换主体重出仍是该姓名**）；一次性指定可用 `--quoter <姓名>`（优先级最高），环境变量 `HERMES_QUOTER_NAME` 次之。`quote_meta.quoter_name` 显式写空串 = 该单强制不写报价人。取值优先级：`--quoter` > `quote_meta.quoter_name` > `HERMES_QUOTER_NAME` > 企微会话姓名 > 空。
