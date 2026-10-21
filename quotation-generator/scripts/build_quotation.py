@@ -130,6 +130,8 @@ def main():
                         help='Existing .docx whose visible payment terms should be preserved for this rebuild')
     parser.add_argument('--overwrite-payment-terms', action='store_true',
                         help='Use quotation.json/entity payment terms even when rebuilding over an existing .docx')
+    parser.add_argument('--skip-content-check', action='store_true',
+                        help='跳过「服务内容与本次官网内容逐条核对」（默认强制；仅在无 query_result_file 的旧数据排障时使用）')
     parser.add_argument('--quoter', default=None,
                         help='Signature "报价人" name; default: current WeCom user\'s name in a WeCom session, else empty')
     args = parser.parse_args()
@@ -148,6 +150,26 @@ def main():
         sys.exit(2)
     for warning in quotation_data['warnings']:
         print(f'⚠️  WARNING: {warning}')
+
+    # ── 出单前强制核对（2026-10-21）：服务内容必须与「本次拉取的官网内容」逐条一致 ──
+    # 注意：这一步放在 build 内部而不是只写进 SKILL.md，是为了让任何会话（即使上下文里是旧规则）
+    # 都无法用过期或截断的内容出单。
+    if args.skip_content_check:
+        print('⚠️  已跳过服务内容核对（--skip-content-check）')
+    else:
+        _qrf = (raw_quotation.get('_meta') or {}).get('query_result_file')
+        if not _qrf:
+            print('⚠️  未配置 _meta.query_result_file，跳过服务内容核对（旧数据无接口结果）')
+        else:
+            import subprocess
+            _chk = os.path.join(_SKILL_DIR, 'scripts', 'check_service_content.py')
+            _rc = subprocess.run([sys.executable, _chk, '--data', os.path.abspath(args.data)]).returncode
+            if _rc != 0:
+                print('❌ 服务内容核对未通过：报价单与本次官网内容不一致（或缺/多条目、或查询结果超过 24 小时）。',
+                      file=sys.stderr)
+                print('   请重新执行 fetch_services.py 拉取最新内容后重建；确需跳过用 --skip-content-check。',
+                      file=sys.stderr)
+                sys.exit(3)
 
     # 签名栏「报价人」：默认 = 企微会话使用者姓名（其他环境留空）；
     # 允许覆盖：--quoter > quote_meta.quoter_name（可持久，改单重出仍生效）> HERMES_QUOTER_NAME

@@ -128,6 +128,7 @@ python3 scripts/verify_quotation.py --entity xian --input "$QUOTATION_DIR/报价
 ```
 
 - 必须依次执行 validate → **check_service_content** → build → verify，不得跳过；validate error 必须修复，warning 根据业务判断。
+- **这道核对已内置在 `build_quotation.py` 里**（即使会话上下文是旧规则也绕不过）：内容不一致或查询结果过期时 build 直接退出码 3、不出文档；排障时可用 `--skip-content-check` 跳过。
 - `check_service_content.py` 把 `quotation.json` 的所需资料 / 交付文件 / 办理时间 / 费用项 与本次 `query_result_file` 里的服务内容逐条归一化比对：**所需资料或交付文件缺条/多条 → 退出码 1，禁止出单**，必须回到本次内容补齐（不得照抄旧块）；费用项差异与办理时间差异按提示处理（通用项允许移到底部备注）。`--strict` 可让费用项差异也阻断。
 - `--entity` 必传；目标币种优先级为 `_meta.target_currency` > 主体默认币种。
 - **签名栏「报价人」**：默认取「当前使用者」——在**企业微信会话**里生成时填该使用者的通讯录姓名，**不在企业微信环境**（命令行/CI 等）则留空；取不到姓名也留空（绝不把 userid 印到客户可见文档上）。build 会打印一行 `报价人：…（来源）`。
