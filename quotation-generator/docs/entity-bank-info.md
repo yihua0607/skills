@@ -196,12 +196,12 @@
 
 - 签约主体：Hukum SEA Firma
 - 默认币种：IDR
-- 允许币种：IDR / USD
+- 允许币种：IDR / USD / RMB
 - SWIFT 政策：required
 
 ### 银行说明
 
-- IDR 与 USD 使用同一银行账户。
+- 印尼盾报价默认使用 BNI Branch Central Park Mall 账户；美元与人民币报价使用 BANK OCBC INDONESIA 账户（该账户可收印尼盾/人民币/美元）。
 
 ### IDR 账户
 
@@ -212,10 +212,19 @@
 
 ### USD 账户
 
-- 银行名称 Nama Bank：BNI Branch Central Park Mall
-- 银行账号 No. Rek：1882660986
-- 国际银行代码 Swift Code：BNINIDJAXXX
-- 账号名称 Atas Nama：Hukum SEA Firma
+- 银行名称 Nama Bank：BANK OCBC INDONESIA
+- 银行账号 No. Rek：545800134573
+- 国际银行代码 Swift Code：NISPIDJA
+- 账号名称 Atas Nama：FIRMA HUKUM SEA
+- 可收币种 Mata Uang：印尼盾 IDR / 人民币 RMB / 美元 USD
+
+### RMB 账户
+
+- 银行名称 Nama Bank：BANK OCBC INDONESIA
+- 银行账号 No. Rek：545800134573
+- 国际银行代码 Swift Code：NISPIDJA
+- 账号名称 Atas Nama：FIRMA HUKUM SEA
+- 可收币种 Mata Uang：印尼盾 IDR / 人民币 RMB / 美元 USD
 
 ## stc
 

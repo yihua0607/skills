@@ -13,7 +13,7 @@
 | `shanghai_new` | 上海山海图新企业咨询有限公司 | 增值税 1% | RMB | RMB / USD |
 | `singapore` | SHAN HAI MAP CONSULTANCY PTE.LTD | 增值税 0% | SGD | SGD / RMB / USD |
 | `deyin` | PT DEIN TALENT SOLUTIONS | 增值税 11% | IDR | IDR / USD |
-| `slf` | Hukum SEA Firma | 增值税 11% | IDR | IDR / USD |
+| `slf` | Hukum SEA Firma | 增值税 11% | IDR | IDR / USD / RMB |
 | `stc` | PT. SHM TAX CONSULTING | 增值税 11%；PPH23 2%（固定扣减） | IDR | IDR / USD |
 | `thailand` | SHAN HAI MAP (THAILAND) CO., LTD. | 增值税 7%；预扣税 3%（可选扣减） | THB | THB / RMB / USD |
 | `vietnam` | CÔNG TY TNHH SHANHAIMAP VIỆT NAM | 增值税 8% | VND | VND / RMB / USD |

@@ -350,7 +350,12 @@
     ],
     "header_image": {
       "file": "页眉-SHM新加坡公司.png",
-      "bbox_px": [137, 115, 3393, 447]
+      "bbox_px": [
+        137,
+        115,
+        3393,
+        447
+      ]
     },
     "vat_rate": 0.0,
     "currency": "SGD",
@@ -465,11 +470,12 @@
     "currency": "IDR",
     "allowed_currencies": [
       "IDR",
-      "USD"
+      "USD",
+      "RMB"
     ],
     "swift_policy": "required",
     "bank_notes": [
-      "IDR 与 USD 使用同一银行账户。"
+      "印尼盾报价默认使用 BNI Branch Central Park Mall 账户；美元与人民币报价使用 BANK OCBC INDONESIA 账户（该账户可收印尼盾/人民币/美元）。"
     ],
     "bank_lines": [
       "银行名称 Nama Bank：BNI Branch Central Park Mall",
@@ -485,10 +491,18 @@
         "账号名称 Atas Nama：Hukum SEA Firma"
       ],
       "USD": [
-        "银行名称 Nama Bank：BNI Branch Central Park Mall",
-        "银行账号 No. Rek：1882660986",
-        "国际银行代码 Swift Code：BNINIDJAXXX",
-        "账号名称 Atas Nama：Hukum SEA Firma"
+        "银行名称 Nama Bank：BANK OCBC INDONESIA",
+        "银行账号 No. Rek：545800134573",
+        "国际银行代码 Swift Code：NISPIDJA",
+        "账号名称 Atas Nama：FIRMA HUKUM SEA",
+        "可收币种 Mata Uang：印尼盾 IDR / 人民币 RMB / 美元 USD"
+      ],
+      "RMB": [
+        "银行名称 Nama Bank：BANK OCBC INDONESIA",
+        "银行账号 No. Rek：545800134573",
+        "国际银行代码 Swift Code：NISPIDJA",
+        "账号名称 Atas Nama：FIRMA HUKUM SEA",
+        "可收币种 Mata Uang：印尼盾 IDR / 人民币 RMB / 美元 USD"
       ]
     }
   },
@@ -566,7 +580,12 @@
     ],
     "header_image": {
       "file": "页眉-SHM泰国公司.png",
-      "bbox_px": [137, 115, 3389, 447]
+      "bbox_px": [
+        137,
+        115,
+        3389,
+        447
+      ]
     },
     "vat_rate": 0.07,
     "withholding_tax_rate": 0.03,
@@ -613,7 +632,12 @@
     ],
     "header_image": {
       "file": "页眉-SHM越南胡志明市公司.png",
-      "bbox_px": [137, 115, 3393, 447]
+      "bbox_px": [
+        137,
+        115,
+        3393,
+        447
+      ]
     },
     "vat_rate": 0.08,
     "currency": "VND",
@@ -669,7 +693,12 @@
     ],
     "header_image": {
       "file": "页眉-SHM埃及公司.png",
-      "bbox_px": [137, 112, 3393, 448]
+      "bbox_px": [
+        137,
+        112,
+        3393,
+        448
+      ]
     },
     "vat_rate": 0.1,
     "currency": "EGP",
@@ -734,7 +763,12 @@
     ],
     "header_image": {
       "file": "页眉-SHM马来西亚公司.png",
-      "bbox_px": [137, 115, 3392, 447]
+      "bbox_px": [
+        137,
+        115,
+        3392,
+        447
+      ]
     },
     "tax_label": "销售与服务税",
     "vat_rate": 0.08,

@@ -161,16 +161,24 @@ class TestBankInfoConfigIntegrity(unittest.TestCase):
         self.assertEqual(self.config['jakarta']['bank_lines_by_currency']['IDR'],
                          self.config['jakarta']['bank_lines'])
 
-    def test_slf_idr_and_usd_share_the_declared_bni_account(self):
+    def test_slf_idr_uses_bni_and_usd_uses_ocbc(self):
+        """2026-10-26 刘旭定：印尼盾报价默认 BNI；OCBC（可收 IDR/RMB/USD）用于美元等外币报价。"""
         slf = self.config['slf']
-        self.assertEqual(slf['allowed_currencies'], ['IDR', 'USD'])
-        self.assertEqual(slf['bank_lines_by_currency']['IDR'], slf['bank_lines'])
-        self.assertEqual(slf['bank_lines_by_currency']['USD'], slf['bank_lines'])
-        joined = '\n'.join(slf['bank_lines'])
-        self.assertIn('BNI Branch Central Park Mall', joined)
-        self.assertIn('Hukum SEA Firma', joined)
-        self.assertIn('1882660986', joined)
-        self.assertIn('BNINIDJAXXX', joined)
+        self.assertEqual(slf['allowed_currencies'], ['IDR', 'USD', 'RMB'])   # 2026-10-26 开放人民币报价
+        idr = '\n'.join(slf['bank_lines_by_currency']['IDR'])
+        usd = '\n'.join(slf['bank_lines_by_currency']['USD'])
+        self.assertEqual(slf['bank_lines_by_currency']['IDR'], slf['bank_lines'])  # 默认=印尼盾
+        self.assertIn('BNI Branch Central Park Mall', idr)
+        self.assertIn('1882660986', idr)
+        self.assertIn('BNINIDJAXXX', idr)
+        self.assertIn('BANK OCBC INDONESIA', usd)
+        self.assertIn('545800134573', usd)
+        self.assertIn('NISPIDJA', usd)
+        self.assertIn('FIRMA HUKUM SEA', usd)
+        self.assertNotIn('1882660986', usd)   # 美元报价不得印 BNI 账号
+        rmb = '\n'.join(slf['bank_lines_by_currency']['RMB'])
+        self.assertIn('545800134573', rmb)    # 人民币报价走 OCBC
+        self.assertNotIn('1882660986', rmb)
 
     def test_stc_idr_and_usd_share_the_declared_bca_account(self):
         stc = self.config['stc']
