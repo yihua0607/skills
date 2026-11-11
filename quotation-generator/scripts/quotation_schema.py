@@ -52,12 +52,113 @@ def clean_continuation_marks(text):
     return text.replace('\\', '').strip()
 
 
+# ── markdown 清理（2026-10-31）：官网内容/AI 摘要里常带 markdown（表格、加粗、标题），
+# 直接写进 Word 会变成一堆 | 和 **，客户看不懂。统一在归一化阶段转成纯文本。
+_MD_SEP_ROW = re.compile(r'^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$')
+_MD_SEP_INLINE = re.compile(r'\|(?:\s*:?-{2,}:?\s*\|)+')
+_MD_LINK = re.compile(r'\[([^\]]+)\]\(([^)]+)\)')
+_MD_HEADING = re.compile(r'^\s{0,3}#{1,6}\s*', re.M)
+_MD_EMPHASIS = re.compile(r'\*\*|__|`{1,3}')
+
+
+def _md_rows_to_text(rows):
+    rows = [[c.strip() for c in r if c.strip() != ''] for r in rows if any(c.strip() for c in r)]
+    if not rows:
+        return ''
+    def looks_like_header(r):
+        return len(r) > 1 and not any(re.search(r'\d|^-+$', c) for c in r)
+    header = rows[0] if looks_like_header(rows[0]) else None
+    data = rows[1:] if header else rows
+    parts = []
+    for cells in data:
+        if not cells:
+            continue
+        head, rest = cells[0], cells[1:]
+        vals = []
+        for idx, val in enumerate(rest):
+            if val in ('-', '—', '/'):
+                continue
+            label = header[idx + 1] if header and idx + 1 < len(header) else ''
+            vals.append(f'{label} {val}'.strip() if label else val)
+        parts.append(f'{head}：' + '，'.join(vals) if vals else head)
+    return '；'.join(p for p in parts if p)
+
+
+def _convert_inline_table(text):
+    """处理「整段挤在一行」的 markdown 表格（官网/AI 摘要常见形态）。"""
+    m = _MD_SEP_INLINE.search(text)
+    if not m:
+        return text
+    ncols = len([c for c in m.group(0).split('|') if c.strip()])
+    head = text[:m.start()]
+    head = re.sub(r'[\s|]+$', '', head)          # 去掉表格前的空表头竖线
+    tokens = [c.strip() for c in text[m.end():].split('|')]
+    rows, cur = [], []
+    for t in tokens:
+        if not t:
+            if cur:
+                rows.append(cur)
+                cur = []
+            continue
+        cur.append(t)
+        if len(cur) >= ncols:
+            rows.append(cur)
+            cur = []
+    if cur:
+        rows.append(cur)
+    converted = _md_rows_to_text(rows)
+    return (head + ('\n' if head else '') + converted).strip()
+
+
+def _convert_md_tables(text):
+    lines, out, i = text.split('\n'), [], 0
+    while i < len(lines):
+        line = lines[i]
+        if line.count('|') >= 2 and i + 1 < len(lines) and _MD_SEP_ROW.match(lines[i + 1]):
+            rows, j = [], i
+            while j < len(lines) and lines[j].count('|') >= 2:
+                if not _MD_SEP_ROW.match(lines[j]):
+                    rows.append(lines[j].strip().strip('|').split('|'))
+                j += 1
+            converted = _md_rows_to_text(rows)
+            if converted:
+                out.append(converted)
+            i = j
+            continue
+        out.append(line)
+        i += 1
+    return '\n'.join(out)
+
+
+def clean_markdown_marks(text):
+    """把 markdown 语法转成适合 Word 的纯文本（表格转句子、去掉加粗/标题/列表/链接标记）。"""
+    if not isinstance(text, str) or not text:
+        return text
+    if '|' in text:
+        text = _convert_md_tables(text)
+        if '|' in text:
+            text = _convert_inline_table(text)
+    text = _MD_LINK.sub(r'\1', text)
+    text = _MD_HEADING.sub('', text)
+    text = _MD_EMPHASIS.sub('', text)
+    text = re.sub(r'\*\s*备注', '备注', text)
+    text = re.sub(r'(?m)^\s*\*+\s*', '', text)
+    text = re.sub(r'(?m)^\s*[-+]\s+', '', text)
+    text = re.sub(r'[ \t]+\n', '\n', text)
+    return re.sub(r'\n{3,}', '\n\n', text).strip()
+
+
+def clean_text_field(text):
+    """文本字段统一清洗：先清续行反斜杠，再清 markdown。"""
+    return clean_markdown_marks(clean_continuation_marks(text))
+
+
 def require_text(obj, key, path, errors):
     value = obj.get(key)
     if not isinstance(value, str) or not value.strip():
         errors.append(f'{path}.{key} is required and must be non-empty text')
         return ''
-    return clean_continuation_marks(value.strip())
+    return clean_text_field(value.strip())
 
 
 def require_text_list(obj, key, path, errors):
@@ -70,7 +171,7 @@ def require_text_list(obj, key, path, errors):
         if not isinstance(item, str) or not item.strip():
             errors.append(f'{path}.{key}[{i}] must be non-empty text')
         else:
-            out.append(clean_continuation_marks(item.strip()))
+            out.append(clean_text_field(item.strip()))
     return out
 
 
@@ -84,7 +185,7 @@ def optional_text_list(obj, key, path, errors):
         if not isinstance(item, str) or not item.strip():
             errors.append(f'{path}.{key}[{i}] must be non-empty text')
         else:
-            out.append(clean_continuation_marks(item.strip()))
+            out.append(clean_text_field(item.strip()))
     return out
 
 
@@ -304,7 +405,7 @@ def validate_and_normalize_data(data, data_path=None):
         if not isinstance(indent, int) or indent < 0:
             errors.append(f'{path}.indent must be a non-negative integer')
             indent = 360
-        normalized_notes.append((clean_continuation_marks(text.strip()), indent))
+        normalized_notes.append((clean_text_field(text.strip()), indent))
 
     raw_meta = data.get('quote_meta', {})
     if raw_meta is None:

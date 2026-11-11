@@ -1075,6 +1075,15 @@ def main():
         else:
             print("✅ 无残留续行反斜杠")
 
+        # ── 6c. 不得残留 markdown 语法（表格竖线 / 加粗星号 / 标题井号）──
+        md_bad = [t for t in _texts if ('|' in t and t.count('|') >= 3) or '**' in t or '`' in t]
+        if md_bad:
+            msg = f"成稿里残留 markdown 语法 {len(md_bad)} 处，示例: {md_bad[:2]}"
+            print(f"❌ {msg}")
+            all_issues.append(msg)
+        else:
+            print("✅ 无残留 markdown 语法")
+
         # ── 7. Amount extraction & verification ──
         amounts = extract_summary_amounts(
             tables, currency, tax_label, withholding_tax_label)
