@@ -38,12 +38,26 @@ def reject_unknown_fields(obj, allowed, path, errors):
         errors.append(f'Unknown field: {prefix}{key}{hint}')
 
 
+# 官网服务内容用「行尾反斜杠」表示续行；若原样写进 quotation.json，成稿会印出多余的「\」。
+# 2026-10-31：所有文本字段在归一化阶段统一清理，避免任何人再印出反斜杠。
+_TRAIL_BACKSLASH = re.compile(r'[ \t]*\\+[ \t]*$')
+_MID_BACKSLASH = re.compile(r'[ \t]*\\+[ \t]*')
+
+
+def clean_continuation_marks(text):
+    if not isinstance(text, str) or '\\' not in text:
+        return text
+    text = _TRAIL_BACKSLASH.sub('', text)
+    text = _MID_BACKSLASH.sub(' ', text)
+    return text.replace('\\', '').strip()
+
+
 def require_text(obj, key, path, errors):
     value = obj.get(key)
     if not isinstance(value, str) or not value.strip():
         errors.append(f'{path}.{key} is required and must be non-empty text')
         return ''
-    return value.strip()
+    return clean_continuation_marks(value.strip())
 
 
 def require_text_list(obj, key, path, errors):
@@ -56,7 +70,7 @@ def require_text_list(obj, key, path, errors):
         if not isinstance(item, str) or not item.strip():
             errors.append(f'{path}.{key}[{i}] must be non-empty text')
         else:
-            out.append(item.strip())
+            out.append(clean_continuation_marks(item.strip()))
     return out
 
 
@@ -70,7 +84,7 @@ def optional_text_list(obj, key, path, errors):
         if not isinstance(item, str) or not item.strip():
             errors.append(f'{path}.{key}[{i}] must be non-empty text')
         else:
-            out.append(item.strip())
+            out.append(clean_continuation_marks(item.strip()))
     return out
 
 
@@ -290,7 +304,7 @@ def validate_and_normalize_data(data, data_path=None):
         if not isinstance(indent, int) or indent < 0:
             errors.append(f'{path}.indent must be a non-negative integer')
             indent = 360
-        normalized_notes.append((text.strip(), indent))
+        normalized_notes.append((clean_continuation_marks(text.strip()), indent))
 
     raw_meta = data.get('quote_meta', {})
     if raw_meta is None:

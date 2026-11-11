@@ -100,6 +100,8 @@ stdout 必须原样存为 `queried_services.json`（不得混入 stderr），它
 | 交付文件 | `deliverables` | 每项一条，多项编号 |
 | 所需材料 | `documents` | 一个元素一个段落；全角空格表示层级 |
 
+**续行反斜杠**：官网服务内容用「行尾 `\`」表示续行（如 `1. 山海图服务费\2. 资料快递费（本地）`）。写进 `quotation.json` 前必须清掉，否则会原样印在客户单上。出单流程已在归一化阶段自动清理（行尾 `\` 删除、行中 `\` 替换为空格），`verify_quotation.py` 也会在成稿里检出残留并报错；手工核对时也要注意别把 `\` 贴进去。
+
 **印尼语数字单位**：`rb`/`ribu` = 千、`jt`/`juta` = 百万、**`M`/`miliar` = 10 亿**。官网写「10 M 印尼盾」时，中文必须写「**100 亿印尼盾（10 miliar）**」——不得写成「1000 万」（把 `M` 当 million 会差 100 倍）。**仅印尼盾 IDR 语境适用**（`10M USD`/`10M RMB` 不按此处理）；按上面铁律重建内容后仍要搜 `10 M 印尼盾`/`10M 印尼盾`/`1000万印尼盾` 三种写法复核。详见 [references/edge-cases.md](references/edge-cases.md)。
 
 忽略 API 中的付款、退款/售后和发票条款。`notes` 不得包含「上述办理时间不包括收集材料……」样板免责声明；直接删除，不要改写。详细原因见 [references/edge-cases.md](references/edge-cases.md)。

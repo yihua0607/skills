@@ -1053,6 +1053,28 @@ def main():
         else:
             print("✅ 备注检查: 无办理时间免责声明")
 
+        # ── 6b. 不得残留续行反斜杠（官网内容用行尾 \ 表示续行，未清理会印到客户单上）──
+        def _as_text(item):
+            def one(x):
+                return ''.join(x.itertext()) if hasattr(x, 'itertext') else str(x)
+            if isinstance(item, (list, tuple)):
+                # 元组里通常 (段落元素, 已经是纯文本的副本)；优先用纯文本，避免重复计数
+                texts = [x for x in item if isinstance(x, str) and x.strip()]
+                if texts:
+                    return texts[0]
+                return ' '.join(p for p in (one(x) for x in item) if p)
+            return one(item)
+
+        _texts = [_as_text(t) for t in para_texts]
+        joined_text = '\n'.join(_texts)
+        if '\\' in joined_text:
+            bad = [t for t in _texts if '\\' in t][:3]
+            msg = f"成稿里残留续行反斜杠 {joined_text.count(chr(92))} 处，示例: {bad}"
+            print(f"❌ {msg}")
+            all_issues.append(msg)
+        else:
+            print("✅ 无残留续行反斜杠")
+
         # ── 7. Amount extraction & verification ──
         amounts = extract_summary_amounts(
             tables, currency, tax_label, withholding_tax_label)
