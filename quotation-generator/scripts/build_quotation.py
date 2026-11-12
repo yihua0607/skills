@@ -155,7 +155,21 @@ def main():
     # 注意：这一步放在 build 内部而不是只写进 SKILL.md，是为了让任何会话（即使上下文里是旧规则）
     # 都无法用过期或截断的内容出单。
     if args.skip_content_check:
-        print('⚠️  已跳过服务内容核对（--skip-content-check）')
+        # 2026-11-12：这个开关曾被用来绕过核对，结果出了「资料只留 12 条」的错单 → 改为仅管理员可破窗，
+        # 且必须留痕（写入 reports/content-check-bypass.log），平时谁都绕不过去。
+        if os.environ.get('HERMES_ALLOW_CONTENT_BYPASS') != '1':
+            print('❌ --skip-content-check 仅限管理员排障：需同时设置环境变量 HERMES_ALLOW_CONTENT_BYPASS=1。', file=sys.stderr)
+            print('   服务内容必须与本次官网内容逐条一致（所需资料 / 流程 / 交付文件），不得截断或改写。', file=sys.stderr)
+            sys.exit(2)
+        try:
+            import datetime
+            _log = '/opt/data/reports/content-check-bypass.log'
+            os.makedirs(os.path.dirname(_log), exist_ok=True)
+            with open(_log, 'a', encoding='utf-8') as _fh:
+                _fh.write(f"{datetime.datetime.now().isoformat(timespec='seconds')}\t{os.environ.get('HERMES_SESSION_USER_ID', '-')}\t{os.path.abspath(args.data)}\n")
+        except Exception:
+            pass
+        print('⚠️  已跳过服务内容核对（管理员破窗，已留痕）')
     else:
         _qrf = (raw_quotation.get('_meta') or {}).get('query_result_file')
         if not _qrf:

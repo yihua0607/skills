@@ -20,6 +20,7 @@ import json
 import pathlib
 import re
 import sys
+import unicodedata
 
 # 小节标题本身不算条目（历史块有时把标题也当一条资料）
 HEADINGS = {'依据部分税务局要求', '备注', '费用说明', '付款方式', '交付文件', '所需资料', '所需资料及信息',
@@ -29,7 +30,8 @@ NUM = re.compile(r'^\s*(?:\(?\d+\)?[.、）)]|（\d+）|[a-zA-Z][.、）)]|第[�
 
 
 def norm(t):
-    """归一化：去编号、去全角/半角空格、去行尾反斜杠、去标点差异。"""
+    """归一化：NFKC（含康熙部首折叠）、去编号、去空白、去行尾反斜杠。"""
+    t = unicodedata.normalize('NFKC', t)
     t = t.replace('\\', ' ').replace('\u3000', ' ')
     t = NUM.sub('', t)
     t = re.sub(r'\s+', '', t)
@@ -160,7 +162,8 @@ def main():
             print(f"    ⚠️  办理时间不一致：接口「{exp['days']}」/ 报价单「{s.get('days')}」")
 
         drop = {norm(x) for x in (s['fees'].get('note') and [] or [])}
-        for key, label, level in (('documents', '所需资料', 'fail'), ('deliverables', '交付文件', 'fail')):
+        for key, label, level in (('documents', '所需资料', 'fail'), ('deliverables', '交付文件', 'fail'),
+                                  ('process', '流程', 'fail')):
             missing, extra = diff(exp[key], s.get(key) or [], drop)
             if missing or extra:
                 msg = f'{code} {label}：缺 {len(missing)} 条 / 多 {len(extra)} 条'
